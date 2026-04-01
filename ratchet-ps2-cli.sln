@@ -1,8 +1,20 @@
-Microsoft Visual Studio Solution File, Format Version 12.00
+﻿Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RatchetPs2.Cli", "src/RatchetPs2.Cli/RatchetPs2.Cli.csproj", "{A1C4A7C9-55C3-4D45-A754-E7A5F7D41FE1}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RatchetPs2.Cli", "src\RatchetPs2.Cli\RatchetPs2.Cli.csproj", "{A1C4A7C9-55C3-4D45-A754-E7A5F7D41FE1}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{14A9A38D-1268-4DC4-AD46-186592C8A0D9}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RatchetPs2.Core", "src\RatchetPs2.Core\RatchetPs2.Core.csproj", "{A883CE7F-0C1A-41D3-8386-B873BD1661A6}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RatchetPs2.Games.RC1", "src\RatchetPs2.Games.RC1\RatchetPs2.Games.RC1.csproj", "{96665F76-7B36-49C7-96EE-971ED7779CDC}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RatchetPs2.Games.GC", "src\RatchetPs2.Games.GC\RatchetPs2.Games.GC.csproj", "{2B116A5E-3D63-4047-AA3F-FEB5EC1089B2}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RatchetPs2.Games.UYA", "src\RatchetPs2.Games.UYA\RatchetPs2.Games.UYA.csproj", "{FE62A1F4-05CF-4CDB-9E9A-5807E6CAB12C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RatchetPs2.Games.DL", "src\RatchetPs2.Games.DL\RatchetPs2.Games.DL.csproj", "{DB6F9941-E115-4D1F-84E3-64AE9A32192D}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -14,8 +26,35 @@ Global
 		{A1C4A7C9-55C3-4D45-A754-E7A5F7D41FE1}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A1C4A7C9-55C3-4D45-A754-E7A5F7D41FE1}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A1C4A7C9-55C3-4D45-A754-E7A5F7D41FE1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A883CE7F-0C1A-41D3-8386-B873BD1661A6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A883CE7F-0C1A-41D3-8386-B873BD1661A6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A883CE7F-0C1A-41D3-8386-B873BD1661A6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A883CE7F-0C1A-41D3-8386-B873BD1661A6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{96665F76-7B36-49C7-96EE-971ED7779CDC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{96665F76-7B36-49C7-96EE-971ED7779CDC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{96665F76-7B36-49C7-96EE-971ED7779CDC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{96665F76-7B36-49C7-96EE-971ED7779CDC}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2B116A5E-3D63-4047-AA3F-FEB5EC1089B2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2B116A5E-3D63-4047-AA3F-FEB5EC1089B2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2B116A5E-3D63-4047-AA3F-FEB5EC1089B2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2B116A5E-3D63-4047-AA3F-FEB5EC1089B2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FE62A1F4-05CF-4CDB-9E9A-5807E6CAB12C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FE62A1F4-05CF-4CDB-9E9A-5807E6CAB12C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FE62A1F4-05CF-4CDB-9E9A-5807E6CAB12C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FE62A1F4-05CF-4CDB-9E9A-5807E6CAB12C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{DB6F9941-E115-4D1F-84E3-64AE9A32192D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DB6F9941-E115-4D1F-84E3-64AE9A32192D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DB6F9941-E115-4D1F-84E3-64AE9A32192D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DB6F9941-E115-4D1F-84E3-64AE9A32192D}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{A883CE7F-0C1A-41D3-8386-B873BD1661A6} = {14A9A38D-1268-4DC4-AD46-186592C8A0D9}
+		{96665F76-7B36-49C7-96EE-971ED7779CDC} = {14A9A38D-1268-4DC4-AD46-186592C8A0D9}
+		{2B116A5E-3D63-4047-AA3F-FEB5EC1089B2} = {14A9A38D-1268-4DC4-AD46-186592C8A0D9}
+		{FE62A1F4-05CF-4CDB-9E9A-5807E6CAB12C} = {14A9A38D-1268-4DC4-AD46-186592C8A0D9}
+		{DB6F9941-E115-4D1F-84E3-64AE9A32192D} = {14A9A38D-1268-4DC4-AD46-186592C8A0D9}
 	EndGlobalSection
 EndGlobal
