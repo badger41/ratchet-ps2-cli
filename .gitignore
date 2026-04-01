@@ -56,3 +56,6 @@ Generated/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Other
+test-assets/

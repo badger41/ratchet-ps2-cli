@@ -46,6 +46,7 @@ internal sealed class CommandRouter
         Console.WriteLine();
         Console.WriteLine("Usage:");
         Console.WriteLine("  ratchet-ps2 <command> [arguments]");
+        Console.WriteLine("  ratchet-ps2 wad decompress --input <file.wad> --output <file.bin>");
         Console.WriteLine();
         Console.WriteLine("Commands:");
 

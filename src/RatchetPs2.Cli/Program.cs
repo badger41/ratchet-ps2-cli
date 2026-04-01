@@ -20,7 +20,8 @@ var gameModuleResolver = new GameModuleResolver(gameModules);
 
 var commands = new ICommand[]
 {
-    new HelloCommand(gameModuleResolver)
+    new HelloCommand(gameModuleResolver),
+    new WadCommand()
 };
 
 var router = new CommandRouter(commands);
