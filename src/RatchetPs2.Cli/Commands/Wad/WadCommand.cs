@@ -10,6 +10,7 @@ internal static class WadCommand
         return CliCommandBuilder.Create(
             "wad",
             "Work with WAD-compressed files.",
+            WadCompressCommand.Build(),
             WadDecompressCommand.Build());
     }
 }
