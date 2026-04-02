@@ -1,12 +1,14 @@
-using RatchetPs2.Cli.Abstractions;
 using RatchetPs2.Cli.Commands;
+using RatchetPs2.Cli.Commands.Wad;
 using RatchetPs2.Cli.GameSelection;
-using RatchetPs2.Cli.Routing;
 using RatchetPs2.Core.Games;
 using RatchetPs2.Games.DL;
 using RatchetPs2.Games.GC;
 using RatchetPs2.Games.RC1;
 using RatchetPs2.Games.UYA;
+using System.CommandLine;
+
+var rootCommand = new RootCommand("Cross-platform CLI for Ratchet & Clank PS2 tooling.");
 
 var gameModules = new IGameModule[]
 {
@@ -18,11 +20,7 @@ var gameModules = new IGameModule[]
 
 var gameModuleResolver = new GameModuleResolver(gameModules);
 
-var commands = new ICommand[]
-{
-    new HelloCommand(gameModuleResolver),
-    new WadCommand()
-};
+rootCommand.Subcommands.Add(HelloCommand.Build(gameModuleResolver));
+rootCommand.Subcommands.Add(WadCommand.Build());
 
-var router = new CommandRouter(commands);
-return router.Invoke(args);
+return rootCommand.Parse(args).Invoke();
