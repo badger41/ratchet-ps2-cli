@@ -31,6 +31,16 @@ Use this project for:
 
 Do **not** put core domain logic here unless it is truly CLI-only.
 
+#### Internal CLI structure
+
+Within `RatchetPs2.Cli`:
+
+- `Commands/` should contain only actual command definitions and command group definitions
+- shared CLI helpers such as common options, command builders, or reusable command wiring should live outside `Commands/` (for example in `Abstractions/`)
+- `Program.cs` should remain a thin composition root that wires dependencies and registers commands
+
+When adding a shared CLI argument or option that will be reused across multiple commands, prefer adding it to the shared CLI helper area rather than duplicating it in individual command files.
+
 ### `RatchetPs2.Core`
 
 Use this project for:

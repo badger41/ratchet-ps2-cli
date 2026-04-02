@@ -26,6 +26,16 @@ It is responsible for:
 
 It should **not** become the home of core parsing, game logic, or reusable data models.
 
+#### Recommended internal CLI organization
+
+Within the CLI project itself:
+
+- keep `Program.cs` thin and focused on composition/root command registration
+- keep `Commands/` reserved for actual commands and command groups
+- place shared CLI-only helpers such as common options, command builders, and reusable command wiring outside `Commands/` (for example in `Abstractions/`)
+
+If multiple commands share the same option or argument pattern, prefer defining it once in the shared CLI helper area and reusing it from command files.
+
 ### `RatchetPs2.Core`
 
 This project is the shared library layer.
