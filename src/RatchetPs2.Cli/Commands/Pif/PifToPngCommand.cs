@@ -56,9 +56,8 @@ internal static class PifToPngCommand
             }
 
             using var stream = inputFile.OpenRead();
-            var texture = PifReader.Read(stream);
-            var pngBytes = TextureConverter.ConvertToPng(
-                texture,
+            var exported = PifAssetExporter.Export(
+                stream,
                 pngPixelFormat,
                 new TextureConversionOptions
                 {
@@ -66,10 +65,10 @@ internal static class PifToPngCommand
                 });
 
             outputFile.Directory?.Create();
-            File.WriteAllBytes(outputFile.FullName, pngBytes);
+            File.WriteAllBytes(outputFile.FullName, exported.PngBytes);
 
             Console.WriteLine(
-                $"Converted '{inputFile.FullName}' to '{outputFile.FullName}' as {texture.Header.USize}x{texture.Header.VSize} PNG.");
+                $"Converted '{inputFile.FullName}' to '{outputFile.FullName}' as {exported.Texture.Header.USize}x{exported.Texture.Header.VSize} PNG.");
         });
 
         return command;

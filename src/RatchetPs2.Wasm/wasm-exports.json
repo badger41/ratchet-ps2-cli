@@ -1,0 +1,218 @@
+{
+  "initOptionsTypeName": "RatchetPs2WasmInitOptions",
+  "initOptions": [
+    {
+      "name": "assetBaseUrl",
+      "type": "string",
+      "optional": true
+    }
+  ],
+  "sharedTypes": [
+    {
+      "kind": "typeAlias",
+      "name": "PngFormat",
+      "value": "\"rgba32\" | \"indexed8\" | \"indexed4\""
+    },
+    {
+      "kind": "interface",
+      "name": "ConvertPifToPngOptions",
+      "properties": [
+        {
+          "name": "pngFormat",
+          "type": "PngFormat",
+          "optional": true
+        },
+        {
+          "name": "doubleAlpha",
+          "type": "boolean",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "kind": "interface",
+      "name": "PackedPngBatchResult",
+      "properties": [
+        {
+          "name": "packedPngBytes",
+          "type": "Uint8Array"
+        },
+        {
+          "name": "pngOffsets",
+          "type": "Int32Array"
+        },
+        {
+          "name": "pngLengths",
+          "type": "Int32Array"
+        }
+      ]
+    }
+  ],
+  "exports": [
+    {
+      "dotNetMethodName": "GetApiVersion",
+      "jsMethodName": "getApiVersion",
+      "returnType": "Promise<string>"
+    },
+    {
+      "dotNetMethodName": "ConvertPifToPng",
+      "jsMethodName": "convertPifToPng",
+      "returnType": "Promise<Uint8Array>",
+      "parameters": [
+        {
+          "name": "pifBytes",
+          "type": "Uint8Array | ArrayBuffer"
+        },
+        {
+          "name": "options",
+          "type": "ConvertPifToPngOptions",
+          "optional": true,
+          "optionsObject": true
+        }
+      ],
+      "dotNetParameters": [
+        "input",
+        "pngFormat",
+        "doubleAlpha"
+      ],
+      "preamble": [
+        "const input = toUint8Array(pifBytes);",
+        "const pngFormat = options.pngFormat ?? \"rgba32\";",
+        "const doubleAlpha = options.doubleAlpha ?? false;"
+      ],
+      "invokeArguments": [
+        "input",
+        "pngFormat",
+        "doubleAlpha"
+      ]
+    },
+    {
+      "jsMethodName": "convertPifToPngBlob",
+      "returnType": "Promise<Blob>",
+      "parameters": [
+        {
+          "name": "pifBytes",
+          "type": "Uint8Array | ArrayBuffer"
+        },
+        {
+          "name": "options",
+          "type": "ConvertPifToPngOptions",
+          "optional": true,
+          "optionsObject": true
+        }
+      ],
+      "customImplementation": [
+        "const pngBytes = await convertPifToPng(pifBytes, options);",
+        "return new Blob([pngBytes.slice().buffer], { type: \"image/png\" });"
+      ]
+    },
+    {
+      "dotNetMethodName": "ConvertPifListToPng",
+      "jsMethodName": "convertPifListToPng",
+      "returnType": "Promise<Uint8Array[]>",
+      "parameters": [
+        {
+          "name": "pifImages",
+          "type": "Array<Uint8Array | ArrayBuffer>"
+        },
+        {
+          "name": "options",
+          "type": "ConvertPifToPngOptions",
+          "optional": true,
+          "optionsObject": true
+        }
+      ],
+      "preamble": [
+        "const inputs = pifImages.map((image) => toUint8Array(image));",
+        "const pngFormat = options.pngFormat ?? \"rgba32\";",
+        "const doubleAlpha = options.doubleAlpha ?? false;"
+      ],
+      "invokeArguments": [
+        "inputs",
+        "pngFormat",
+        "doubleAlpha"
+      ]
+    },
+    {
+      "jsMethodName": "convertPifListToPngBlobs",
+      "returnType": "Promise<Blob[]>",
+      "parameters": [
+        {
+          "name": "pifImages",
+          "type": "Array<Uint8Array | ArrayBuffer>"
+        },
+        {
+          "name": "options",
+          "type": "ConvertPifToPngOptions",
+          "optional": true,
+          "optionsObject": true
+        }
+      ],
+      "customImplementation": [
+        "const pngImages = await convertPifListToPng(pifImages, options);",
+        "return pngImages.map((pngBytes) => new Blob([pngBytes.slice().buffer], { type: \"image/png\" }));"
+      ]
+    },
+    {
+      "dotNetMethodName": "ConvertPifListToPngPacked",
+      "jsMethodName": "convertPifListToPngPacked",
+      "returnType": "Promise<PackedPngBatchResult>",
+      "parameters": [
+        {
+          "name": "pifImages",
+          "type": "Array<Uint8Array | ArrayBuffer>"
+        },
+        {
+          "name": "options",
+          "type": "ConvertPifToPngOptions",
+          "optional": true,
+          "optionsObject": true
+        }
+      ],
+      "customImplementation": [
+        "const inputs = pifImages.map((image) => toUint8Array(image));",
+        "const pngFormat = options.pngFormat ?? \"rgba32\";",
+        "const doubleAlpha = options.doubleAlpha ?? false;",
+        "const result = await DotNet.invokeMethodAsync(",
+        "  \"RatchetPs2.Wasm\",",
+        "  \"ConvertPifListToPngPacked\",",
+        "  inputs,",
+        "  pngFormat,",
+        "  doubleAlpha",
+        ");",
+        "return {",
+        "  packedPngBytes: toUint8Array(result.packedPngBytes),",
+        "  pngOffsets: Int32Array.from(result.pngOffsets),",
+        "  pngLengths: Int32Array.from(result.pngLengths),",
+        "};"
+      ]
+    },
+    {
+      "jsMethodName": "convertPifListToPngPackedBlobs",
+      "returnType": "Promise<Blob[]>",
+      "parameters": [
+        {
+          "name": "pifImages",
+          "type": "Array<Uint8Array | ArrayBuffer>"
+        },
+        {
+          "name": "options",
+          "type": "ConvertPifToPngOptions",
+          "optional": true,
+          "optionsObject": true
+        }
+      ],
+      "customImplementation": [
+        "const result = await convertPifListToPngPacked(pifImages, options);",
+        "const blobs = new Array(result.pngOffsets.length);",
+        "for (let i = 0; i < result.pngOffsets.length; i += 1) {",
+        "  const offset = result.pngOffsets[i];",
+        "  const length = result.pngLengths[i];",
+        "  const slice = result.packedPngBytes.slice(offset, offset + length);",
+        "  blobs[i] = new Blob([slice.buffer], { type: \"image/png\" });",
+        "}",
+        "return blobs;"
+      ]
+    }
+  ]
+}

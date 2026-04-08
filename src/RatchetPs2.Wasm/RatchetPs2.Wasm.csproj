@@ -1,0 +1,61 @@
+<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <DefaultItemExcludes>$(DefaultItemExcludes);dist/**;package-dist/**</DefaultItemExcludes>
+    <EnableDefaultContentItems>false</EnableDefaultContentItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="wwwroot/**" />
+    <Content Include="package.json" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="ratchetps2-wasm.js" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="ratchetps2-wasm.d.ts" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="README.md" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RatchetPs2.Core\RatchetPs2.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="9.0.14" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="9.0.14" PrivateAssets="all" />
+  </ItemGroup>
+
+  <Target Name="PreparePackageLayout" AfterTargets="Publish">
+    <PropertyGroup>
+      <WasmPackageDir>$(PublishDir)package/</WasmPackageDir>
+    </PropertyGroup>
+
+    <RemoveDir Directories="$(WasmPackageDir)" />
+    <MakeDir Directories="$(WasmPackageDir)_framework" />
+
+    <ItemGroup>
+      <PublishedFrameworkFiles Include="$(PublishDir)wwwroot/_framework/**/*" />
+      <PackageSourceFiles Include="$(MSBuildProjectDirectory)/package.json;$(MSBuildProjectDirectory)/ratchetps2-wasm.js;$(MSBuildProjectDirectory)/ratchetps2-wasm.d.ts;$(MSBuildProjectDirectory)/README.md" />
+    </ItemGroup>
+
+    <Copy SourceFiles="@(PublishedFrameworkFiles)"
+          DestinationFiles="@(PublishedFrameworkFiles->'$(WasmPackageDir)_framework/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+
+    <Copy SourceFiles="@(PackageSourceFiles)"
+          DestinationFiles="@(PackageSourceFiles->'$(WasmPackageDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="GenerateWasmInterop" BeforeTargets="BeforeBuild">
+    <PropertyGroup>
+      <WasmExportManifest>$(MSBuildProjectDirectory)/wasm-exports.json</WasmExportManifest>
+      <GeneratedJsPath>$(MSBuildProjectDirectory)/ratchetps2-wasm.js</GeneratedJsPath>
+      <GeneratedDtsPath>$(MSBuildProjectDirectory)/ratchetps2-wasm.d.ts</GeneratedDtsPath>
+    </PropertyGroup>
+
+    <Exec Command="dotnet run --project &quot;$(MSBuildProjectDirectory)/../RatchetPs2.Wasm.Generator/RatchetPs2.Wasm.Generator.csproj&quot; -- &quot;$(WasmExportManifest)&quot; &quot;$(GeneratedJsPath)&quot; &quot;$(GeneratedDtsPath)&quot;" />
+  </Target>
+
+</Project>

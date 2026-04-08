@@ -252,12 +252,15 @@ public static class TextureConverter
         {
             IsSwizzled = texture.IsSwizzled,
             DoubleAlpha = effectiveOptions.DoubleAlpha,
-            DecodePaletteIndexes = bitsPerPixel == 8 && effectiveOptions.DecodePaletteIndexes,
+            DecodePaletteIndexes = texture.Encoding == PifTextureEncoding.Indexed8
+                && bitsPerPixel == 8
+                && effectiveOptions.DecodePaletteIndexes,
         };
 
         return texture.Encoding switch
         {
             PifTextureEncoding.Indexed8 when bitsPerPixel == 8 => DecodeIndexed8ToIndexedImage(texture, effectiveOptions),
+            PifTextureEncoding.Indexed4 when bitsPerPixel == 8 => ExpandIndexed4ToIndexed8Image(texture, effectiveOptions),
             PifTextureEncoding.Indexed4 when bitsPerPixel == 4 => DecodeIndexed4ToIndexedImage(texture, effectiveOptions),
             PifTextureEncoding.Indexed4 or PifTextureEncoding.Indexed8 => throw new NotSupportedException(
                 $"Cannot export {texture.Encoding} as indexed {bitsPerPixel}bpp PNG without palette conversion."),
@@ -341,6 +344,20 @@ public static class TextureConverter
         }
 
         return new IndexedImage(width, height, 4, palette, indices);
+    }
+
+    private static IndexedImage ExpandIndexed4ToIndexed8Image(PifTextureData texture, TextureConversionOptions? options)
+    {
+        var indexed4 = DecodeIndexed4ToIndexedImage(texture, options);
+        var expandedPalette = new byte[256 * 4];
+        indexed4.PaletteRgba.CopyTo(expandedPalette, 0);
+
+        return new IndexedImage(
+            indexed4.Width,
+            indexed4.Height,
+            8,
+            expandedPalette,
+            indexed4.PixelIndices.ToArray());
     }
 
     private static Rgba32Image DecodeIndexed4(

@@ -11,6 +11,7 @@ internal static class WadCommand
             "wad",
             "Work with WAD-compressed files.",
             WadCompressCommand.Build(),
-            WadDecompressCommand.Build());
+            WadDecompressCommand.Build(),
+            WadUnpackTocCommand.Build());
     }
 }

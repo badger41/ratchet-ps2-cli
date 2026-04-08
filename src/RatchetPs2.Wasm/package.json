@@ -1,0 +1,16 @@
+{
+  "name": "@ratchetps2/wasm",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./ratchetps2-wasm.js",
+  "module": "./ratchetps2-wasm.js",
+  "types": "./ratchetps2-wasm.d.ts",
+  "exports": {
+    ".": {
+      "types": "./ratchetps2-wasm.d.ts",
+      "import": "./ratchetps2-wasm.js",
+      "default": "./ratchetps2-wasm.js"
+    }
+  }
+}
