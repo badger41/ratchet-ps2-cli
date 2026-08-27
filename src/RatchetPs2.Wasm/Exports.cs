@@ -129,7 +129,7 @@ public static partial class Exports
         IReadOnlyList<PackedFile> unpackedFiles,
         GameId gameId = GameId.UYA)
     {
-        return UyaLevelWadRenderPackageBuilder.BuildPacked(
+        var renderPackage = UyaLevelWadRenderPackageBuilder.BuildPacked(
             levelIndex,
             unpackedFiles,
             assetFiles => DlLevelWadRenderPackageBuilder.BuildAssetFiles(
@@ -142,6 +142,18 @@ public static partial class Exports
                 assetFiles.ChunkWads,
                 gameId == GameId.GC ? GcSkyRotationReader.ReadRadiansPerFrame(assetFiles.CodeBytes) : null),
             gameId);
+        var hudHeader = unpackedFiles.FirstOrDefault(file => file.Path == "hud/header.bin");
+        if (hudHeader is null)
+        {
+            return renderPackage;
+        }
+
+        var hudBanks = Enumerable.Range(0, DlHudBankReader.BankCount)
+            .Select(index => unpackedFiles.FirstOrDefault(file => file.Path == $"hud/bank{index}.bin")?.Bytes ?? [])
+            .ToArray();
+        return AppendPackedFiles(
+            renderPackage,
+            DlLevelWadRenderPackageBuilder.BuildHudFiles(hudHeader.Bytes, hudBanks));
     }
 
     [JSInvokable("ExportMobyGltf")]

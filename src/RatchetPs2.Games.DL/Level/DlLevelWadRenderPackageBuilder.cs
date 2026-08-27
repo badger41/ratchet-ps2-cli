@@ -9,6 +9,7 @@ using RatchetPs2.Core.IO;
 using RatchetPs2.Core.Moby;
 using RatchetPs2.Core.Shrubs;
 using RatchetPs2.Core.Skyboxes;
+using RatchetPs2.Core.Textures;
 using RatchetPs2.Core.Textures.Pif;
 using RatchetPs2.Core.Textures.Png;
 using RatchetPs2.Core.Tfrags;
@@ -94,6 +95,17 @@ public static class DlLevelWadRenderPackageBuilder
             ["CoreLevelSegmentTableLength"] = DlLevelConstants.CoreLevelSegmentTableLength,
             ["CoreSegments"] = CreateCoreSegmentManifest(coreSegments)
         };
+
+        if (coreSegmentByHeaderOffset.TryGetValue(0x20, out var hudHeader))
+        {
+            files.AddRange(BuildHudFiles(
+                hudHeader.PayloadBytes,
+                Enumerable.Range(0, DlHudBankReader.BankCount)
+                    .Select(index => coreSegmentByHeaderOffset.TryGetValue(0x28 + (index * 8), out var bank)
+                        ? bank.PayloadBytes
+                        : [])
+                    .ToArray()));
+        }
 
         if (!coreSegmentByHeaderOffset.TryGetValue(0x10, out var assetHeader)
             || !coreSegmentByHeaderOffset.TryGetValue(0x18, out var palette)
@@ -229,6 +241,96 @@ public static class DlLevelWadRenderPackageBuilder
         manifest["PerformanceTimings"] = timings;
         AddJsonFile(files, "assets/render_manifest.json", manifest);
         return files;
+    }
+
+    public static IReadOnlyList<PackedFile> BuildHudFiles(
+        byte[] headerBytes,
+        IReadOnlyList<byte[]> bankBytes)
+    {
+        ArgumentNullException.ThrowIfNull(headerBytes);
+        ArgumentNullException.ThrowIfNull(bankBytes);
+
+        var banks = Enumerable.Range(0, DlHudBankReader.BankCount)
+            .Select(index => index < bankBytes.Count ? DecompressHudBank(bankBytes[index]) : [])
+            .ToArray();
+        var hud = DlHudBankReader.Read(headerBytes, banks);
+        var files = new List<PackedFile>();
+        var normalizedTextures = new List<object>(hud.Frames.Count);
+
+        foreach (var frame in hud.Frames)
+        {
+            var hasTexture = DlHudBankReader.TryGetTexture(hud, frame.TextureIndex, out var texture);
+            var hasPalette = DlHudBankReader.TryGetPalette(hud, frame.PaletteIndex, out var palette);
+            string? pngPath = null;
+            var status = "skipped";
+            string? note = null;
+
+            if (hasTexture && hasPalette)
+            {
+                try
+                {
+                    pngPath = $"bank_{texture.BankIndex}/tex.{frame.Index:0000}.png";
+                    var pif = PifWriter.CreateIndexed8(
+                        texture.Width,
+                        texture.Height,
+                        palette.PaletteBytes,
+                        texture.PixelBytes,
+                        isSwizzled: false);
+                    AddFile(
+                        files,
+                        $"hud/{pngPath}",
+                        TextureConverter.ConvertToPng(pif, TexturePixelFormat.Rgba32),
+                        "image/png");
+                    status = "written";
+                }
+                catch (Exception ex) when (ex is ArgumentException or InvalidDataException or NotSupportedException)
+                {
+                    pngPath = null;
+                    status = "error";
+                    note = ex.Message;
+                }
+            }
+            else
+            {
+                note = hasTexture
+                    ? $"palette index {frame.PaletteIndex} is missing or out of range"
+                    : $"texture index {frame.TextureIndex} is missing or out of range";
+            }
+
+            normalizedTextures.Add(new
+            {
+                FrameIndex = frame.Index,
+                frame.PaletteIndex,
+                frame.TextureIndex,
+                TextureBank = hasTexture ? texture.BankIndex : (int?)null,
+                PaletteBank = hasPalette ? palette.BankIndex : (int?)null,
+                Status = status,
+                Note = note,
+                PngPath = pngPath,
+                Texture = hasTexture
+                    ? new { texture.Index, texture.Width, texture.Height }
+                    : null
+            });
+        }
+
+        AddJsonFile(files, "hud/manifest.json", new
+        {
+            Banks = Enumerable.Range(0, DlHudBankReader.BankCount).Select(index => new
+            {
+                BankIndex = index,
+                Length = banks[index].Length,
+                DeclaredDecompressedSize = index < hud.Header.BankSizes.Count
+                    ? hud.Header.BankSizes[index]
+                    : 0
+            }),
+            NormalizedFrameTextures = normalizedTextures
+        });
+        return files;
+    }
+
+    private static byte[] DecompressHudBank(byte[] bytes)
+    {
+        return BinaryMagic.IsWad(bytes) ? WadCompression.Decompress(bytes) : bytes;
     }
 
     private static List<MobyExportManifestEntry> BuildAssets(

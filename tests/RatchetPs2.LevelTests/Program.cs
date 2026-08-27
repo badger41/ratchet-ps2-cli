@@ -1191,6 +1191,12 @@ static void ValidateHudBankParsing()
     Expect(texture.Offset == 0 && texture.BankIndex == 0, "DL HUD texture bank should be parsed from cumulative counts");
     Expect(texture.Width == 4 && texture.Height == 4, "DL HUD dimensions should be powers of two from u/v log metadata");
     Expect(texture.PixelBytes.SequenceEqual(bank0), "DL HUD texture bytes should be sliced from the source bank");
+
+    var renderFiles = DlLevelWadRenderPackageBuilder.BuildHudFiles(
+        header,
+        [CreateLiteralWad(bank0), bank1]);
+    Expect(renderFiles.Any(file => file.Path == "hud/manifest.json"), "HUD render package should include its manifest");
+    Expect(renderFiles.Any(file => file.Path == "hud/bank_0/tex.0000.png"), "HUD render package should include frame PNGs");
 }
 
 static void ValidateWorldInstanceParsing()
