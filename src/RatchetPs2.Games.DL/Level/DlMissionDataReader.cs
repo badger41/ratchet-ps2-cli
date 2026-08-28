@@ -6,6 +6,35 @@ namespace RatchetPs2.Games.DL.Level;
 
 public static class DlMissionDataReader
 {
+    public static byte[] ReadGameplay(ReadOnlySpan<byte> data)
+    {
+        if (data.Length < 0x40)
+        {
+            return [];
+        }
+
+        var gameplayLength = BinaryPrimitives.ReadInt32LittleEndian(data[0x04..]);
+        if (gameplayLength <= 0 || (long)0x40 + gameplayLength > data.Length)
+        {
+            return [];
+        }
+
+        var gameplay = data.Slice(0x40, gameplayLength).ToArray();
+        if (!BinaryMagic.IsWad(gameplay))
+        {
+            return gameplay;
+        }
+
+        try
+        {
+            return WadCompression.Decompress(gameplay);
+        }
+        catch (InvalidDataException)
+        {
+            return gameplay;
+        }
+    }
+
     public static byte[] ReadClasses(ReadOnlySpan<byte> data)
     {
         if (data.Length < 0x10)

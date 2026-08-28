@@ -132,11 +132,20 @@ public static class DlLevelWadRenderPackageBuilder
             .Select(entry => entry.ClassId)
             .ToHashSet();
 
-        for (var missionIndex = 0; options.IncludeMissionMobys && missionIndex < levelWad.GameplayMissionData.Count; missionIndex++)
+        for (var missionIndex = 0; missionIndex < levelWad.GameplayMissionData.Count; missionIndex++)
         {
             var missionData = DlLevelWadReader.ReadSectorFileBlock(
                 levelWadBytes,
                 levelWad.GameplayMissionData[missionIndex]);
+            var gameplay = DlMissionDataReader.ReadGameplay(missionData);
+            if (gameplay.Length > 0)
+            {
+                AddFile(files, $"missions/mission_{missionIndex}/gameplay.bin", gameplay);
+            }
+            if (!options.IncludeMissionMobys)
+            {
+                continue;
+            }
             var classes = DlMissionDataReader.ReadClasses(missionData);
             if (classes.Length > 0)
             {

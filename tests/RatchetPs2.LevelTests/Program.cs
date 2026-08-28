@@ -219,6 +219,7 @@ static void ValidateLooseLevelWadUnpacking()
     Expect(files["level_wad/chunks/chunk0.wad"].Bytes[0] == 0x51, "loose WAD unpack should include chunk bytes");
     Expect(files["missions/0000/mission.wad"].Bytes[0x60] == 0xA1, "loose WAD unpack should include mission WAD bytes");
     Expect(files["missions/0000/gameplay.bin"].Bytes[0x20] == 0xA1, "loose WAD unpack should slice mission gameplay bytes");
+    Expect(DlMissionDataReader.ReadGameplay(files["missions/0000/mission.wad"].Bytes)[0x20] == 0xA1, "mission gameplay reader should expose the payload for render packages");
     Expect(files["missions/0000/gameplay/moby_classes.bin"].Bytes.SequenceEqual(new byte[] { 0xA1, 0xA2 }), "loose WAD unpack should split mission gameplay moby classes");
     Expect(files["missions/0000/gameplay/moby_instances.bin"].Bytes.SequenceEqual(new byte[] { 0xA3, 0xA4 }), "loose WAD unpack should split mission gameplay moby instances");
     Expect(files["missions/0000/classes.bin"].Bytes.SequenceEqual(new byte[] { 0xB1, 0xB2, 0xB3, 0xB4 }), "loose WAD unpack should slice mission classes bytes");
@@ -697,6 +698,10 @@ static void ValidateLooseLevelWadRenderPackageWhenAvailable()
         Expect(
             entries.Keys.Any(path => path.StartsWith("missions/", StringComparison.Ordinal)),
             "browser render package should include available mission mobys");
+        Expect(
+            entries.Keys.Any(path => path.StartsWith("missions/mission_", StringComparison.Ordinal)
+                && path.EndsWith("/gameplay.bin", StringComparison.Ordinal)),
+            "browser render package should include available mission gameplay");
     }
     Expect(
         entries.Keys.All(path =>

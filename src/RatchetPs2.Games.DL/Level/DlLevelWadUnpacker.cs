@@ -69,57 +69,21 @@ public static class DlLevelWadUnpacker
 
     private static void AddMissionPayloads(List<PackedFile> files, string missionRoot, byte[] missionData)
     {
-        if (missionData.Length < 0x10)
+        var gameplayBytes = DlMissionDataReader.ReadGameplay(missionData);
+        if (gameplayBytes.Length > 0)
         {
-            return;
+            AddFile(files, $"{missionRoot}/gameplay.bin", gameplayBytes);
         }
-
-        var gameplayOffset = BitConverter.ToInt32(missionData, 0);
-        var gameplayLength = BitConverter.ToInt32(missionData, 4);
-        var classesOffset = BitConverter.ToInt32(missionData, 8);
-        var classesLength = BitConverter.ToInt32(missionData, 12);
-        var localOffsetDelta = gameplayOffset - 0x40;
-
-        var gameplayBytes = AddPossiblyCompressedMissionBlock(files, $"{missionRoot}/gameplay.bin", missionData, 0x40, gameplayLength);
         if (gameplayBytes.Length >= DlGameplayBlockReader.MissionHeaderSize)
         {
             AddGameplayBlocks(files, $"{missionRoot}/gameplay", DlGameplayBlockReader.ReadMission(gameplayBytes));
         }
 
-        if (classesOffset > 0 && classesLength > 0)
+        var classes = DlMissionDataReader.ReadClasses(missionData);
+        if (classes.Length > 0)
         {
-            AddPossiblyCompressedMissionBlock(
-                files,
-                $"{missionRoot}/classes.bin",
-                missionData,
-                classesOffset - localOffsetDelta,
-                classesLength);
+            AddFile(files, $"{missionRoot}/classes.bin", classes);
         }
-    }
-
-    private static byte[] AddPossiblyCompressedMissionBlock(
-        List<PackedFile> files,
-        string path,
-        byte[] source,
-        int offset,
-        int length)
-    {
-        if (offset < 0 || length <= 0 || (long)offset + length > source.Length)
-        {
-            return [];
-        }
-
-        var data = source.AsSpan(offset, length).ToArray();
-        try
-        {
-            data = WadCompression.Decompress(data);
-        }
-        catch (InvalidDataException)
-        {
-        }
-
-        AddFile(files, path, data);
-        return data;
     }
 
     private static void AddCorePayloads(List<PackedFile> files, byte[] coreLevelBytes)
