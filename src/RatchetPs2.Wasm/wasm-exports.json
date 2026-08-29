@@ -544,6 +544,138 @@
     },
     {
       "kind": "interface",
+      "name": "GameplayVector3",
+      "properties": [
+        {
+          "name": "x",
+          "type": "number"
+        },
+        {
+          "name": "y",
+          "type": "number"
+        },
+        {
+          "name": "z",
+          "type": "number"
+        }
+      ]
+    },
+    {
+      "kind": "interface",
+      "name": "GameplayVector4",
+      "properties": [
+        {
+          "name": "x",
+          "type": "number"
+        },
+        {
+          "name": "y",
+          "type": "number"
+        },
+        {
+          "name": "z",
+          "type": "number"
+        },
+        {
+          "name": "w",
+          "type": "number"
+        }
+      ]
+    },
+    {
+      "kind": "interface",
+      "name": "GameplayCuboid",
+      "properties": [
+        {
+          "name": "index",
+          "type": "number"
+        },
+        {
+          "name": "matrix",
+          "type": "number[]"
+        },
+        {
+          "name": "inverseRotationMatrix",
+          "type": "number[]"
+        },
+        {
+          "name": "rotation",
+          "type": "GameplayVector3"
+        }
+      ]
+    },
+    {
+      "kind": "interface",
+      "name": "GameplaySpline",
+      "properties": [
+        {
+          "name": "index",
+          "type": "number"
+        },
+        {
+          "name": "points",
+          "type": "GameplayVector4[]"
+        }
+      ]
+    },
+    {
+      "kind": "interface",
+      "name": "GameplayArea",
+      "properties": [
+        {
+          "name": "index",
+          "type": "number"
+        },
+        {
+          "name": "boundingSphere",
+          "type": "GameplayVector4"
+        },
+        {
+          "name": "lastUpdateTime",
+          "type": "number"
+        },
+        {
+          "name": "splineIndices",
+          "type": "number[]"
+        },
+        {
+          "name": "cuboidIndices",
+          "type": "number[]"
+        },
+        {
+          "name": "sphereIndices",
+          "type": "number[]"
+        },
+        {
+          "name": "cylinderIndices",
+          "type": "number[]"
+        },
+        {
+          "name": "negativeCuboidIndices",
+          "type": "number[]"
+        }
+      ]
+    },
+    {
+      "kind": "interface",
+      "name": "GameplayGeometry",
+      "properties": [
+        {
+          "name": "cuboids",
+          "type": "GameplayCuboid[]"
+        },
+        {
+          "name": "splines",
+          "type": "GameplaySpline[]"
+        },
+        {
+          "name": "areas",
+          "type": "GameplayArea[]"
+        }
+      ]
+    },
+    {
+      "kind": "interface",
       "name": "DlGameplayBlock",
       "properties": [
         {
@@ -591,6 +723,10 @@
         {
           "name": "pvarTables",
           "type": "DlPvarTables | null"
+        },
+        {
+          "name": "geometry",
+          "type": "GameplayGeometry"
         },
         {
           "name": "blocks",
@@ -907,6 +1043,10 @@
           "type": "UyaPvarTables | null"
         },
         {
+          "name": "geometry",
+          "type": "GameplayGeometry"
+        },
+        {
           "name": "blocks",
           "type": "UyaGameplayBlock[]"
         }
@@ -1193,6 +1333,23 @@
       "dotNetMethodName": "ParseDlGameplayMission",
       "jsMethodName": "parseDlGameplayMission",
       "returnType": "Promise<DlGameplayBlocks>",
+      "parameters": [
+        {
+          "name": "gameplayBytes",
+          "type": "Uint8Array | ArrayBuffer"
+        }
+      ],
+      "preamble": [
+        "const input = toUint8Array(gameplayBytes);"
+      ],
+      "invokeArguments": [
+        "input"
+      ]
+    },
+    {
+      "dotNetMethodName": "ParseGcGameplayCore",
+      "jsMethodName": "parseGcGameplayCore",
+      "returnType": "Promise<UyaGameplayBlocks>",
       "parameters": [
         {
           "name": "gameplayBytes",

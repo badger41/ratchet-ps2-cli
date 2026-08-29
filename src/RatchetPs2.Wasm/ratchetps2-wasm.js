@@ -391,6 +391,17 @@ export async function parseDlGameplayMission(gameplayBytes) {
   );
 }
 
+export async function parseGcGameplayCore(gameplayBytes) {
+  await ensureStarted();
+
+  const input = toUint8Array(gameplayBytes);
+  return DotNet.invokeMethodAsync(
+    "RatchetPs2.Wasm",
+    "ParseGcGameplayCore",
+    input
+  );
+}
+
 export async function parseUyaGameplayCore(gameplayBytes) {
   await ensureStarted();
 

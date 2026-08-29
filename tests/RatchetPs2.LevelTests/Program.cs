@@ -14,6 +14,7 @@ using RatchetPs2.Games.DL.Gameplay;
 using RatchetPs2.Games.DL.Level;
 using RatchetPs2.Games.DL.Moby;
 using RatchetPs2.Games.DL.Online;
+using RatchetPs2.Games.GC.Gameplay;
 using RatchetPs2.Games.GC.Level;
 using RatchetPs2.Games.GC.Skyboxes;
 using RatchetPs2.Games.UYA.Gameplay;
@@ -37,6 +38,7 @@ ValidateUyaStandaloneLevelDataUnpacking();
 ValidateUyaStandaloneGameplayUnpacking();
 ValidateUyaCustomMapZipUnpacking();
 ValidateUyaGameplayTypedParsing();
+ValidateGameplayGeometryParsing();
 ValidateUyaAssetRenderPackageBuild();
 ValidateChunkTfragAssetRenderPackageWhenAvailable();
 ValidateChunkTfragWadReaderWhenAvailable();
@@ -689,13 +691,6 @@ static void ValidateUyaGameplayTypedParsing()
     Expect(settings.Rac3ThirdPart == 1234, "UYA level settings R&C3 tail field should be parsed");
     Expect(settings.TrailingBytes.SequenceEqual(new byte[] { 0xaa, 0xbb }), "UYA level settings trailing bytes should be preserved");
 
-    var gcLevelSettingsBytes = new byte[0xa0];
-    WriteInt32(gcLevelSettingsBytes, 0x68, 2);
-    WriteInt32(gcLevelSettingsBytes, 0x9c, 59);
-    var gcSettings = UyaLevelSettingsReader.Read(gcLevelSettingsBytes);
-    Expect(gcSettings.ChunkPlanes.Count == 2, "GC level settings chunk planes should be parsed");
-    Expect(gcSettings.CoreSoundsCount == 59 && gcSettings.Rac3ThirdPart == 0, "GC level settings should allow the UYA-only tail field to be absent");
-
     Expect(mobyInstances is not null, "UYA core moby_instances block should be parsed into a typed model");
     Expect(mobyInstances!.StaticCount == 1, "UYA moby instance static count should be parsed");
     Expect(mobyInstances.SpawnableMobyCount == 400, "UYA moby instance spawnable count should be parsed");
@@ -714,6 +709,86 @@ static void ValidateUyaGameplayTypedParsing()
     Expect(moby.Color == new UyaRgb96(86, 77, 2), "UYA moby instance color should be parsed");
     Expect(moby.Unknown84 == -1, "UYA moby instance 0x84 field should be parsed");
     Expect(gameplay.Blocks.Single(block => block.SemanticName == "pvar_data").PayloadBytes.SequenceEqual(new byte[] { 0xde, 0xad, 0xbe, 0xef }), "UYA pvar data payload should be exposed");
+
+    var gcLevelSettingsBytes = new byte[0x80];
+    WriteInt32(gcLevelSettingsBytes, 0x00, 57);
+    WriteInt32(gcLevelSettingsBytes, 0x04, 65);
+    WriteInt32(gcLevelSettingsBytes, 0x08, 50);
+    WriteSingle(gcLevelSettingsBytes, 0x18, 61440);
+    WriteSingle(gcLevelSettingsBytes, 0x1c, 179200);
+    var gcSettings = GcLevelSettingsReader.Read(gcLevelSettingsBytes);
+    Expect(gcSettings.BackgroundColor == new GcRgb96(57, 65, 50), "GC level settings background color should be parsed");
+    Expect(gcSettings.FogFarDistance == 179200, "GC level settings fog distance should be parsed");
+}
+
+static void ValidateGameplayGeometryParsing()
+{
+    var cuboidBytes = new byte[0x90];
+    WriteInt32(cuboidBytes, 0, 1);
+    WriteSingle(cuboidBytes, 0x10, 1);
+    WriteSingle(cuboidBytes, 0x4c, 4);
+    WriteSingle(cuboidBytes, 0x50, 5);
+    WriteSingle(cuboidBytes, 0x80, 0.25f);
+    WriteSingle(cuboidBytes, 0x84, 0.5f);
+    WriteSingle(cuboidBytes, 0x88, 0.75f);
+
+    var splineBytes = new byte[0x50];
+    WriteInt32(splineBytes, 0, 1);
+    WriteInt32(splineBytes, 4, 0x20);
+    WriteInt32(splineBytes, 8, 0x30);
+    WriteInt32(splineBytes, 0x10, 0);
+    WriteInt32(splineBytes, 0x20, 2);
+    WriteSingle(splineBytes, 0x30, 1);
+    WriteSingle(splineBytes, 0x34, 2);
+    WriteSingle(splineBytes, 0x38, 3);
+    WriteSingle(splineBytes, 0x3c, 4);
+    WriteSingle(splineBytes, 0x40, 5);
+    WriteSingle(splineBytes, 0x44, 6);
+    WriteSingle(splineBytes, 0x48, 7);
+    WriteSingle(splineBytes, 0x4c, 8);
+
+    var areaBytes = new byte[0x5c];
+    WriteInt32(areaBytes, 0, areaBytes.Length - 4);
+    WriteInt32(areaBytes, 4, 1);
+    WriteInt32(areaBytes, 8, 0x50);
+    WriteInt32(areaBytes, 0x0c, 0x54);
+    WriteSingle(areaBytes, 0x24, 10);
+    WriteSingle(areaBytes, 0x28, 20);
+    WriteSingle(areaBytes, 0x2c, 30);
+    WriteSingle(areaBytes, 0x30, 40);
+    WriteInt16(areaBytes, 0x34, 1);
+    WriteInt16(areaBytes, 0x36, 1);
+    WriteInt16(areaBytes, 0x3e, 12);
+    WriteInt32(areaBytes, 0x54, 7);
+    WriteInt32(areaBytes, 0x58, 9);
+
+    var geometries = new[]
+    {
+        (Game: "DL", Value: DlGameplayBlockReader.ReadCore(BuildGameplayData(
+            DlGameplayLayout.CoreHeaderSize,
+            (0x4c, cuboidBytes),
+            (0x5c, splineBytes),
+            (0x74, areaBytes))).Geometry),
+        (Game: "UYA", Value: UyaGameplayBlockReader.ReadCore(BuildGameplayData(
+            UyaGameplayLayout.CoreHeaderSize,
+            (0x68, cuboidBytes),
+            (0x78, splineBytes),
+            (0x98, areaBytes))).Geometry),
+        (Game: "GC", Value: UyaGameplayBlockReader.ReadCore(BuildGameplayData(
+            GcGameplayLayout.CoreHeaderSize,
+            (0x68, cuboidBytes),
+            (0x78, splineBytes),
+            (0x98, areaBytes)), GcGameplayLayout.Core).Geometry)
+    };
+
+    foreach (var geometry in geometries)
+    {
+        var cuboid = geometry.Value.Cuboids.Single();
+        Expect(cuboid.Matrix[15] == 4 && cuboid.InverseRotationMatrix[0] == 5 && cuboid.Rotation.Z == 0.75f, $"{geometry.Game} cuboid should be parsed");
+        Expect(geometry.Value.Splines.Single().Points[1].W == 8, $"{geometry.Game} spline points should be parsed");
+        Expect(geometry.Value.Areas.Single().SplineIndices.SequenceEqual([7]), $"{geometry.Game} area spline links should be parsed");
+        Expect(geometry.Value.Areas.Single().CuboidIndices.SequenceEqual([9]), $"{geometry.Game} area cuboid links should be parsed");
+    }
 }
 
 static void ValidateUyaAssetRenderPackageBuild()

@@ -159,6 +159,48 @@ export interface DlPvarTables {
   relativePointers: DlPvarRelativePointer[];
 }
 
+export interface GameplayVector3 {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface GameplayVector4 {
+  x: number;
+  y: number;
+  z: number;
+  w: number;
+}
+
+export interface GameplayCuboid {
+  index: number;
+  matrix: number[];
+  inverseRotationMatrix: number[];
+  rotation: GameplayVector3;
+}
+
+export interface GameplaySpline {
+  index: number;
+  points: GameplayVector4[];
+}
+
+export interface GameplayArea {
+  index: number;
+  boundingSphere: GameplayVector4;
+  lastUpdateTime: number;
+  splineIndices: number[];
+  cuboidIndices: number[];
+  sphereIndices: number[];
+  cylinderIndices: number[];
+  negativeCuboidIndices: number[];
+}
+
+export interface GameplayGeometry {
+  cuboids: GameplayCuboid[];
+  splines: GameplaySpline[];
+  areas: GameplayArea[];
+}
+
 export interface DlGameplayBlock {
   index: number;
   headerOffset: number;
@@ -173,6 +215,7 @@ export interface DlGameplayBlocks {
   kind: string;
   headerSize: number;
   pvarTables: DlPvarTables | null;
+  geometry: GameplayGeometry;
   blocks: DlGameplayBlock[];
 }
 
@@ -262,6 +305,7 @@ export interface UyaGameplayBlocks {
   headerSize: number;
   headerBytes: Uint8Array;
   pvarTables: UyaPvarTables | null;
+  geometry: GameplayGeometry;
   blocks: UyaGameplayBlock[];
 }
 
@@ -296,6 +340,8 @@ export function exportMobyGltf(mobyBytes: Uint8Array | ArrayBuffer, options?: Ex
 export function parseDlGameplayCore(gameplayBytes: Uint8Array | ArrayBuffer): Promise<DlGameplayBlocks>;
 
 export function parseDlGameplayMission(gameplayBytes: Uint8Array | ArrayBuffer): Promise<DlGameplayBlocks>;
+
+export function parseGcGameplayCore(gameplayBytes: Uint8Array | ArrayBuffer): Promise<UyaGameplayBlocks>;
 
 export function parseUyaGameplayCore(gameplayBytes: Uint8Array | ArrayBuffer): Promise<UyaGameplayBlocks>;
 

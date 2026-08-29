@@ -4,7 +4,7 @@ namespace RatchetPs2.Core.Textures;
 
 public static class Ps2Color
 {
-    public const byte FullOpacityAlpha = 128;
+    public const byte FullOpacityAlpha = 127;
     public const byte FullIntensity = 128;
 
     public static float NormalizeByteComponent(byte value)

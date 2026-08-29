@@ -1,7 +1,9 @@
 using Microsoft.JSInterop;
+using RatchetPs2.Core.Gameplay;
 using RatchetPs2.Core.IO;
 using RatchetPs2.Core.Wad;
 using RatchetPs2.Games.DL.Gameplay;
+using RatchetPs2.Games.GC.Gameplay;
 using RatchetPs2.Games.UYA.Gameplay;
 using System.Buffers.Binary;
 using System.Runtime.Versioning;
@@ -39,12 +41,30 @@ public static partial class Exports
         return ToWasmGameplayBlocks(UyaGameplayBlockReader.ReadCore(payloadBytes));
     }
 
+    [JSInvokable("ParseGcGameplayCore")]
+    public static WasmUyaGameplayBlocks ParseGcGameplayCore(byte[] gameplayBytes)
+    {
+        ArgumentNullException.ThrowIfNull(gameplayBytes);
+
+        var payloadBytes = BinaryMagic.IsWad(gameplayBytes)
+            ? WadCompression.Decompress(gameplayBytes)
+            : gameplayBytes;
+
+        return ToWasmGameplayBlocks(
+            UyaGameplayBlockReader.ReadCore(payloadBytes, GcGameplayLayout.Core),
+            isGc: true);
+    }
+
     private static WasmDlGameplayBlocks ToWasmGameplayBlocks(DlGameplayBlocks gameplay)
     {
         return new WasmDlGameplayBlocks(
             gameplay.Kind,
             gameplay.HeaderSize,
             ToWasmPvarTables(gameplay.Blocks, "DL"),
+            new WasmGameplayGeometry(
+                gameplay.Geometry.Cuboids,
+                gameplay.Geometry.Splines,
+                gameplay.Geometry.Areas),
             gameplay.Blocks
                 .Select(block => new WasmDlGameplayBlock(
                     block.Index,
@@ -57,13 +77,17 @@ public static partial class Exports
                 .ToArray());
     }
 
-    private static WasmUyaGameplayBlocks ToWasmGameplayBlocks(UyaGameplayBlocks gameplay)
+    private static WasmUyaGameplayBlocks ToWasmGameplayBlocks(UyaGameplayBlocks gameplay, bool isGc = false)
     {
         return new WasmUyaGameplayBlocks(
             gameplay.Kind,
             gameplay.HeaderSize,
             gameplay.HeaderBytes,
             ToWasmPvarTables(gameplay.Blocks, "UYA"),
+            new WasmGameplayGeometry(
+                gameplay.Geometry.Cuboids,
+                gameplay.Geometry.Splines,
+                gameplay.Geometry.Areas),
             gameplay.Blocks
                 .Select(block => new WasmUyaGameplayBlock(
                     block.Index,
@@ -72,9 +96,39 @@ public static partial class Exports
                     block.SemanticName,
                     block.PayloadBytes.Length,
                     block.PayloadBytes,
-                    ToWasmLevelSettings(block.LevelSettings),
+                    isGc ? ToWasmGcLevelSettings(block) : ToWasmLevelSettings(block.LevelSettings),
                     ToWasmMobyInstances(block.MobyInstances)))
                 .ToArray());
+    }
+
+    private static WasmUyaLevelSettings? ToWasmGcLevelSettings(UyaGameplayBlock block)
+    {
+        if (block.SemanticName != "level_settings"
+            || !GcLevelSettingsReader.TryRead(block.PayloadBytes, out var settings))
+        {
+            return null;
+        }
+
+        return new WasmUyaLevelSettings(
+            new UyaRgb96(settings!.BackgroundColor.Red, settings.BackgroundColor.Green, settings.BackgroundColor.Blue),
+            new UyaRgb96(settings.FogColor.Red, settings.FogColor.Green, settings.FogColor.Blue),
+            settings.FogNearDistance,
+            settings.FogFarDistance,
+            settings.FogNearIntensity,
+            settings.FogFarIntensity,
+            0,
+            false,
+            new UyaVector3(0, 0, 0),
+            new UyaVector3(0, 0, 0),
+            0,
+            0,
+            0,
+            0,
+            0,
+            [],
+            0,
+            0,
+            settings.TrailingByteLength);
     }
 
     private static WasmDlLevelSettings? ToWasmLevelSettings(DlLevelSettings? settings)
@@ -155,7 +209,16 @@ public static partial class Exports
                 mobyInstances.SpawnableMobyCount,
                 mobyInstances.Pad8,
                 mobyInstances.PadC,
-                mobyInstances.Instances.ToArray(),
+                mobyInstances.Instances
+                    .Select(instance => float.IsFinite(instance.RootedDistance)
+                        ? instance
+                        : instance with
+                        {
+                            RootedDistance = float.IsNaN(instance.RootedDistance)
+                                ? 0
+                                : MathF.CopySign(float.MaxValue, instance.RootedDistance)
+                        })
+                    .ToArray(),
                 mobyInstances.TrailingBytes.Length);
     }
 
@@ -267,6 +330,7 @@ public sealed record WasmDlGameplayBlocks(
     string Kind,
     int HeaderSize,
     WasmDlPvarTables? PvarTables,
+    WasmGameplayGeometry Geometry,
     WasmDlGameplayBlock[] Blocks);
 
 public sealed record WasmUyaGameplayBlocks(
@@ -274,7 +338,13 @@ public sealed record WasmUyaGameplayBlocks(
     int HeaderSize,
     byte[] HeaderBytes,
     WasmDlPvarTables? PvarTables,
+    WasmGameplayGeometry Geometry,
     WasmUyaGameplayBlock[] Blocks);
+
+public sealed record WasmGameplayGeometry(
+    GameplayCuboid[] Cuboids,
+    GameplaySpline[] Splines,
+    GameplayArea[] Areas);
 
 public sealed record WasmDlPvarTables(
     byte[] MobyLinksBytes,

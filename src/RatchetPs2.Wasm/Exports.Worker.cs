@@ -35,6 +35,14 @@ public static partial class Exports
     }
 
     [JSExport]
+    public static string ParseGcGameplayCoreJson(byte[] gameplayBytes)
+    {
+        ArgumentNullException.ThrowIfNull(gameplayBytes);
+
+        return JsonSerializer.Serialize(ParseGcGameplayCore(gameplayBytes), WorkerJsonOptions);
+    }
+
+    [JSExport]
     public static byte[] BuildDlLevelWadRenderPackageEnvelope(byte[] levelWadBytes)
     {
         ArgumentNullException.ThrowIfNull(levelWadBytes);

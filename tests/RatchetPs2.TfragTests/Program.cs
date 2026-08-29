@@ -75,9 +75,13 @@ Console.WriteLine("Tfrag terrain export tests passed.");
 static void ValidateSharedPs2ColorRules()
 {
     Expect(TfragTextureAlpha.FullOpacityAlpha == Ps2Color.FullOpacityAlpha, "tfrag full-opacity alpha should use the shared PS2 alpha scale");
+    Expect(Ps2Color.FullOpacityAlpha == 127, "PS2 alpha 127 should be treated as full opacity");
+    Expect(!new TextureAlphaInfo(127, 127, UsesBinaryAlpha: true).HasAlpha, "PNG alpha 127 should be classified as opaque");
+    Expect(new TextureAlphaInfo(126, 127, UsesBinaryAlpha: false).HasAlpha, "PNG alpha below 127 should retain opacity");
     Expect(ShrubTextureAlpha.FullOpacityAlpha == Ps2Color.FullOpacityAlpha, "shrub full-opacity alpha should use the shared PS2 alpha scale");
     Expect(TieGameProfile.Default.FullOpacityAlpha == Ps2Color.FullOpacityAlpha, "tie full-opacity alpha should use the shared PS2 alpha scale");
     Expect(Math.Abs(Ps2Color.NormalizeOpacityAlpha(0x80) - 1f) < 0.000001f, "PS2 alpha 0x80 should normalize to full opacity");
+    Expect(Math.Abs(Ps2Color.NormalizeOpacityAlpha(0x7f) - 1f) < 0.000001f, "PS2 alpha 0x7f should normalize to full opacity");
     Expect(Math.Abs(Ps2Color.NormalizeIntensityComponent(0x80) - 1f) < 0.000001f, "PS2 intensity 0x80 should normalize to full intensity");
 }
 
