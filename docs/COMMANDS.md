@@ -23,6 +23,7 @@ Global options:
 
 Top-level commands:
 
+- `armor`: Work with player armor assets.
 - `hello`: Print a hello-world style greeting for a selected game.
 - `hw3d`: Inspect experimental HUD widget 3D files.
 - `moby`: Work with moby model files.
@@ -63,6 +64,80 @@ Examples:
 ```bash
 ratchet-ps2 hello --game RC1
 ratchet-ps2 hello minimap tools --game UYA
+```
+
+## `armor`
+
+Commands for player armor assets.
+
+```bash
+ratchet-ps2 armor [command] [options]
+```
+
+### `armor extract-wad`
+
+Extract the global player armor WAD from a Deadlocked ISO. The output is self-contained: it includes the armor header from the ISO table of contents followed by the original sector-aligned armor payload.
+
+```bash
+ratchet-ps2 armor extract-wad --input <deadlocked.iso> --output <armor.wad>
+```
+
+Options:
+
+- `--input <input>`: Required path to the Deadlocked ISO.
+- `--output <output>`: Required path for the extracted `armor.wad`.
+
+### `armor extract-multiplayer-wad`
+
+Extract the global multiplayer `online.wad` from a Deadlocked ISO. The output preserves the global online header and its complete sector-aligned payload, which includes the assets shared by multiplayer mode.
+
+```bash
+ratchet-ps2 armor extract-multiplayer-wad --input <deadlocked.iso> --output <online.wad>
+```
+
+Options:
+
+- `--input <input>`: Required path to the Deadlocked ISO.
+- `--output <output>`: Required path for the extracted `online.wad`.
+
+### `armor export-multiplayer-dzo`
+
+Export the populated armor/moby slots from an extracted Deadlocked `online.wad`. Model and texture blocks are decompressed automatically, and the output GLBs use the same DZO conventions as the regular armor and moby exporters.
+
+```bash
+ratchet-ps2 armor export-multiplayer-dzo --input <online.wad> --output-root <directory> [--armor <index>...] [--joint-hierarchy <flat|tree>]
+```
+
+Options:
+
+- `--input <input>`: Required path to the extracted multiplayer `online.wad`.
+- `--output-root <directory>`: Required directory for multiplayer armor GLBs and `manifest.json`.
+- `--armor <index>`: Optional online-bank slot to export, from 0 through 43. Repeat it or provide multiple values to select several slots; omit it to export every populated slot.
+- `--joint-hierarchy <flat|tree>`: Export a flat DZO-compatible skeleton by default, or retain the decoded joint tree.
+
+### `armor export-dzo`
+
+Export one or more player armors from an extracted armor WAD. The output GLBs use the same DZO-specific mesh, skin, material, texture, and metadata conventions as `moby export-dzo`.
+
+```bash
+ratchet-ps2 armor export-dzo --input <armor.wad> --output-root <directory> [--armor <index>...] [--joint-hierarchy <flat|tree>]
+```
+
+Options:
+
+- `--input <input>`: Required path to the extracted armor WAD.
+- `--output-root <directory>`: Required directory for numbered armor GLBs and `manifest.json`.
+- `--armor <index>`: Optional armor slot to export. Repeat it or provide multiple values to select several slots; omit it to export every populated slot.
+- `--joint-hierarchy <flat|tree>`: Export a flat DZO-compatible skeleton by default, or retain the decoded joint tree.
+
+Example:
+
+```bash
+ratchet-ps2 armor extract-wad --input deadlocked.iso --output armor.wad
+ratchet-ps2 armor extract-multiplayer-wad --input deadlocked.iso --output online.wad
+ratchet-ps2 armor export-multiplayer-dzo --input online.wad --output-root dzo-multiplayer-armors
+ratchet-ps2 armor export-dzo --input armor.wad --output-root dzo-armors
+ratchet-ps2 armor export-dzo --input armor.wad --output-root selected-armors --armor 0 3 7
 ```
 
 ## `pif`
@@ -106,6 +181,27 @@ Commands for moby model files.
 
 ```bash
 ratchet-ps2 moby [command] [options]
+```
+
+### `moby export-dzo`
+
+Export every main-level and mission moby from DL level WADs as DZO-compatible GLB files.
+
+```bash
+ratchet-ps2 moby export-dzo --input-root <directory> --output-root <directory> [--joint-hierarchy <flat|tree>] [--non-opaque-alpha-coverage-threshold <value>]
+```
+
+Options:
+
+- `--input-root <directory>`: Required directory containing DL `level*.wad` files.
+- `--output-root <directory>`: Required directory for exported GLB files and manifests.
+- `--joint-hierarchy <flat|tree>`: Choose the exported joint hierarchy. Defaults to `flat`.
+- `--non-opaque-alpha-coverage-threshold <value>`: Minimum share of texels in a mesh's UV footprint that must be non-opaque before the mesh is classified as transparent. Accepts values from `0` to `1` and defaults to `0.5`.
+
+Example:
+
+```bash
+ratchet-ps2 moby export-dzo --input-root extracted-levels --output-root dzo-mobys --non-opaque-alpha-coverage-threshold 0.25
 ```
 
 ### `moby export-gltf`
