@@ -30,6 +30,7 @@ public static class TieClassReader
         var packetTables = TiePacketTableReader.Read(reader, bytes, header);
         var packetDataBlocks = TiePacketDataBlockReader.Read(bytes, header, packetTables);
         var lodTopologies = TieLodTopologyBuilder.Build(packetDataBlocks);
+        var vertexNormalModeBits = TieVertexNormalReader.ReadModeBits(bytes, header, options);
         var vertexNormals = TieVertexNormalReader.Read(bytes, header, options);
         var vertexNormalRemaps = TieVertexNormalReader.ReadRemaps(
             bytes,
@@ -52,6 +53,7 @@ public static class TieClassReader
             PacketTables = packetTables,
             PacketDataBlocks = packetDataBlocks,
             LodTopologies = lodTopologies,
+            VertexNormalModeBits = vertexNormalModeBits,
             VertexNormals = vertexNormals,
             VertexNormalRemaps = vertexNormalRemaps,
             RgbaRemapOperations = rgbaRemapOperations,

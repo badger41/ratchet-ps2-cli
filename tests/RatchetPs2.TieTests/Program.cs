@@ -36,6 +36,9 @@ Expect(tie.VertexNormals[0].X == 2, $"expected first vertex normal X 2, got {tie
 Expect(tie.VertexNormals[0].Y == 64, $"expected first vertex normal Y 64, got {tie.VertexNormals[0].Y}");
 Expect(tie.VertexNormals[0].Z == 72, $"expected first vertex normal Z 72, got {tie.VertexNormals[0].Z}");
 Expect(tie.VertexNormals[0].W == 0, $"expected first vertex normal W 0, got {tie.VertexNormals[0].W}");
+Expect(tie.VertexNormalModeBits == 1, $"expected packed-light mode bits 1, got {tie.VertexNormalModeBits}");
+Expect(tie.VertexNormals[0].Scale == 120, $"expected first packed-light scale 120, got {tie.VertexNormals[0].Scale}");
+Expect(tie.VertexNormals[0].Packed == 0x2D40, $"expected first packed normal 0x2D40, got 0x{tie.VertexNormals[0].Packed:X4}");
 Expect(tie.VertexNormalRemaps.Count > 0, "expected decoded vertex normal remaps");
 Expect(
     tie.VertexNormalRemaps.Any(remap => remap.PacketIndex == 0 && remap.VertexRowIndex == 29 && remap.NormalIndex == 42),
@@ -471,6 +474,10 @@ using (var gltfDocument = JsonDocument.Parse(gltfExport.GltfBytes))
 
     var meshes = root.GetProperty("meshes");
     Expect(meshes.GetArrayLength() == 1, $"expected one tie glTF mesh, got {meshes.GetArrayLength()}");
+    var meshExtras = meshes[0].GetProperty("extras");
+    Expect(meshExtras.GetProperty("PackedLightModeBits").GetUInt32() == tie.VertexNormalModeBits, "expected glTF packed-light mode bits");
+    Expect(meshExtras.GetProperty("PackedLightNormals").GetArrayLength() == tie.VertexNormals.Count, "expected every packed normal in glTF metadata");
+    Expect(meshExtras.GetProperty("PackedLightScales").GetArrayLength() == tie.VertexNormals.Count, "expected every packed-light scale in glTF metadata");
     var primitives = meshes[0].GetProperty("primitives");
     var expectedPrimitiveCount = CountExpectedGltfPrimitiveGroups(tie, 0);
     Expect(primitives.GetArrayLength() == expectedPrimitiveCount, $"expected one tie glTF primitive per packet shader run, got {primitives.GetArrayLength()}");

@@ -10,6 +10,21 @@ internal static class TieVertexNormalReader
     private const int VertexNormalRemapNormalIndexMask = 0x3FFF;
     private const int VertexNormalRemapTargetIndexMask = 0x3FFC;
 
+    public static uint ReadModeBits(
+        byte[] bytes,
+        TieClassHeader header,
+        TieClassReadOptions options)
+    {
+        if (header.VertexNormalsOffset == 0 || header.VertexNormalsCount <= 0 || options.VertexNormalHeaderSize < 8)
+        {
+            return 0;
+        }
+
+        var offset = CheckedOffset(header.VertexNormalsOffset, "vertex normals");
+        EnsureRange(bytes, offset, 8, "vertex normal header");
+        return BitConverter.ToUInt32(bytes, offset + 4);
+    }
+
     public static List<TieVertexNormal> Read(
         byte[] bytes,
         TieClassHeader header,
@@ -49,6 +64,7 @@ internal static class TieVertexNormalReader
                 Y = (sbyte)bytes[normalOffset + 0x01],
                 Z = (sbyte)bytes[normalOffset + 0x02],
                 W = (sbyte)bytes[normalOffset + 0x03],
+                Scale = bytes[normalOffset + 0x05],
                 Packed = BitConverter.ToUInt16(bytes, normalOffset + 0x06)
             });
         }

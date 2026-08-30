@@ -7,6 +7,7 @@ public sealed class TieClass
     public IReadOnlyList<TiePacketTable> PacketTables { get; init; } = [];
     public IReadOnlyList<TiePacketDataBlock> PacketDataBlocks { get; init; } = [];
     public IReadOnlyList<TieLodTopology> LodTopologies { get; init; } = [];
+    public uint VertexNormalModeBits { get; init; }
     public IReadOnlyList<TieVertexNormal> VertexNormals { get; init; } = [];
     public IReadOnlyList<TieVertexNormalRemap> VertexNormalRemaps { get; init; } = [];
     public IReadOnlyList<TieRgbaRemapOperation> RgbaRemapOperations { get; init; } = [];
@@ -397,6 +398,7 @@ public sealed class TieVertexNormal
     public required short Y { get; init; }
     public required short Z { get; init; }
     public required short W { get; init; }
+    public byte Scale { get; init; }
     public ushort Packed { get; init; }
 }
 

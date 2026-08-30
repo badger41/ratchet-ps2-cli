@@ -1472,7 +1472,10 @@ internal static class TieGltfDocumentBuilder
                 ScaledBoundingRadius = tie.Header.Scale * boundingSphere.Radius,
                 AmbientWordCount = ambientIndexResult.AmbientWordCount,
                 AmbientSlotCount = ambientIndexResult.AmbientSlotCount,
-                AmbientColorRecipes = ambientIndexResult.ColorRecipes
+                AmbientColorRecipes = ambientIndexResult.ColorRecipes,
+                PackedLightModeBits = tie.VertexNormalModeBits,
+                PackedLightNormals = tie.VertexNormals.Select(normal => normal.Packed).ToArray(),
+                PackedLightScales = tie.VertexNormals.Select(normal => (int)normal.Scale).ToArray()
             };
         }
 
@@ -1574,6 +1577,9 @@ internal static class TieGltfDocumentBuilder
             AmbientColorAverage2RecipeCount = ambientIndexResult.ColorRecipes.Count(
                 recipe => string.Equals(recipe.Kind, TieRgbaRemapOperationKind.Average2.ToString(), StringComparison.Ordinal)),
             AmbientColorRecipes = ambientIndexResult.ColorRecipes,
+            PackedLightModeBits = tie.VertexNormalModeBits,
+            PackedLightNormals = tie.VertexNormals.Select(normal => normal.Packed).ToArray(),
+            PackedLightScales = tie.VertexNormals.Select(normal => (int)normal.Scale).ToArray(),
             GlowRgba = FormatRgba(tie.Header.GlowRgba),
             GlowRgbaColor = BuildRgbaDiagnostic(glowColorResult.Rgba),
             DecodedGlowRgbaRemapCount = tie.GlowRgbaRemaps.Count,
