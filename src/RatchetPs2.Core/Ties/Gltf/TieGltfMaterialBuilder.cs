@@ -189,18 +189,14 @@ internal sealed class TieGltfMaterialBuilder
         short headerModeBits,
         TieGameProfile profile)
     {
-        if (!textureAlpha.HasAlpha)
-        {
-            return TieMaterialAlphaUsage.Opaque;
-        }
-
         if (passFlags == profile.ReflectiveMaskPassFlags
-            && (((ushort)headerModeBits & profile.ReflectiveMaskModeBit) != 0))
+            && (((ushort)headerModeBits & profile.ReflectiveMaskModeBit) != 0)
+            && textureAlpha.MinAlpha < byte.MaxValue)
         {
             return TieMaterialAlphaUsage.ReflectiveMask;
         }
 
-        if (textureAlpha.MinAlpha >= profile.FullOpacityAlpha)
+        if (!textureAlpha.HasAlpha || textureAlpha.MinAlpha >= profile.FullOpacityAlpha)
         {
             return TieMaterialAlphaUsage.Opaque;
         }

@@ -824,6 +824,29 @@ void ValidateReflectiveMaskFixture()
             diagnosticReflectiveMaskCount == 4,
             $"{relativePath}: expected diagnostics to report four reflective-mask alpha materials, got {diagnosticReflectiveMaskCount}");
 
+        var alpha128Export = TieGltfExporter.Export(
+            fixtureTie,
+            "tie.gltf",
+            new TieGltfExportOptions
+            {
+                BufferFileName = "tie.buffer.bin",
+                ExternalTextureUris = textureResources!.Uris,
+                ExternalTextureSizes = textureResources.Sizes,
+                ExternalTextureAlpha = textureResources.Alpha.ToDictionary(
+                    pair => pair.Key,
+                    _ => new TextureAlphaInfo(128, 128, UsesBinaryAlpha: true))
+            });
+        using var alpha128Document = JsonDocument.Parse(alpha128Export.GltfBytes);
+        var alpha128ReflectiveMaskCount = alpha128Document.RootElement
+            .GetProperty("materials")
+            .EnumerateArray()
+            .Count(material => material.TryGetProperty("extras", out var extras)
+                && extras.TryGetProperty("TieTextureAlphaUsage", out var alphaUsage)
+                && alphaUsage.GetString() == TieMaterialAlphaUsage.ReflectiveMask.ToString());
+        Expect(
+            alpha128ReflectiveMaskCount == 4,
+            $"{relativePath}: expected alpha-128 textures to retain four packet-authored reflective masks, got {alpha128ReflectiveMaskCount}");
+
         Console.WriteLine($"PASS DL tie reflective alpha mask {relativePath}");
     }
     catch (Exception ex)
