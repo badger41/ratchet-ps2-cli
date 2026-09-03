@@ -21,6 +21,7 @@ internal sealed class TieGltfMaterialBuilder
     private readonly IReadOnlyDictionary<int, TextureAlphaInfo>? _textureAlpha;
     private readonly TieGameProfile _profile;
     private readonly GltfExportMetadataMode _metadataMode;
+    private readonly bool _optimizeForRuntime;
     private readonly int? _reflectiveEnvironmentShaderIndex;
     private readonly Dictionary<MaterialVariantKey, int> _materialIndexByKey = [];
     private readonly Dictionary<int, int> _textureIndexByShaderIndex = [];
@@ -31,13 +32,15 @@ internal sealed class TieGltfMaterialBuilder
         IReadOnlyDictionary<int, string>? textureUris,
         IReadOnlyDictionary<int, TextureAlphaInfo>? textureAlpha,
         TieGameProfile profile,
-        GltfExportMetadataMode metadataMode)
+        GltfExportMetadataMode metadataMode,
+        bool optimizeForRuntime)
     {
         _shaders = shaders ?? throw new ArgumentNullException(nameof(shaders));
         _textureUris = textureUris;
         _textureAlpha = textureAlpha;
         _profile = profile ?? throw new ArgumentNullException(nameof(profile));
         _metadataMode = metadataMode;
+        _optimizeForRuntime = optimizeForRuntime;
         _reflectiveEnvironmentShaderIndex = ResolveReflectiveEnvironmentShaderIndex(textureUris);
 
         Materials.Add(BuildUntexturedPreviewMaterial());
@@ -78,7 +81,7 @@ internal sealed class TieGltfMaterialBuilder
 
     public List<TieGltfMaterialDiagnostic> Diagnostics { get; } = [];
 
-    public int GetMaterialIndex(
+    public TieGltfMaterialBinding GetMaterial(
         int shaderIndex,
         int multipassOffset,
         int passFlags,
@@ -95,7 +98,7 @@ internal sealed class TieGltfMaterialBuilder
             && !string.IsNullOrWhiteSpace(uri);
         if (!hasTexture && glowEmission is null && doubleSided)
         {
-            return 0;
+            return new TieGltfMaterialBinding(0, RequiresStableOrder(TieMaterialAlphaUsage.Opaque, TextureAlphaMode.Opaque));
         }
 
         var rgba = glowEmission?.Rgba ?? default;
@@ -105,24 +108,27 @@ internal sealed class TieGltfMaterialBuilder
                 ? resolvedAlphaInfo
                 : TextureAlphaInfo.Opaque;
         var alphaUsage = ResolveMaterialAlphaUsage(alphaInfo, passFlags, headerModeBits, _profile);
+        doubleSided |= _profile.UseDoubleSidedAlphaMaterials
+            && alphaUsage == TieMaterialAlphaUsage.Opacity;
+        var preserveMultipass = !_optimizeForRuntime || alphaUsage == TieMaterialAlphaUsage.ReflectiveMask;
         var key = new MaterialVariantKey(
-            shaderIndex,
-            passFlags,
+            hasTexture ? shaderIndex : -1,
+            preserveMultipass ? passFlags : 0,
             doubleSided,
             glowEmission.HasValue,
             hasTexture ? alphaInfo.AlphaMode : TextureAlphaMode.Opaque,
             alphaUsage,
-            envPassBleedColor?.R ?? 0,
-            envPassBleedColor?.G ?? 0,
-            envPassBleedColor?.B ?? 0,
-            envPassBleedColor?.A ?? 0,
+            preserveMultipass ? envPassBleedColor?.R ?? 0 : (byte)0,
+            preserveMultipass ? envPassBleedColor?.G ?? 0 : (byte)0,
+            preserveMultipass ? envPassBleedColor?.B ?? 0 : (byte)0,
+            preserveMultipass ? envPassBleedColor?.A ?? 0 : (byte)0,
             rgba.R,
             rgba.G,
             rgba.B,
             rgba.A);
         if (_materialIndexByKey.TryGetValue(key, out var materialIndex))
         {
-            return materialIndex;
+            return new TieGltfMaterialBinding(materialIndex, RequiresStableOrder(alphaUsage, alphaInfo.AlphaMode));
         }
 
         int? textureIndex = null;
@@ -180,8 +186,11 @@ internal sealed class TieGltfMaterialBuilder
             glowEmission));
 
         _materialIndexByKey.Add(key, materialIndex);
-        return materialIndex;
+        return new TieGltfMaterialBinding(materialIndex, RequiresStableOrder(alphaUsage, alphaInfo.AlphaMode));
     }
+
+    private static bool RequiresStableOrder(TieMaterialAlphaUsage alphaUsage, TextureAlphaMode alphaMode) =>
+        alphaUsage == TieMaterialAlphaUsage.Opacity && alphaMode == TextureAlphaMode.Blend;
 
     private static TieMaterialAlphaUsage ResolveMaterialAlphaUsage(
         TextureAlphaInfo textureAlpha,
@@ -209,7 +218,6 @@ internal sealed class TieGltfMaterialBuilder
         var material = new Dictionary<string, object?>
         {
             ["name"] = "tie_untextured_preview",
-            ["doubleSided"] = true,
             ["pbrMetallicRoughness"] = new
             {
                 baseColorFactor = new[] { 0.72f, 0.72f, 0.68f, 1f },
@@ -217,6 +225,11 @@ internal sealed class TieGltfMaterialBuilder
                 roughnessFactor = 0.85f
             }
         };
+
+        if (!_profile.UseStaticBackfaceCulling)
+        {
+            material["doubleSided"] = true;
+        }
 
         if (_metadataMode != GltfExportMetadataMode.None)
         {
@@ -660,6 +673,8 @@ internal sealed class TieGltfMaterialBuilder
 }
 
 internal readonly record struct TieGltfGlowEmissionMaterial(TieRgba32 Rgba, float Strength);
+
+internal readonly record struct TieGltfMaterialBinding(int Index, bool RequiresStableOrder);
 
 internal sealed record TieGltfMaterialDiagnostic(
     int Index,

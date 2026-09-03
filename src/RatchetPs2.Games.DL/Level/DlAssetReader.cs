@@ -252,7 +252,8 @@ public static class DlAssetReader
         ReadOnlySpan<byte> assetData,
         int textureDataOffset,
         IReadOnlyList<DlAssetMipmapDefinition>? gsStashDefinitions = null,
-        bool isSwizzled = true)
+        bool isSwizzled = true,
+        bool useTextureFlags = true)
     {
         ValidateDimensions(definition.Width, definition.Height, definition);
 
@@ -264,7 +265,7 @@ public static class DlAssetReader
         var mipLengths = new List<int>();
         var mips = new List<byte[]>();
 
-        if ((definition.Type & 1) != 0)
+        if ((definition.Type & 1) != 0 || !useTextureFlags)
         {
             pixelOffset = checked(textureDataOffset + definition.TextureOffset);
             var pixelLength = checked(definition.Width * definition.Height);
@@ -293,7 +294,7 @@ public static class DlAssetReader
             pixels = ReadSlice(paletteData, pixelOffset, pixelLength, $"{family} GS stash texture {definition.Index}");
         }
 
-        if (definition.MipmapPaletteId >= 0)
+        if (useTextureFlags && definition.MipmapPaletteId >= 0)
         {
             var mip2Offset = checked(definition.MipmapPaletteId * 0x100);
             var mip2Length = checked(Math.Max(1, definition.Width / 4) * Math.Max(1, definition.Height / 4));

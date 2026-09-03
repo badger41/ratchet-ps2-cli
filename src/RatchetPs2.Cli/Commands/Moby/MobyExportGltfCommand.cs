@@ -68,14 +68,14 @@ internal static class MobyExportGltfCommand
             if (string.IsNullOrWhiteSpace(gameValue) || !GameIdParser.TryParse(gameValue, out var gameId))
             {
                 parseResult.GetResult(gameOption)?.AddError(
-                    $"Unsupported --game value '{gameValue}'. Expected UYA or DL for glTF export.");
+                    $"Unsupported --game value '{gameValue}'. Expected RC1, UYA, or DL for glTF export.");
                 return;
             }
 
-            if (gameId is not (GameId.UYA or GameId.DL))
+            if (gameId is not (GameId.RC1 or GameId.UYA or GameId.DL))
             {
                 parseResult.GetResult(gameOption)?.AddError(
-                    $"Moby glTF export currently supports only UYA and DL. Received {gameId}.");
+                    $"Moby glTF export currently supports RC1, UYA, and DL. Received {gameId}.");
                 return;
             }
 
@@ -127,6 +127,7 @@ internal static class MobyExportGltfCommand
                 SkipAnimationSequences = skipAnimations,
                 LodIndex = lodIndex,
                 AnimationFormat = MobyGameFormats.Resolve(gameModuleResolver, gameId),
+                ModelFormat = MobyGameFormats.ResolveModel(gameModuleResolver, gameId),
                 ExternalTextureUris = textureResources?.Uris,
                 ExternalTextureSizes = textureResources?.Sizes,
                 ExternalTextureAlpha = textureResources?.Alpha,

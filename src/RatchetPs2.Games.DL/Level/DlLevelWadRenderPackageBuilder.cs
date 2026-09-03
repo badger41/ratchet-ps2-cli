@@ -5,7 +5,9 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using RatchetPs2.Core.Games;
 using RatchetPs2.Core.Gltf;
+using RatchetPs2.Core.Hud;
 using RatchetPs2.Core.IO;
+using RatchetPs2.Core.LevelAssets;
 using RatchetPs2.Core.Moby;
 using RatchetPs2.Core.Shrubs;
 using RatchetPs2.Core.Skyboxes;
@@ -40,6 +42,7 @@ public sealed record DlLevelWadRenderPackageBuildOptions
     public GltfExportMetadataMode GltfMetadataMode { get; init; } = GltfExportMetadataMode.Full;
     public int? TfragLodIndex { get; init; }
     public int? MobyLodIndex { get; init; }
+    public LevelAssetProfile AssetProfile { get; init; } = LevelAssetProfile.Default;
 }
 
 public static class DlLevelWadRenderPackageBuilder
@@ -98,9 +101,9 @@ public static class DlLevelWadRenderPackageBuilder
 
         if (coreSegmentByHeaderOffset.TryGetValue(0x20, out var hudHeader))
         {
-            files.AddRange(BuildHudFiles(
+            files.AddRange(HudBankRenderPackageBuilder.BuildFiles(
                 hudHeader.PayloadBytes,
-                Enumerable.Range(0, DlHudBankReader.BankCount)
+                Enumerable.Range(0, HudBankReader.BankCount)
                     .Select(index => coreSegmentByHeaderOffset.TryGetValue(0x28 + (index * 8), out var bank)
                         ? bank.PayloadBytes
                         : [])
@@ -252,96 +255,6 @@ public static class DlLevelWadRenderPackageBuilder
         return files;
     }
 
-    public static IReadOnlyList<PackedFile> BuildHudFiles(
-        byte[] headerBytes,
-        IReadOnlyList<byte[]> bankBytes)
-    {
-        ArgumentNullException.ThrowIfNull(headerBytes);
-        ArgumentNullException.ThrowIfNull(bankBytes);
-
-        var banks = Enumerable.Range(0, DlHudBankReader.BankCount)
-            .Select(index => index < bankBytes.Count ? DecompressHudBank(bankBytes[index]) : [])
-            .ToArray();
-        var hud = DlHudBankReader.Read(headerBytes, banks);
-        var files = new List<PackedFile>();
-        var normalizedTextures = new List<object>(hud.Frames.Count);
-
-        foreach (var frame in hud.Frames)
-        {
-            var hasTexture = DlHudBankReader.TryGetTexture(hud, frame.TextureIndex, out var texture);
-            var hasPalette = DlHudBankReader.TryGetPalette(hud, frame.PaletteIndex, out var palette);
-            string? pngPath = null;
-            var status = "skipped";
-            string? note = null;
-
-            if (hasTexture && hasPalette)
-            {
-                try
-                {
-                    pngPath = $"bank_{texture.BankIndex}/tex.{frame.Index:0000}.png";
-                    var pif = PifWriter.CreateIndexed8(
-                        texture.Width,
-                        texture.Height,
-                        palette.PaletteBytes,
-                        texture.PixelBytes,
-                        isSwizzled: false);
-                    AddFile(
-                        files,
-                        $"hud/{pngPath}",
-                        TextureConverter.ConvertToPng(pif, TexturePixelFormat.Rgba32),
-                        "image/png");
-                    status = "written";
-                }
-                catch (Exception ex) when (ex is ArgumentException or InvalidDataException or NotSupportedException)
-                {
-                    pngPath = null;
-                    status = "error";
-                    note = ex.Message;
-                }
-            }
-            else
-            {
-                note = hasTexture
-                    ? $"palette index {frame.PaletteIndex} is missing or out of range"
-                    : $"texture index {frame.TextureIndex} is missing or out of range";
-            }
-
-            normalizedTextures.Add(new
-            {
-                FrameIndex = frame.Index,
-                frame.PaletteIndex,
-                frame.TextureIndex,
-                TextureBank = hasTexture ? texture.BankIndex : (int?)null,
-                PaletteBank = hasPalette ? palette.BankIndex : (int?)null,
-                Status = status,
-                Note = note,
-                PngPath = pngPath,
-                Texture = hasTexture
-                    ? new { texture.Index, texture.Width, texture.Height }
-                    : null
-            });
-        }
-
-        AddJsonFile(files, "hud/manifest.json", new
-        {
-            Banks = Enumerable.Range(0, DlHudBankReader.BankCount).Select(index => new
-            {
-                BankIndex = index,
-                Length = banks[index].Length,
-                DeclaredDecompressedSize = index < hud.Header.BankSizes.Count
-                    ? hud.Header.BankSizes[index]
-                    : 0
-            }),
-            NormalizedFrameTextures = normalizedTextures
-        });
-        return files;
-    }
-
-    private static byte[] DecompressHudBank(byte[] bytes)
-    {
-        return BinaryMagic.IsWad(bytes) ? WadCompression.Decompress(bytes) : bytes;
-    }
-
     private static List<MobyExportManifestEntry> BuildAssets(
         List<PackedFile> files,
         GameId gameId,
@@ -356,15 +269,19 @@ public static class DlLevelWadRenderPackageBuilder
         IReadOnlyDictionary<int, Vector3>? skyRotationDeltasRadiansPerFrame)
     {
         var header = DlAssetReader.ReadHeader(headerBytes);
+        var assetProfile = options.AssetProfile;
         var allMipmapDefinitions = DlAssetReader.ReadMipmapDefinitions(
             headerBytes,
             header.GsRamOffset,
-            Math.Max(0, header.GsRamCount + header.ExtraMipmapCount));
+            Math.Max(
+                0,
+                header.GsRamCount
+                    + (assetProfile.IncludeExtraMipmapDefinitions ? header.ExtraMipmapCount : 0)));
         var gsStashDefinitions = allMipmapDefinitions.Skip(header.GsRamCount).ToArray();
         var environmentTextures = BuildEnvironmentTextures(files, header, paletteBytes, gsStashDefinitions);
-        var mobyGsStashClassIds = DlAssetReader.ReadMobyGsStashClassIds(
-            headerBytes,
-            header.MobyGsStashListOffset);
+        var mobyGsStashClassIds = assetProfile.HasMobyGsStashClassList
+            ? DlAssetReader.ReadMobyGsStashClassIds(headerBytes, header.MobyGsStashListOffset)
+            : [];
         var mobyDefinitions = DlAssetReader.ReadModelDefinitions(headerBytes, header.MobyModelOffset, header.MobyModelCount);
         var tieDefinitions = DlAssetReader.ReadModelDefinitions(headerBytes, header.TieModelOffset, header.TieModelCount);
         var shrubDefinitions = DlAssetReader.ReadShrubDefinitions(headerBytes, header.ShrubModelOffset, header.ShrubModelCount);
@@ -408,7 +325,8 @@ public static class DlLevelWadRenderPackageBuilder
             tfragTextureDefinitions,
             paletteBytes,
             assetBytes,
-            textureIsSwizzled);
+            textureIsSwizzled,
+            assetProfile.UseTextureFlags);
         gltfExports.Add(BuildTfrag(
             files,
             gameId,
@@ -657,7 +575,8 @@ public static class DlLevelWadRenderPackageBuilder
         IReadOnlyList<DlAssetTextureDefinition> textureDefinitions,
         byte[] paletteBytes,
         byte[] assetBytes,
-        bool textureIsSwizzled)
+        bool textureIsSwizzled,
+        bool useTextureFlags)
     {
         var textureResources = new RenderTextureResources();
         foreach (var definition in textureDefinitions)
@@ -669,7 +588,8 @@ public static class DlLevelWadRenderPackageBuilder
                 paletteBytes,
                 assetBytes,
                 header.TextureDataOffset,
-                isSwizzled: textureIsSwizzled);
+                isSwizzled: textureIsSwizzled,
+                useTextureFlags: useTextureFlags);
             AddTexture(files, "assets/tfrag/textures", "textures", texture, textureResources);
         }
 
@@ -849,7 +769,8 @@ public static class DlLevelWadRenderPackageBuilder
                         assetBytes,
                         textureDataOffset,
                         gsStashDefinitions,
-                        isSwizzled: mobyTextureIsSwizzled);
+                        isSwizzled: mobyTextureIsSwizzled,
+                        useTextureFlags: options.AssetProfile.UseTextureFlags);
                     AddTexture(
                         files,
                         $"{packageRoot}/textures",
@@ -867,6 +788,7 @@ public static class DlLevelWadRenderPackageBuilder
                     new MobyGltfExportOptions
                     {
                         AnimationFormat = GetMobyAnimationFormat(gameId),
+                        ModelFormat = options.AssetProfile.MobyModelFormat,
                         LodIndex = options.MobyLodIndex,
                         ExternalTextureUris = textureResources.Uris,
                         ExternalTextureSizes = textureResources.Sizes,
@@ -1125,7 +1047,8 @@ public static class DlLevelWadRenderPackageBuilder
                     paletteBytes,
                     assetBytes,
                     textureDataOffset,
-                    isSwizzled: textureIsSwizzled);
+                    isSwizzled: textureIsSwizzled,
+                    useTextureFlags: options.AssetProfile.UseTextureFlags);
                 AddTexture(files, $"{packageRoot}/textures", "textures", texture, textureResources);
                 relativeTextureIndex++;
             }
@@ -1141,7 +1064,7 @@ public static class DlLevelWadRenderPackageBuilder
                     {
                         LodIndex = 0,
                         BufferFileName = "tie.buffer.bin",
-                        GameProfile = TieGameProfile.ForGame(gameId),
+                        GameProfile = options.AssetProfile.TieGameProfile ?? TieGameProfile.ForGame(gameId),
                         ExternalTextureUris = textureResources.Uris,
                         ExternalTextureSizes = textureResources.Sizes,
                         ExternalTextureAlpha = textureResources.Alpha,
@@ -1219,7 +1142,8 @@ public static class DlLevelWadRenderPackageBuilder
                     paletteBytes,
                     assetBytes,
                     textureDataOffset,
-                    isSwizzled: textureIsSwizzled);
+                    isSwizzled: textureIsSwizzled,
+                    useTextureFlags: options.AssetProfile.UseTextureFlags);
                 AddTexture(files, $"{packageRoot}/textures", "textures", texture, textureResources);
                 relativeTextureIndex++;
             }

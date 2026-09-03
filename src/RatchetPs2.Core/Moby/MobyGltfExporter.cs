@@ -25,6 +25,7 @@ public sealed record MobyGltfExportOptions
     public bool SkipAnimationSequences { get; init; }
     public int? LodIndex { get; init; }
     public MobyAnimationFormat AnimationFormat { get; init; } = MobyAnimationFormat.Standard;
+    public MobyModelFormat ModelFormat { get; init; } = MobyModelFormat.Standard;
     public MobyGltfSkeletonParentMode SkeletonParentMode { get; init; } = MobyGltfSkeletonParentMode.Auto;
     public IReadOnlyDictionary<int, string>? ExternalTextureUris { get; init; }
     public IReadOnlyDictionary<int, TextureSize>? ExternalTextureSizes { get; init; }
@@ -71,7 +72,8 @@ public static partial class MobyGltfExporter
                 new MobyModelReadOptions
                 {
                     SkipAnimationSequences = options.SkipAnimationSequences,
-                    AnimationFormat = options.AnimationFormat
+                    AnimationFormat = options.AnimationFormat,
+                    ModelFormat = options.ModelFormat
                 }),
             gltfFileName,
             options);

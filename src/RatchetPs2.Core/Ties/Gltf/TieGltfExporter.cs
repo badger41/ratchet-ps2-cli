@@ -25,6 +25,7 @@ public sealed class TieGltfExportOptions
     public IReadOnlyDictionary<int, TextureSize>? ExternalTextureSizes { get; init; }
     public IReadOnlyDictionary<int, TextureAlphaInfo>? ExternalTextureAlpha { get; init; }
     public bool IncludeDiagnostics { get; init; } = true;
+    /// <summary>Writes compact JSON and, with runtime-only metadata, merges render-equivalent packet primitives.</summary>
     public bool Minify { get; init; }
     public GltfExportMetadataMode MetadataMode { get; init; } = GltfExportMetadataMode.Full;
     public Action<string, string, double, string?>? TimingSink { get; init; }
@@ -100,11 +101,22 @@ public static class TieGltfExporter
             "Tie source normal phase",
             sourceNormalPhaseStart,
             $"{sourceNormalPhaseAnalysis.Strips.Count} strips");
+        var useSourceNormalStripWinding = profile.OrientTriangleWindingToNormals
+            && sourceNormalPhaseAnalysis.Strips.Count == topology.Strips.Count
+            && sourceNormalPhaseAnalysis.Strips.All(strip =>
+                strip.PhaseVote is TieGltfSourceNormalPhaseVote.Current or TieGltfSourceNormalPhaseVote.Inverted);
         var packetGroupsStart = Stopwatch.GetTimestamp();
+        var invertedStripIndices = useSourceNormalStripWinding
+            ? sourceNormalPhaseAnalysis.Strips
+                .Where(strip => strip.PhaseVote == TieGltfSourceNormalPhaseVote.Inverted)
+                .Select(strip => strip.StripIndex)
+                .ToHashSet()
+            : [];
         var packetGroupResult = TieGltfPacketIndexGroupBuilder.Build(
             tie,
             topology,
-            glowColorResult.Colors);
+            glowColorResult.Colors,
+            invertedStripIndices);
         var flatIndices = packetGroupResult.PacketIndexGroups.SelectMany(group => group.Indices).ToArray();
         AddTiming(
             options,
@@ -122,6 +134,7 @@ public static class TieGltfExporter
             sourceNormalPhaseAnalysis,
             profile);
         if (profile.OrientTriangleWindingToNormals
+            && !useSourceNormalStripWinding
             && TieGltfGeometryBuilder.OrientTrianglesConsistently(
                 positions,
                 normalResult.IndexNormals,
@@ -148,7 +161,8 @@ public static class TieGltfExporter
                 positions.Count,
                 flatIndices,
                 normalResult.IndexNormals,
-                normalResult.TableNormalLayout)
+                normalResult.TableNormalLayout,
+                profile)
             : TieGltfAmbientBuilder.Empty;
         AddTiming(
             options,

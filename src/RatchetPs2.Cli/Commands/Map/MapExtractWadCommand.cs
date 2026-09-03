@@ -1,9 +1,5 @@
 using RatchetPs2.Cli.Abstractions;
-using RatchetPs2.Cli.GameSelection;
-using RatchetPs2.Core.Games;
-using RatchetPs2.Games.DL.Level;
-using RatchetPs2.Games.GC.Level;
-using RatchetPs2.Games.UYA.Level;
+using RatchetPs2.Cli.Handlers;
 using System.CommandLine;
 
 namespace RatchetPs2.Cli.Commands.Map;
@@ -36,9 +32,10 @@ internal static class MapExtractWadCommand
             var level = parseResult.GetValue(levelOption);
             var outputFile = parseResult.GetValue(outputOption);
 
-            if (!TryValidateMapGame(gameValue, out var gameId, out var error))
+            if (!MapGameFormats.TryParse(gameValue, out var gameId))
             {
-                Console.Error.WriteLine(error);
+                Console.Error.WriteLine(
+                    $"Unsupported --game value '{gameValue}'. Map WAD extraction supports {MapGameFormats.SupportedGames}.");
                 return 1;
             }
 
@@ -58,31 +55,10 @@ internal static class MapExtractWadCommand
             {
                 outputFile.Directory?.Create();
                 using var isoStream = inputFile.OpenRead();
-
-                if (gameId == GameId.GC)
-                {
-                    var levelInfo = GcLevelInfoReader.ReadLevel(isoStream, level);
-                    var gcLevelSet = UyaMapExtractionWriter.ToUyaLevelInfo(levelInfo);
-                    var gcLooseWad = UyaLooseLevelWadExtractor.ExtractPrimary(isoStream, gcLevelSet);
-                    File.WriteAllBytes(outputFile.FullName, gcLooseWad.Bytes);
-                    Console.WriteLine(
-                        $"Extracted GC level {level} WAD to '{outputFile.FullName}' ({gcLooseWad.SectorCount} sectors, {gcLooseWad.ByteLength} bytes, header sector 0x{gcLooseWad.HeaderSector:X}, payload base 0x{gcLooseWad.PayloadBaseSector:X}).");
-                    return 0;
-                }
-
-                if (gameId == GameId.UYA)
-                {
-                    var uyaLooseWad = UyaLooseLevelWadExtractor.ExtractPrimary(isoStream, level);
-                    File.WriteAllBytes(outputFile.FullName, uyaLooseWad.Bytes);
-                    Console.WriteLine(
-                        $"Extracted UYA level {level} WAD to '{outputFile.FullName}' ({uyaLooseWad.SectorCount} sectors, {uyaLooseWad.ByteLength} bytes, header sector 0x{uyaLooseWad.HeaderSector:X}, payload base 0x{uyaLooseWad.PayloadBaseSector:X}).");
-                    return 0;
-                }
-
-                var looseWad = DlLooseLevelWadExtractor.ExtractPrimary(isoStream, level);
-                File.WriteAllBytes(outputFile.FullName, looseWad.Bytes);
+                var wad = MapWadExtractionHandler.Extract(isoStream, gameId, level);
+                File.WriteAllBytes(outputFile.FullName, wad.Bytes);
                 Console.WriteLine(
-                    $"Extracted DL level {level} WAD to '{outputFile.FullName}' ({looseWad.SectorCount} sectors, {looseWad.ByteLength} bytes, header sector 0x{looseWad.HeaderSector:X}, payload base 0x{looseWad.PayloadBaseSector:X}).");
+                    $"Extracted {gameId} level {level} WAD to '{outputFile.FullName}' ({wad.SectorCount} sectors, {wad.Bytes.Length} bytes, header sector 0x{wad.HeaderSector:X}, payload base 0x{wad.PayloadBaseSector:X}).");
                 return 0;
             }
             catch (Exception ex) when (ex is IOException or InvalidDataException or ArgumentException)
@@ -93,25 +69,5 @@ internal static class MapExtractWadCommand
         });
 
         return command;
-    }
-
-    private static bool TryValidateMapGame(string? gameValue, out GameId gameId, out string error)
-    {
-        gameId = default;
-
-        if (string.IsNullOrWhiteSpace(gameValue) || !GameIdParser.TryParse(gameValue, out gameId))
-        {
-            error = $"Unsupported --game value '{gameValue}'. Map WAD extraction currently supports GC, UYA, and DL.";
-            return false;
-        }
-
-        if (gameId is not (GameId.GC or GameId.UYA or GameId.DL))
-        {
-            error = "Map WAD extraction currently supports only --game GC, --game UYA, or --game DL.";
-            return false;
-        }
-
-        error = string.Empty;
-        return true;
     }
 }

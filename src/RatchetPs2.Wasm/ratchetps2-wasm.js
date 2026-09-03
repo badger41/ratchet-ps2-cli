@@ -62,7 +62,7 @@ async function ensureBlazorScriptLoaded() {
   }
 
   if (typeof document === "undefined") {
-    await import(new URL("./_framework/blazor.webassembly.js", getAssetBaseUrl()).toString());
+    await import(/* @vite-ignore */ new URL("./_framework/blazor.webassembly.js", getAssetBaseUrl()).toString());
     await waitForRuntimeReady();
     return;
   }
@@ -380,6 +380,17 @@ export async function parseDlGameplayCore(gameplayBytes) {
   );
 }
 
+export async function parseRc1GameplayCore(gameplayBytes) {
+  await ensureStarted();
+
+  const input = toUint8Array(gameplayBytes);
+  return DotNet.invokeMethodAsync(
+    "RatchetPs2.Wasm",
+    "ParseRc1GameplayCore",
+    input
+  );
+}
+
 export async function parseDlGameplayMission(gameplayBytes) {
   await ensureStarted();
 
@@ -458,6 +469,33 @@ export async function buildGcLevelWadRenderPackage(levelWadBytes) {
       contentType: entry.contentType,
     })),
   };
+}
+
+export async function buildRc1LevelWadRenderPackage(levelWadBytes) {
+  await ensureStarted();
+
+  const input = toUint8Array(levelWadBytes);
+  const result = await DotNet.invokeMethodAsync(
+    "RatchetPs2.Wasm",
+    "BuildRc1LevelWadRenderPackage",
+    input
+  );
+  return {
+    packedBytes: toUint8Array(result.packedBytes),
+    entries: result.entries.map((entry) => ({
+      path: entry.path,
+      offset: entry.offset,
+      length: entry.length,
+      contentType: entry.contentType,
+    })),
+  };
+}
+
+export async function buildRc1LevelWadRenderPackageEnvelope(levelWadBytes) {
+  await ensureStarted();
+
+  const input = toUint8Array(levelWadBytes);
+  return invokeRatchetPs2JsExport("BuildRc1LevelWadRenderPackageEnvelope", input);
 }
 
 export async function buildGcLevelWadRenderPackageEnvelope(levelWadBytes) {

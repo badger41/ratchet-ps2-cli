@@ -8,14 +8,16 @@ internal static class TieGltfPacketIndexGroupBuilder
     public static TieGltfPacketIndexGroupBuildResult Build(
         TieClass tie,
         TieLodTopology topology,
-        IReadOnlyList<Vector4> glowColors)
+        IReadOnlyList<Vector4> glowColors,
+        IReadOnlySet<int> invertedStripIndices)
     {
         ArgumentNullException.ThrowIfNull(tie);
         ArgumentNullException.ThrowIfNull(topology);
         ArgumentNullException.ThrowIfNull(glowColors);
+        ArgumentNullException.ThrowIfNull(invertedStripIndices);
 
         var packetIndexGroups = SplitPacketIndexGroupsByGlowEmission(
-            BuildPacketIndexGroups(tie, topology),
+            BuildPacketIndexGroups(tie, topology, invertedStripIndices),
             Ps2Color.NormalizeOpacityAlpha(TieRgba32.FromRaw(tie.Header.GlowRgba).A),
             glowColors);
         var packetRgbaSlotCount = CountPacketRgbaSlots(tie, topology.LodIndex);
@@ -35,7 +37,8 @@ internal static class TieGltfPacketIndexGroupBuilder
 
     private static List<PacketIndexGroup> BuildPacketIndexGroups(
         TieClass tie,
-        TieLodTopology topology)
+        TieLodTopology topology,
+        IReadOnlySet<int> invertedStripIndices)
     {
         var packetsByIndex = tie.PacketTables
             .FirstOrDefault(table => table.LodIndex == topology.LodIndex)?
@@ -89,8 +92,8 @@ internal static class TieGltfPacketIndexGroupBuilder
             }
 
             currentGroup.Value.Indices.Add((uint)triangle.A);
-            currentGroup.Value.Indices.Add((uint)triangle.B);
-            currentGroup.Value.Indices.Add((uint)triangle.C);
+            currentGroup.Value.Indices.Add((uint)(invertedStripIndices.Contains(triangle.StripIndex) ? triangle.C : triangle.B));
+            currentGroup.Value.Indices.Add((uint)(invertedStripIndices.Contains(triangle.StripIndex) ? triangle.B : triangle.C));
         }
 
         return groups;

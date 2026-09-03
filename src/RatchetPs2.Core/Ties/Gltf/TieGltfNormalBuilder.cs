@@ -58,7 +58,16 @@ internal static class TieGltfNormalBuilder
                 sourceVertexStates,
                 sourceIndexStates,
                 profile.UsePackedVertexNormalTableSource,
+                profile.UseExactVertexNormalTableRemaps,
                 sourceNormalPhaseAnalysis.DominantLayout);
+        if (profile.UseExactVertexNormalTableRemaps
+            && (sourceVertexIndices.Count != positions.Count || sourceIndexOffsets.Count != indices.Count))
+        {
+            throw new InvalidDataException(
+                $"Exact vertex-normal restoration covered {sourceVertexIndices.Count}/{positions.Count} vertices "
+                + $"and {sourceIndexOffsets.Count}/{indices.Count} indices.");
+        }
+
         var lightingRecipeNormalResult = useLightingRecipes
             ? ApplyLightingRecipeNormals(
                 tie,
@@ -85,7 +94,9 @@ internal static class TieGltfNormalBuilder
                 sourceVertexStates,
                 sourceIndexStates)
             : 0;
-        var crossLodExactNormalVertexCount = useLightingRecipes ? 0 : ApplyCrossLodExactPositionNormals(
+        var crossLodExactNormalVertexCount = useLightingRecipes || profile.UseExactVertexNormalTableRemaps
+            ? 0
+            : ApplyCrossLodExactPositionNormals(
             tie,
             topology,
             profile.PreferVuAddressSourceNormalRemaps,
@@ -101,7 +112,7 @@ internal static class TieGltfNormalBuilder
             sourceIndexOffsets,
             sourceVertexStates,
             sourceIndexStates);
-        var duplicatePositionExactNormalVertexCount = useLightingRecipes
+        var duplicatePositionExactNormalVertexCount = useLightingRecipes || profile.UseExactVertexNormalTableRemaps
             ? 0
             : ApplyDuplicatePositionExactNormals(
                 positions,
@@ -114,7 +125,7 @@ internal static class TieGltfNormalBuilder
                 sourceIndexOffsets,
                 sourceVertexStates,
                 sourceIndexStates);
-        if (!useLightingRecipes)
+        if (!useLightingRecipes && !profile.UseExactVertexNormalTableRemaps)
         {
             SealSourceNormalIndexOffsets(
                 indices,
@@ -128,7 +139,7 @@ internal static class TieGltfNormalBuilder
         }
 
         var duplicatePositionNormalWeldDecision = TieGltfDuplicatePositionNormalWeldDecision.None;
-        if (!useLightingRecipes)
+        if (!useLightingRecipes && !profile.UseExactVertexNormalTableRemaps)
         {
             if (flatHorizontalBounds)
             {

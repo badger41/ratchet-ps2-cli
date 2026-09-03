@@ -12,6 +12,8 @@ var level53SkyboxPath = Path.Combine(repoRoot, "test-assets", "skyboxes", "DL", 
 var uyaLevel4SkyboxPath = Path.Combine(repoRoot, "test-assets", "skyboxes", "UYA", "level4", "sky.bin");
 var uyaLevel41SkyboxPath = Path.Combine(repoRoot, "test-assets", "skyboxes", "UYA", "level41", "sky.bin");
 var failures = new List<string>();
+var rc1Profile = SkyboxGameProfile.ForGame(GameId.RC1);
+Expect(rc1Profile.GameLabel == "RC1" && !rc1Profile.TextureIsSwizzled, "expected RC1 skyboxes to use the unswizzled profile");
 var gcProfile = SkyboxGameProfile.ForGame(GameId.GC);
 Expect(gcProfile.GameLabel == "GC" && !gcProfile.TextureIsSwizzled, "expected GC skyboxes to use the unswizzled profile");
 using (var input = BuildGcSkyboxFixture())
@@ -20,6 +22,11 @@ using (var input = BuildGcSkyboxFixture())
     var shell = skybox.Shells[0];
     Expect(shell.ClusterCount == 1 && shell.Flags == 1, "expected GC 32-bit shell header fields to decode");
     Expect(shell.RotationX == 0 && shell.RotationY == 0 && shell.RotationZ == 0, "expected GC shell draw type not to become a rotation");
+}
+using (var input = BuildGcSkyboxFixture())
+{
+    var shell = SkyboxReader.Read(input, GameId.RC1).Shells[0];
+    Expect(shell.ClusterCount == 1 && shell.Flags == 1, "expected RC1 32-bit shell header fields to decode");
 }
 
 if (!File.Exists(skyboxPath))

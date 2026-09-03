@@ -29,20 +29,22 @@ internal static class TieGltfAmbientBuilder
         int vertexCount,
         IReadOnlyList<uint> indexVertexIndices,
         IReadOnlyList<Vector3> indexNormals,
-        string? sourceNormalLayout)
+        string? sourceNormalLayout,
+        TieGameProfile profile)
     {
         ArgumentNullException.ThrowIfNull(tie);
         ArgumentNullException.ThrowIfNull(topology);
 
-        var ambientWordCount = tie.Header.AmbientSize > 0
+        var normalIndexOffset = profile.AmbientNormalIndexOffset;
+        var ambientWordCount = profile.AmbientWordCount ?? (tie.Header.AmbientSize > 0
             ? tie.Header.AmbientSize / sizeof(ushort)
-            : 0;
-        var colorRecipes = BuildColorRecipes(tie, topology.LodIndex, ambientWordCount);
+            : 0);
+        var colorRecipes = BuildColorRecipes(tie, topology.LodIndex, ambientWordCount, normalIndexOffset);
         var colorRecipesByTargetIndex = colorRecipes.ToDictionary(recipe => recipe.TargetIndex);
         var ambientSlotCount = Math.Max(
             ambientWordCount,
             colorRecipes.Count == 0 ? 0 : colorRecipes.Max(recipe => recipe.TargetIndex) + 1);
-        if (ambientWordCount <= VertexNormalHeaderAmbientWordCount
+        if (ambientWordCount <= normalIndexOffset
             || tie.VertexNormals.Count == 0
             || vertexCount <= 0)
         {
@@ -51,7 +53,7 @@ internal static class TieGltfAmbientBuilder
                 [],
                 ambientWordCount,
                 ambientSlotCount,
-                VertexNormalHeaderAmbientWordCount,
+                normalIndexOffset,
                 0,
                 0,
                 0,
@@ -143,7 +145,7 @@ internal static class TieGltfAmbientBuilder
                 continue;
             }
 
-            var ambientIndex = normalIndex.Value + VertexNormalHeaderAmbientWordCount;
+            var ambientIndex = normalIndex.Value + normalIndexOffset;
             if (ambientIndex >= ambientWordCount)
             {
                 outOfRangeVertexCount++;
@@ -164,7 +166,7 @@ internal static class TieGltfAmbientBuilder
             indexIndices,
             ambientWordCount,
             ambientSlotCount,
-            VertexNormalHeaderAmbientWordCount,
+            normalIndexOffset,
             resolvedVertexCount,
             outOfRangeVertexCount,
             fallbackResolvedVertexCount,
@@ -209,7 +211,7 @@ internal static class TieGltfAmbientBuilder
                     continue;
                 }
 
-                if (!TryResolveRemaps(
+                var hasRemaps = TryResolveRemaps(
                         vertex,
                         rowIndex.Value,
                         primaryTargetMode,
@@ -220,8 +222,8 @@ internal static class TieGltfAmbientBuilder
                         remapByLogicalVertexIndex,
                         remapByPacketVertexRow,
                         out var remaps,
-                        out _)
-                    || !TrySelectAmbientNormalIndex(
+                        out _);
+                if ((!hasRemaps || !TrySelectAmbientNormalIndex(
                         tie,
                         remaps,
                         sourceNormalTableLayout,
@@ -230,11 +232,17 @@ internal static class TieGltfAmbientBuilder
                         indexOffsetsByVertex,
                         indexNormals[indexOffset],
                         out var normalIndex))
+                    && (!profile.UseNearestAmbientNormalFallback
+                        || !TrySelectNearestAmbientNormalIndex(
+                            tie,
+                            sourceNormalTableLayout,
+                            indexNormals[indexOffset],
+                            out normalIndex)))
                 {
                     continue;
                 }
 
-                var ambientIndex = normalIndex + VertexNormalHeaderAmbientWordCount;
+                var ambientIndex = normalIndex + normalIndexOffset;
                 if (ambientIndex >= ambientWordCount)
                 {
                     continue;
@@ -250,9 +258,10 @@ internal static class TieGltfAmbientBuilder
     private static List<TieGltfAmbientColorRecipe> BuildColorRecipes(
         TieClass tie,
         int lodIndex,
-        int ambientWordCount)
+        int ambientWordCount,
+        int normalIndexOffset)
     {
-        if (ambientWordCount <= VertexNormalHeaderAmbientWordCount
+        if (ambientWordCount <= normalIndexOffset
             || tie.RgbaRemapOperations.Count == 0)
         {
             return [];
@@ -266,16 +275,16 @@ internal static class TieGltfAmbientBuilder
                      .ThenBy(operation => operation.OperationIndex))
         {
             var sourceIndices = operation.SourceSlots
-                .Select(slot => slot + VertexNormalHeaderAmbientWordCount)
+                .Select(slot => slot + normalIndexOffset)
                 .ToArray();
             if (sourceIndices.Length == 0
-                || sourceIndices.Any(index => index < VertexNormalHeaderAmbientWordCount || index >= ambientWordCount))
+                || sourceIndices.Any(index => index < normalIndexOffset || index >= ambientWordCount))
             {
                 continue;
             }
 
-            var targetIndex = operation.TargetCacheSlot + VertexNormalHeaderAmbientWordCount;
-            if (targetIndex < VertexNormalHeaderAmbientWordCount)
+            var targetIndex = operation.TargetCacheSlot + normalIndexOffset;
+            if (targetIndex < normalIndexOffset)
             {
                 continue;
             }
@@ -371,35 +380,6 @@ internal static class TieGltfAmbientBuilder
     private static bool TryGetRemaps(
         TieLogicalVertex vertex,
         int rowIndex,
-        TieGltfVertexNormalRemapTargetMode primaryTargetMode,
-        TieGltfVertexNormalRemapTargetMode fallbackTargetMode,
-        IReadOnlyDictionary<int, List<TieVertexNormalRemap>> remapByLogicalVertexIndex,
-        IReadOnlyDictionary<(int PacketIndex, int VertexRowIndex), List<TieVertexNormalRemap>> remapByPacketVertexRow,
-        out IReadOnlyList<TieVertexNormalRemap> remaps)
-    {
-        if (TryGetRemaps(
-                vertex,
-                rowIndex,
-                primaryTargetMode,
-                remapByLogicalVertexIndex,
-                remapByPacketVertexRow,
-                out remaps))
-        {
-            return true;
-        }
-
-        return TryGetRemaps(
-            vertex,
-            rowIndex,
-            fallbackTargetMode,
-            remapByLogicalVertexIndex,
-            remapByPacketVertexRow,
-            out remaps);
-    }
-
-    private static bool TryGetRemaps(
-        TieLogicalVertex vertex,
-        int rowIndex,
         TieGltfVertexNormalRemapTargetMode targetMode,
         IReadOnlyDictionary<int, List<TieVertexNormalRemap>> remapByLogicalVertexIndex,
         IReadOnlyDictionary<(int PacketIndex, int VertexRowIndex), List<TieVertexNormalRemap>> remapByPacketVertexRow,
@@ -467,6 +447,17 @@ internal static class TieGltfAmbientBuilder
                 vertex,
                 rowIndex,
                 primaryTargetMode,
+                remapByLogicalVertexIndex,
+                remapByPacketVertexRow,
+                out remaps)
+            && remaps.Count > 0)
+        {
+            return true;
+        }
+
+        if (TryGetRemaps(
+                vertex,
+                rowIndex,
                 fallbackTargetMode,
                 remapByLogicalVertexIndex,
                 remapByPacketVertexRow,
@@ -557,6 +548,38 @@ internal static class TieGltfAmbientBuilder
 
         normalIndex = bestNormalIndex;
         return true;
+    }
+
+    private static bool TrySelectNearestAmbientNormalIndex(
+        TieClass tie,
+        TieGltfRawSourceNormalLayout sourceNormalTableLayout,
+        Vector3 target,
+        out int normalIndex)
+    {
+        normalIndex = -1;
+        if (target.LengthSquared() <= 1e-12f)
+        {
+            return false;
+        }
+
+        target = Vector3.Normalize(target);
+        var bestDot = -1f;
+        for (var index = 0; index < tie.VertexNormals.Count; index++)
+        {
+            if (!TryNormalizeGltfNormal(tie.VertexNormals[index], sourceNormalTableLayout, out var candidate))
+            {
+                continue;
+            }
+
+            var dot = Vector3.Dot(candidate, target);
+            if (dot > bestDot)
+            {
+                bestDot = dot;
+                normalIndex = index;
+            }
+        }
+
+        return normalIndex >= 0;
     }
 
     private static void AddRemap<TKey>(

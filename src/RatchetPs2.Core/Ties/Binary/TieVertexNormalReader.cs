@@ -56,6 +56,20 @@ internal static class TieVertexNormalReader
         for (var i = 0; i < count; i++)
         {
             var normalOffset = recordOffset + i * VertexNormalRecordSize;
+            if (options.UseRc1Header)
+            {
+                normals.Add(new TieVertexNormal
+                {
+                    Index = i,
+                    Offset = normalOffset,
+                    X = BitConverter.ToInt16(bytes, normalOffset),
+                    Y = BitConverter.ToInt16(bytes, normalOffset + 0x02),
+                    Z = BitConverter.ToInt16(bytes, normalOffset + 0x04),
+                    W = BitConverter.ToInt16(bytes, normalOffset + 0x06)
+                });
+                continue;
+            }
+
             normals.Add(new TieVertexNormal
             {
                 Index = i,
@@ -75,10 +89,117 @@ internal static class TieVertexNormalReader
     public static List<TieVertexNormalRemap> ReadRemaps(
         byte[] bytes,
         TieClassHeader header,
+        IReadOnlyList<TiePacketTable> packetTables,
+        IReadOnlyList<TiePacketDataBlock> packetDataBlocks,
         IReadOnlyList<TieLodTopology> lodTopologies,
+        int vertexNormalCount,
+        TieClassReadOptions options)
+    {
+        if (options.UseRc1Header)
+        {
+            return ReadRc1VertexNormalRemaps(
+                bytes,
+                packetTables,
+                packetDataBlocks,
+                vertexNormalCount);
+        }
+
+        return ReadLogicalVertexNormalRemaps(bytes, header, lodTopologies, vertexNormalCount);
+    }
+
+    private static List<TieVertexNormalRemap> ReadRc1VertexNormalRemaps(
+        byte[] bytes,
+        IReadOnlyList<TiePacketTable> packetTables,
+        IReadOnlyList<TiePacketDataBlock> packetDataBlocks,
         int vertexNormalCount)
     {
-        return ReadLogicalVertexNormalRemaps(bytes, header, lodTopologies, vertexNormalCount);
+        var blocks = packetDataBlocks.ToDictionary(block => (block.LodIndex, block.PacketIndex));
+        var remaps = new List<TieVertexNormalRemap>();
+        foreach (var packet in packetTables.SelectMany(table => table.Packets))
+        {
+            if (!blocks.TryGetValue((packet.LodIndex, packet.PacketIndex), out var block))
+            {
+                continue;
+            }
+
+            var dinkyVertices = block.DecodedVertices
+                .Where(vertex => vertex.Kind == TiePacketDecodedVertexKind.Dinky)
+                .OrderBy(vertex => vertex.SourceIndex)
+                .ToArray();
+            var fatVertices = block.DecodedVertices
+                .Where(vertex => vertex.Kind == TiePacketDecodedVertexKind.Fat)
+                .OrderBy(vertex => vertex.SourceIndex)
+                .ToArray();
+            if (dinkyVertices.Length + fatVertices.Length == 0
+                || packet.RgbaCount == 0
+                || packet.MultipassOffset == 0)
+            {
+                continue;
+            }
+
+            var remapOffset = checked(packet.AbsoluteDataOffset + packet.RgbaCount * 0x10);
+            var remapByteLength = checked(packet.MultipassOffset * 4);
+            EnsureRange(
+                bytes,
+                remapOffset,
+                remapByteLength,
+                $"RC1 vertex normal remaps LOD{packet.LodIndex}[{packet.PacketIndex}]");
+            var fatRemapOffset = remapOffset + Align4(dinkyVertices.Length);
+            if (fatRemapOffset + fatVertices.Length * sizeof(int) > remapOffset + remapByteLength)
+            {
+                continue;
+            }
+
+            foreach (var vertex in dinkyVertices)
+            {
+                var offset = remapOffset + vertex.SourceIndex;
+                var normalIndex = bytes[offset] & 0x3F;
+                if (normalIndex >= vertexNormalCount)
+                {
+                    continue;
+                }
+
+                remaps.Add(new TieVertexNormalRemap
+                {
+                    ChunkIndex = packet.PacketIndex,
+                    LodIndex = packet.LodIndex,
+                    PacketIndex = packet.PacketIndex,
+                    Offset = offset,
+                    NormalIndex = normalIndex,
+                    VertexRowIndex = vertex.SourceRowIndex,
+                    RawNormal = checked((ushort)(normalIndex * 4)),
+                    RawVertex = checked((ushort)(vertex.SourceRowIndex * 4))
+                });
+            }
+
+            foreach (var vertex in fatVertices)
+            {
+                var offset = fatRemapOffset + vertex.SourceIndex * sizeof(int);
+                // RC1's VU program uses this first index for the unmorphed position exported here.
+                // The other two indices light the alternate position during the runtime morph.
+                var normalIndex = bytes[offset] & 0x3F;
+                if (normalIndex >= vertexNormalCount)
+                {
+                    continue;
+                }
+
+                remaps.Add(new TieVertexNormalRemap
+                {
+                    ChunkIndex = packet.PacketIndex,
+                    LodIndex = packet.LodIndex,
+                    PacketIndex = packet.PacketIndex,
+                    Offset = offset,
+                    NormalIndex = normalIndex,
+                    VertexRowIndex = vertex.SourceRowIndex,
+                    RawNormal = checked((ushort)(normalIndex * 4)),
+                    RawVertex = checked((ushort)(vertex.SourceRowIndex * 4))
+                });
+            }
+        }
+
+        return remaps;
+
+        static int Align4(int value) => checked((value + 3) & ~3);
     }
 
     private static List<TieVertexNormalRemap> ReadLogicalVertexNormalRemaps(

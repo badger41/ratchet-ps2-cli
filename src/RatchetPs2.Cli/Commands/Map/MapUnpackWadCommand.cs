@@ -1,10 +1,7 @@
 using RatchetPs2.Cli.Abstractions;
-using RatchetPs2.Cli.GameSelection;
+using RatchetPs2.Cli.Handlers;
 using RatchetPs2.Core.Games;
 using RatchetPs2.Core.Wad.Models;
-using RatchetPs2.Games.DL.Level;
-using RatchetPs2.Games.GC.Skyboxes;
-using RatchetPs2.Games.UYA.Level;
 using System.CommandLine;
 
 namespace RatchetPs2.Cli.Commands.Map;
@@ -53,9 +50,10 @@ internal static class MapUnpackWadCommand
             var render = parseResult.GetValue(renderOption);
             var missions = parseResult.GetValue(missionsOption);
 
-            if (!TryValidateMapGame(gameValue, out var gameId, out var error))
+            if (!MapGameFormats.TryParse(gameValue, out var gameId))
             {
-                Console.Error.WriteLine(error);
+                Console.Error.WriteLine(
+                    $"Unsupported --game value '{gameValue}'. Map WAD unpack supports {MapGameFormats.SupportedGames}.");
                 return 1;
             }
 
@@ -90,107 +88,19 @@ internal static class MapUnpackWadCommand
             try
             {
                 var bytes = File.ReadAllBytes(inputFile.FullName);
-
-                if (gameId is GameId.GC or GameId.UYA)
-                {
-                    var uyaPackage = UyaLevelWadUnpacker.Unpack(bytes);
-                    if (render)
-                    {
-                        var renderOptions = DlLevelWadRenderPackageBuildOptions.Browser with
-                        {
-                            IncludeDiagnostics = true,
-                            MobyLodIndex = null
-                        };
-                        IReadOnlyList<PackedFile> BuildAssetFiles(UyaLevelAssetSourceFiles assetFiles) =>
-                            DlLevelWadRenderPackageBuilder.BuildAssetFiles(
-                                gameId,
-                                uyaPackage.LevelWad.Level,
-                                assetFiles.HeaderBytes,
-                                assetFiles.PaletteBytes,
-                                assetFiles.AssetWadBytes,
-                                renderOptions,
-                                assetFiles.ChunkWads,
-                                gameId == GameId.GC ? GcSkyRotationReader.ReadRadiansPerFrame(assetFiles.CodeBytes) : null);
-
-                        if (normalizedFormat == "indexed")
-                        {
-                            var renderPackage = UyaLevelWadRenderPackageBuilder.BuildPacked(
-                                uyaPackage.LevelWad.Level,
-                                uyaPackage.Files,
-                                BuildAssetFiles,
-                                gameId);
-                            PackedFilePackageWriter.WriteIndexed(renderPackage, outputDirectory);
-                            Console.WriteLine(
-                                $"Built {gameId} render package from '{inputFile.FullName}' at '{outputDirectory.FullName}' ({renderPackage.Entries.Count} entries).");
-                        }
-                        else
-                        {
-                            var renderFiles = UyaLevelWadRenderPackageBuilder.BuildFiles(
-                                uyaPackage.LevelWad.Level,
-                                uyaPackage.Files,
-                                BuildAssetFiles,
-                                gameId);
-                            PackedFilePackageWriter.WriteFiles(renderFiles, outputDirectory);
-                            Console.WriteLine(
-                                $"Built {gameId} render package from '{inputFile.FullName}' at '{outputDirectory.FullName}' ({renderFiles.Count} files).");
-                        }
-                    }
-                    else if (normalizedFormat == "indexed")
-                    {
-                        PackedFilePackageWriter.WriteIndexed(uyaPackage.ToPackedPackage(), outputDirectory);
-                        Console.WriteLine(
-                            $"Unpacked {gameId} level WAD '{inputFile.FullName}' to indexed package '{outputDirectory.FullName}' ({uyaPackage.Files.Count} entries).");
-                    }
-                    else
-                    {
-                        PackedFilePackageWriter.WriteFiles(uyaPackage.Files, outputDirectory);
-                        Console.WriteLine(
-                            $"Unpacked {gameId} level WAD '{inputFile.FullName}' to '{outputDirectory.FullName}' ({uyaPackage.Files.Count} files).");
-                    }
-
-                    return 0;
-                }
-
-                if (render)
-                {
-                    var renderOptions = DlLevelWadRenderPackageBuildOptions.Browser with
-                    {
-                        IncludeDiagnostics = true,
-                        IncludeMissionMobys = missions,
-                        MobyLodIndex = null
-                    };
-                    if (normalizedFormat == "indexed")
-                    {
-                        var renderPackage = DlLevelWadRenderPackageBuilder.BuildPacked(bytes, renderOptions);
-                        PackedFilePackageWriter.WriteIndexed(renderPackage, outputDirectory);
-                        Console.WriteLine(
-                            $"Built DL render package from '{inputFile.FullName}' at '{outputDirectory.FullName}' ({renderPackage.Entries.Count} entries).");
-                    }
-                    else
-                    {
-                        var renderFiles = DlLevelWadRenderPackageBuilder.BuildFiles(bytes, renderOptions);
-                        PackedFilePackageWriter.WriteFiles(renderFiles, outputDirectory);
-                        Console.WriteLine(
-                            $"Built DL render package from '{inputFile.FullName}' at '{outputDirectory.FullName}' ({renderFiles.Count} files).");
-                    }
-
-                    return 0;
-                }
-
-                var package = DlLevelWadUnpacker.Unpack(bytes);
+                var files = MapWadHandler.BuildFiles(bytes, gameId, render, missions);
                 if (normalizedFormat == "indexed")
                 {
-                    PackedFilePackageWriter.WriteIndexed(package.ToPackedPackage(), outputDirectory);
-                    Console.WriteLine(
-                        $"Unpacked DL level WAD '{inputFile.FullName}' to indexed package '{outputDirectory.FullName}' ({package.Files.Count} entries).");
+                    PackedFilePackageWriter.WriteIndexed(PackedFilePackageBuilder.Pack(files), outputDirectory);
                 }
                 else
                 {
-                    PackedFilePackageWriter.WriteFiles(package, outputDirectory);
-                    Console.WriteLine(
-                        $"Unpacked DL level WAD '{inputFile.FullName}' to '{outputDirectory.FullName}' ({package.Files.Count} files).");
+                    PackedFilePackageWriter.WriteFiles(files, outputDirectory);
                 }
 
+                Console.WriteLine(render
+                    ? $"Built {gameId} render package from '{inputFile.FullName}' at '{outputDirectory.FullName}' ({files.Count} files)."
+                    : $"Unpacked {gameId} level WAD '{inputFile.FullName}' to '{outputDirectory.FullName}' ({files.Count} files).");
                 return 0;
             }
             catch (Exception ex) when (ex is IOException or InvalidDataException or ArgumentException or NotSupportedException)
@@ -201,25 +111,5 @@ internal static class MapUnpackWadCommand
         });
 
         return command;
-    }
-
-    private static bool TryValidateMapGame(string? gameValue, out GameId gameId, out string error)
-    {
-        gameId = default;
-
-        if (string.IsNullOrWhiteSpace(gameValue) || !GameIdParser.TryParse(gameValue, out gameId))
-        {
-            error = $"Unsupported --game value '{gameValue}'. Map WAD unpack currently supports GC, UYA, and DL.";
-            return false;
-        }
-
-        if (gameId is not (GameId.GC or GameId.UYA or GameId.DL))
-        {
-            error = "Map WAD unpack currently supports only --game GC, --game UYA, or --game DL.";
-            return false;
-        }
-
-        error = string.Empty;
-        return true;
     }
 }

@@ -1,9 +1,13 @@
 using RatchetPs2.Core.Ties;
+using RatchetPs2.Games.RC1.Ties;
+using RatchetPs2.Core.Gltf;
 using RatchetPs2.Core.Textures.Png;
 using System.Text.Json;
 using System.Xml.Linq;
 
 var repoRoot = FindRepoRoot(AppContext.BaseDirectory);
+var failures = new List<string>();
+ValidateRc1NormalFixture();
 var tiesRoot = Path.Combine(repoRoot, "test-assets", "DL Ties");
 var tiePaths = Directory.Exists(tiesRoot)
     ? Directory.EnumerateFiles(tiesRoot, "tie.bin", SearchOption.AllDirectories)
@@ -14,13 +18,13 @@ var tiePath = Path.Combine(tiesRoot, "09907_26B3", "tie.bin");
 if (tiePaths.Length == 0 || !File.Exists(tiePath))
 {
     Console.WriteLine("No local DL tie.bin fixture found under test-assets/DL Ties; skipping tie reader tests.");
-    return 0;
+    return failures.Count == 0 ? 0 : 1;
 }
 
 using var input = File.OpenRead(tiePath);
 var tie = TieClassReader.Read(input);
 var originalBytes = File.ReadAllBytes(tiePath);
-var failures = new List<string>();
+ValidateRc1AlphaMaterialCulling(tie);
 
 Expect(tie.ByteLength == 0x3350, $"expected tie size 0x3350, got 0x{tie.ByteLength:X}");
 Expect(tie.Header.PacketTableOffsets[0] == 0x100, $"expected LOD0 packet table offset 0x100, got 0x{tie.Header.PacketTableOffsets[0]:X}");
@@ -594,6 +598,190 @@ void Expect(bool condition, string message)
     {
         failures.Add(message);
     }
+}
+
+void ValidateRc1NormalFixture()
+{
+    const int packetTableOffset = 0x70;
+    const int packetDataOffset = 0x80;
+    const int remapOffset = 0xE0;
+    const int normalsOffset = 0x110;
+    const int shadersOffset = normalsOffset + 64 * 8;
+    var bytes = new byte[shadersOffset];
+    using (var stream = new MemoryStream(bytes, writable: true))
+    using (var writer = new BinaryWriter(stream))
+    {
+        writer.Write((uint)packetTableOffset);
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write((uint)normalsOffset);
+        stream.Position = 0x20;
+        writer.Write((byte)1);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        stream.Position = 0x2C;
+        writer.Write((uint)shadersOffset);
+        stream.Position = 0x40;
+        writer.Write(1f);
+
+        stream.Position = packetTableOffset;
+        writer.Write((uint)(packetDataOffset - packetTableOffset));
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)3);
+        writer.Write((byte)1);
+        writer.Write((byte)3);
+        writer.Write((byte)3);
+        writer.Write((byte)6);
+        writer.Write((byte)2);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+
+        stream.Position = packetDataOffset + 0x28;
+        writer.Write((byte)6);
+        stream.Position = packetDataOffset + 0x30;
+        writer.Write((short)1);
+        writer.Write((short)2);
+        writer.Write((short)3);
+        writer.Write((ushort)6);
+        writer.Write((ushort)0);
+        writer.Write((ushort)0);
+        writer.Write((ushort)4096);
+        writer.Write((ushort)0);
+        stream.Position = packetDataOffset + 0x40;
+        writer.Write((short)10);
+        writer.Write((short)20);
+        writer.Write((short)30);
+        writer.Write((ushort)9);
+        writer.Write((short)100);
+        writer.Write((short)200);
+        writer.Write((short)300);
+        writer.Write((ushort)0);
+        writer.Write((ushort)0);
+        writer.Write((ushort)0);
+        writer.Write((ushort)4096);
+        writer.Write((ushort)0);
+        stream.Position = remapOffset;
+        writer.Write((byte)7);
+        stream.Position = remapOffset + 0x04;
+        writer.Write((byte)0x49);
+        writer.Write((byte)2);
+        writer.Write((byte)3);
+        writer.Write((byte)0xFF);
+        stream.Position = normalsOffset + 7 * 8;
+        writer.Write((short)1234);
+        writer.Write((short)-2345);
+        writer.Write((short)30000);
+        writer.Write((short)-1);
+        stream.Position = normalsOffset + 9 * 8;
+        writer.Write((short)-1000);
+        writer.Write((short)2000);
+        writer.Write((short)-3000);
+        writer.Write((short)-1);
+    }
+
+    var profile = Rc1TieGameProfile.Default;
+    var tie = TieClassReader.Read(bytes, TieClassReadOptions.ForGameProfile(profile));
+    Expect(tie.Header.VertexNormalsOffset == normalsOffset, "expected RC1 vertex-normal offset from header +0x0c");
+    Expect(tie.VertexNormals.Count == 64, $"expected 64 RC1 Q15 normals, got {tie.VertexNormals.Count}");
+    Expect(
+        tie.VertexNormals[7].X == 1234
+            && tie.VertexNormals[7].Y == -2345
+            && tie.VertexNormals[7].Z == 30000
+            && tie.VertexNormals[7].W == -1,
+        "expected RC1 vertex normals to decode as four signed 16-bit values");
+    Expect(
+        tie.VertexNormalRemaps.Count == 2
+            && tie.VertexNormalRemaps[0].NormalIndex == 7
+            && tie.VertexNormalRemaps[0].PacketIndex == 0
+            && tie.VertexNormalRemaps[0].VertexRowIndex == 0,
+        "expected RC1 dinky vertex to use its compact normal-table remap");
+    Expect(
+        tie.VertexNormalRemaps[1].NormalIndex == 9
+            && tie.VertexNormalRemaps[1].PacketIndex == 0
+            && tie.VertexNormalRemaps[1].VertexRowIndex == 1
+            && tie.VertexNormalRemaps[1].Offset == remapOffset + 0x04,
+        "expected RC1 fat vertex to use its base normal-table index with the bank bit removed");
+}
+
+void ValidateRc1AlphaMaterialCulling(TieClass fixture)
+{
+    var profile = Rc1TieGameProfile.Default with { UseExactVertexNormalTableRemaps = false };
+    var textureUris = fixture.Shaders.ToDictionary(shader => shader.Index, shader => $"textures/{shader.Index}.png");
+    var textureAlpha = fixture.Shaders.ToDictionary(
+        shader => shader.Index,
+        _ => new TextureAlphaInfo(0, 128, UsesBinaryAlpha: false));
+    var export = TieGltfExporter.Export(
+        fixture,
+        "tie.gltf",
+        new TieGltfExportOptions
+        {
+            GameProfile = profile,
+            ExternalTextureUris = textureUris,
+            ExternalTextureAlpha = textureAlpha
+        });
+    using var document = JsonDocument.Parse(export.GltfBytes);
+    var alphaMaterials = document.RootElement.GetProperty("materials")
+        .EnumerateArray()
+        .Where(material => material.TryGetProperty("extras", out var extras)
+            && extras.TryGetProperty("TieTextureAlphaUsage", out var alphaUsage)
+            && alphaUsage.GetString() == TieMaterialAlphaUsage.Opacity.ToString())
+        .ToArray();
+    Expect(alphaMaterials.Length > 0, "expected RC1 alpha material culling fixture");
+    Expect(
+        alphaMaterials.All(material => material.GetProperty("doubleSided").GetBoolean()),
+        "expected RC1 opacity materials to be double-sided");
+
+    var opaqueExport = TieGltfExporter.Export(
+        fixture,
+        "tie.gltf",
+        new TieGltfExportOptions
+        {
+            GameProfile = profile,
+            ExternalTextureUris = textureUris,
+            ExternalTextureAlpha = textureUris.Keys.ToDictionary(index => index, _ => TextureAlphaInfo.Opaque)
+        });
+    using var opaqueDocument = JsonDocument.Parse(opaqueExport.GltfBytes);
+    Expect(
+        opaqueDocument.RootElement.GetProperty("materials").EnumerateArray().Skip(1)
+            .All(material => !material.TryGetProperty("doubleSided", out _)),
+        "expected RC1 opaque materials to remain backface-culled");
+
+    var minifiedOpaqueExport = TieGltfExporter.Export(
+        fixture,
+        "tie.gltf",
+        new TieGltfExportOptions
+        {
+            GameProfile = profile,
+            ExternalTextureUris = textureUris,
+            ExternalTextureAlpha = textureUris.Keys.ToDictionary(index => index, _ => TextureAlphaInfo.Opaque),
+            IncludeDiagnostics = false,
+            Minify = true,
+            MetadataMode = GltfExportMetadataMode.RuntimeOnly
+        });
+    using var minifiedOpaqueDocument = JsonDocument.Parse(minifiedOpaqueExport.GltfBytes);
+    var sourcePrimitiveCount = opaqueDocument.RootElement.GetProperty("meshes")[0]
+        .GetProperty("primitives").GetArrayLength();
+    var minifiedPrimitiveCount = minifiedOpaqueDocument.RootElement.GetProperty("meshes")[0]
+        .GetProperty("primitives").GetArrayLength();
+    Expect(
+        minifiedPrimitiveCount < sourcePrimitiveCount,
+        $"expected minified RC1 export to merge compatible opaque primitives, got {sourcePrimitiveCount} -> {minifiedPrimitiveCount}");
+    Expect(
+        CountPrimitiveIndices(minifiedOpaqueDocument.RootElement) == CountPrimitiveIndices(opaqueDocument.RootElement),
+        "expected minified RC1 primitive merging to preserve every triangle index");
+}
+
+int CountPrimitiveIndices(JsonElement root)
+{
+    var accessors = root.GetProperty("accessors");
+    return root.GetProperty("meshes")[0]
+        .GetProperty("primitives")
+        .EnumerateArray()
+        .Sum(primitive => accessors[primitive.GetProperty("indices").GetInt32()].GetProperty("count").GetInt32());
 }
 
 void ExpectExportWindingMatchesDae(TieGltfExport export, string daePath, string label)

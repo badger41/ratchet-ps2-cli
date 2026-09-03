@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\RatchetPs2.Core\RatchetPs2.Core.csproj" />
+    <ProjectReference Include="..\..\src\RatchetPs2.Games.RC1\RatchetPs2.Games.RC1.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

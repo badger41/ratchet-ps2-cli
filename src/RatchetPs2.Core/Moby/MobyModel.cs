@@ -4,6 +4,7 @@ namespace RatchetPs2.Core.Moby;
 
 public sealed class MobyModel
 {
+    public MobyModelFormat ModelFormat { get; set; } = MobyModelFormat.Standard;
     public MobyAnimationFormat AnimationFormat { get; set; } = MobyAnimationFormat.Standard;
     public MobyAnimationFormat SkeletonFormat { get; set; } = MobyAnimationFormat.Standard;
     public int MeshTableOffset { get; set; }
@@ -56,6 +57,12 @@ public enum MobyAnimationFormat
 {
     Standard,
     Compact
+}
+
+public enum MobyModelFormat
+{
+    Standard,
+    Rc1
 }
 
 public sealed class MobyBoundingSphere

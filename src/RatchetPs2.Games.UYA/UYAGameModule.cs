@@ -8,4 +8,5 @@ public sealed class UYAGameModule : IGameModule, IMobyGameModule
     public GameId Id => GameId.UYA;
     public string DisplayName => "Up Your Arsenal";
     public MobyAnimationFormat AnimationFormat => MobyAnimationFormat.Standard;
+    public MobyModelFormat ModelFormat => MobyModelFormat.Standard;
 }

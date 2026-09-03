@@ -206,15 +206,15 @@ ratchet-ps2 moby export-dzo --input-root extracted-levels --output-root dzo-moby
 
 ### `moby export-gltf`
 
-Export a UYA or DL `moby.bin` model to glTF.
+Export an RC1, UYA, or DL `moby.bin` model to glTF.
 
 ```bash
-ratchet-ps2 moby export-gltf --game <UYA|DL> --input <input> --output <output> [--lod <lod>] [--texture-directory <directory>]
+ratchet-ps2 moby export-gltf --game <RC1|UYA|DL> --input <input> --output <output> [--lod <lod>] [--texture-directory <directory>]
 ```
 
 Options:
 
-- `--game <game>`: Required game ID. Currently `UYA` and `DL` are supported.
+- `--game <game>`: Required game ID. Currently `RC1`, `UYA`, and `DL` are supported.
 - `--input <input>`: Required path to the input `moby.bin` binary.
 - `--output <output>`: Required path to write the output `.gltf` file.
 - `--lod <lod>`: Use `0` to export LOD0 only. Omit to export all moby mesh groups.
@@ -533,19 +533,19 @@ Subcommands:
 - `export-gltf`: Export tie geometry to a glTF model.
 - `export-gltf-batch`: Export a directory of tie class binaries and write a viewer manifest.
 
-Tie support currently accepts `GC`, `UYA`, and `DL`.
+Tie support currently accepts `RC1`, `GC`, `UYA`, and `DL`.
 
 ### `tie inspect`
 
 Inspect a tie class binary and dump its currently understood structure.
 
 ```bash
-ratchet-ps2 tie inspect --game <GC|UYA|DL> --input <input> [--output <output>]
+ratchet-ps2 tie inspect --game <RC1|GC|UYA|DL> --input <input> [--output <output>]
 ```
 
 Options:
 
-- `--game <game>`: Required game ID. Currently `GC`, `UYA`, and `DL` are supported.
+- `--game <game>`: Required game ID. Currently `RC1`, `GC`, `UYA`, and `DL` are supported.
 - `--input <input>`: Required path to the input `tie.bin` class binary.
 - `--output <output>`: Optional path to write the structural report. The report is always printed to stdout.
 
@@ -560,16 +560,17 @@ ratchet-ps2 tie inspect --game DL --input tie.bin --output tie-report.txt
 Export tie geometry to a glTF model.
 
 ```bash
-ratchet-ps2 tie export-gltf --game <GC|UYA|DL> --input <input> --output <output> [--lod <lod>] [--texture-directory <directory>]
+ratchet-ps2 tie export-gltf --game <RC1|GC|UYA|DL> --input <input> --output <output> [--lod <lod>] [--texture-directory <directory>] [--minify]
 ```
 
 Options:
 
-- `--game <game>`: Required game ID. Currently `GC`, `UYA`, and `DL` are supported.
+- `--game <game>`: Required game ID. Currently `RC1`, `GC`, `UYA`, and `DL` are supported.
 - `--input <input>`: Required path to the input `tie.bin` class binary.
 - `--output <output>`: Required path to write the output `.gltf` file.
 - `--lod <lod>`: LOD packet group to export: `0`, `1`, or `2`. Defaults to `0`.
 - `--texture-directory <directory>`: Optional directory containing Wrench numeric PNGs or `tex.####.0.png` files. Defaults to the input tie's directory.
+- `--minify`: Merge compatible primitives and omit exporter-only metadata and diagnostics.
 
 Output behavior:
 
@@ -601,18 +602,19 @@ Export a directory of tie class binaries to glTF and write a manifest for
 `tools/tie-viewer`.
 
 ```bash
-ratchet-ps2 tie export-gltf-batch --game <GC|UYA|DL> --input-root <input-root> --output-root <output-root> [--core-file-name <name>] [--manifest-name <name>] [--lod <lod>] [--limit <count>]
+ratchet-ps2 tie export-gltf-batch --game <RC1|GC|UYA|DL> --input-root <input-root> --output-root <output-root> [--core-file-name <name>] [--manifest-name <name>] [--lod <lod>] [--limit <count>] [--minify]
 ```
 
 Options:
 
-- `--game <game>`: Required game ID. Currently `GC`, `UYA`, and `DL` are supported.
+- `--game <game>`: Required game ID. Currently `RC1`, `GC`, `UYA`, and `DL` are supported.
 - `--input-root <input-root>`: Required directory to scan recursively.
 - `--output-root <output-root>`: Required directory for exported models and the manifest.
 - `--core-file-name <name>`: Tie class binary file name to scan for. Defaults to `core.bin`.
 - `--manifest-name <name>`: Viewer manifest file name. Defaults to `manifest.json`.
 - `--lod <lod>`: LOD packet group to export: `0`, `1`, or `2`. Defaults to `0`.
 - `--limit <count>`: Optional maximum number of ties to export.
+- `--minify`: Merge compatible primitives and omit exporter-only metadata and diagnostics.
 
 Output behavior:
 

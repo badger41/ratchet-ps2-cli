@@ -74,13 +74,6 @@ internal static class TieExportGltfBatchCommand
                 return;
             }
 
-            if (!TieGameFormats.IsSupported(gameId))
-            {
-                parseResult.GetResult(gameOption)?.AddError(
-                    $"Tie glTF batch export currently supports only {TieGameFormats.SupportedTieGames}. Received {gameId}.");
-                return;
-            }
-
             if (inputRoot is null)
             {
                 parseResult.GetResult(inputRootOption)?.AddError("Missing required --input-root option.");
@@ -157,7 +150,7 @@ internal static class TieExportGltfBatchCommand
 
                 try
                 {
-                    var gameProfile = TieGameProfile.ForGame(gameId);
+                    var gameProfile = TieGameFormats.GetProfile(gameId);
                     using var input = coreFile.OpenRead();
                     var tie = TieClassReader.Read(input, TieClassReadOptions.ForGameProfile(gameProfile));
                     var textureResources = TieTextureResourcePreparer.PrepareExternalTextures(coreFile.Directory, outputDirectory);

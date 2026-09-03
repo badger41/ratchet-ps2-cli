@@ -38,6 +38,7 @@ internal static class TieGltfSourceNormalBuilder
         TieGltfSourceNormalState[] sourceVertexStates,
         TieGltfSourceNormalState[] sourceIndexStates,
         bool usePackedVertexNormalTableSource,
+        bool useExactVertexNormalTableRemaps,
         TieGltfRawSourceNormalLayout? preferredLayout)
     {
         if (tie.VertexNormals.Count == 0 || tie.VertexNormalRemaps.Count == 0)
@@ -81,6 +82,7 @@ internal static class TieGltfSourceNormalBuilder
             generatedNormals,
             generatedIndexNormals,
             usePackedVertexNormalTableSource,
+            useExactVertexNormalTableRemaps,
             preferredLayout);
         var appliedCount = 0;
         foreach (var vertex in topology.LogicalVertices.OrderBy(vertex => vertex.LogicalVertexIndex))
@@ -296,6 +298,7 @@ internal static class TieGltfSourceNormalBuilder
         IReadOnlyList<Vector3> generatedNormals,
         IReadOnlyList<Vector3> generatedIndexNormals,
         bool usePackedVertexNormalTableSource,
+        bool useExactVertexNormalTableRemaps,
         TieGltfRawSourceNormalLayout? preferredLayout)
     {
         var targetModes = preferVuAddressRemaps && remapByVuAddress.Count > 0
@@ -303,6 +306,15 @@ internal static class TieGltfSourceNormalBuilder
             : allowLogicalVertexRemaps && remapByLogicalVertexIndex.Count > 0
                 ? new[] { TieGltfVertexNormalRemapTargetMode.LogicalVertex }
                 : new[] { TieGltfVertexNormalRemapTargetMode.PacketVertexRow };
+        if (useExactVertexNormalTableRemaps)
+        {
+            return new TieGltfSourceNormalTableLayoutSelection(
+                TieGltfRawSourceNormalLayout.Default,
+                targetModes[0],
+                PreserveSourceOrientation: true,
+                default);
+        }
+
         var usesPreferredLayout = preferredLayout.HasValue;
         var selectedPreferredLayout = preferredLayout.GetValueOrDefault();
         TieGltfRawSourceNormalLayout[] layoutCandidates = usesPreferredLayout

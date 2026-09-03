@@ -62,7 +62,7 @@ async function ensureBlazorScriptLoaded() {
   }
 
   if (typeof document === "undefined") {
-    await import(new URL("./_framework/blazor.webassembly.js", getAssetBaseUrl()).toString());
+    await import(/* @vite-ignore */ new URL("./_framework/blazor.webassembly.js", getAssetBaseUrl()).toString());
     await waitForRuntimeReady();
     return;
   }

@@ -1,5 +1,5 @@
 using RatchetPs2.Cli.Abstractions;
-using RatchetPs2.Cli.GameSelection;
+using RatchetPs2.Cli.Handlers;
 using RatchetPs2.Core.Games;
 using System.CommandLine;
 
@@ -37,16 +37,10 @@ internal static class MapExtractCommand
             var level = parseResult.GetValue(levelOption);
             var outputDirectory = parseResult.GetValue(outputOption);
 
-            if (string.IsNullOrWhiteSpace(gameValue) || !GameIdParser.TryParse(gameValue, out var gameId))
+            if (!MapGameFormats.TryParse(gameValue, out var gameId))
             {
                 Console.Error.WriteLine(
-                    $"Unsupported --game value '{gameValue}'. Map extraction currently supports GC, UYA, and DL.");
-                return 1;
-            }
-
-            if (gameId is not (GameId.GC or GameId.DL or GameId.UYA))
-            {
-                Console.Error.WriteLine("Map extraction currently supports only --game GC, --game UYA, or --game DL.");
+                    $"Unsupported --game value '{gameValue}'. Map extraction supports {MapGameFormats.SupportedGames}.");
                 return 1;
             }
 
@@ -64,6 +58,14 @@ internal static class MapExtractCommand
 
             try
             {
+                if (gameId == GameId.RC1)
+                {
+                    var summary = Rc1MapHandler.Extract(inputFile, level, outputDirectory);
+                    Console.WriteLine(
+                        $"Extracted RC1 level {level} to '{summary.OutputDirectory}' ({summary.FileCount} files, {summary.SectorCount} sectors).");
+                    return 0;
+                }
+
                 if (gameId == GameId.UYA)
                 {
                     var summary = UyaMapExtractionWriter.Extract(inputFile, level, outputDirectory);

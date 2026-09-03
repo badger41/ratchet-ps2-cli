@@ -22,12 +22,14 @@ public sealed record TieClassReadOptions
     public static TieClassReadOptions Default { get; } = new();
 
     public int VertexNormalHeaderSize { get; init; } = 0x10;
+    public bool UseRc1Header { get; init; }
 
     public static TieClassReadOptions ForGameProfile(TieGameProfile? profile)
     {
         return new TieClassReadOptions
         {
-            VertexNormalHeaderSize = profile?.VertexNormalHeaderSize ?? Default.VertexNormalHeaderSize
+            VertexNormalHeaderSize = profile?.VertexNormalHeaderSize ?? Default.VertexNormalHeaderSize,
+            UseRc1Header = TieGameProfile.NormalizeGameLabel(profile?.GameLabel) == "RC1"
         };
     }
 }

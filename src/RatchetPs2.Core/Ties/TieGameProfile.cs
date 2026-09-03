@@ -12,6 +12,9 @@ public sealed record TieGameProfile
     public string AmbientIndexAttributeName { get; init; } = "_TIE_AMBIENT_INDEX";
     public string EnvironmentNormalAttributeName { get; init; } = "_TIE_ENV_NORMAL";
     public bool UseAmbientIndexAttribute { get; init; }
+    public int AmbientNormalIndexOffset { get; init; } = 2;
+    public int? AmbientWordCount { get; init; }
+    public bool UseNearestAmbientNormalFallback { get; init; }
     public string SourceNormalAttributeName { get; init; } = "_TIE_SOURCE_NORMAL_PRESENT";
     public string SourceNormalStateAttributeName { get; init; } = "_TIE_SOURCE_NORMAL_STATE";
     public int ReflectiveMaskModeBit { get; init; } = 0x20;
@@ -23,8 +26,11 @@ public sealed record TieGameProfile
     public bool PreferVuAddressSourceNormalRemaps { get; init; }
     public bool InvertDecodedFatVertexSourceNormals { get; init; }
     public bool UsePackedVertexNormalTableSource { get; init; }
+    public bool UseExactVertexNormalTableRemaps { get; init; }
     public bool UsePacketRowSourceNormals { get; init; } = true;
     public bool OrientTriangleWindingToNormals { get; init; }
+    public bool UseStaticBackfaceCulling { get; init; }
+    public bool UseDoubleSidedAlphaMaterials { get; init; }
     public int VertexNormalHeaderSize { get; init; } = 0x10;
 
     public static TieGameProfile ForGame(GameId gameId)
@@ -44,6 +50,7 @@ public sealed record TieGameProfile
             UsePacketRowSourceNormals = normalized is "GC" or "UYA",
             UseAmbientIndexAttribute = normalized is "DL" or "GC" or "UYA",
             OrientTriangleWindingToNormals = normalized == "GC",
+            UseStaticBackfaceCulling = false,
             VertexNormalHeaderSize = normalized is "GC" or "UYA" ? 0 : 0x10
         };
     }

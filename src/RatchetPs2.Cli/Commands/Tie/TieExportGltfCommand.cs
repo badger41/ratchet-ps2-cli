@@ -50,13 +50,6 @@ internal static class TieExportGltfCommand
                 return;
             }
 
-            if (!TieGameFormats.IsSupported(gameId))
-            {
-                parseResult.GetResult(gameOption)?.AddError(
-                    $"Tie glTF export currently supports only {TieGameFormats.SupportedTieGames}. Received {gameId}.");
-                return;
-            }
-
             if (inputFile is null)
             {
                 parseResult.GetResult(inputOption)?.AddError("Missing required --input option.");
@@ -103,7 +96,7 @@ internal static class TieExportGltfCommand
                 {
                     LodIndex = lodIndex,
                     BufferFileName = Path.GetFileName(binFile),
-                    GameProfile = TieGameProfile.ForGame(gameId),
+                    GameProfile = TieGameFormats.GetProfile(gameId),
                     ExternalTextureUris = textureResources?.Uris,
                     ExternalTextureSizes = textureResources?.Sizes,
                     ExternalTextureAlpha = textureResources?.Alpha,

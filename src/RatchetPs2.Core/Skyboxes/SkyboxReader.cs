@@ -46,7 +46,7 @@ public static class SkyboxReader
         var textures = ReadTextures(reader, baseOffset, availableLength, header);
         var fxList = ReadFxList(reader, baseOffset, availableLength, header);
         var sprites = ReadSprites(reader, baseOffset, availableLength, header);
-        var shells = ReadShells(reader, baseOffset, availableLength, header, gameId == GameId.GC);
+        var shells = ReadShells(reader, baseOffset, availableLength, header, gameId is GameId.RC1 or GameId.GC);
 
         return new Skybox(header, shells, textures, sprites, fxList, availableLength);
     }

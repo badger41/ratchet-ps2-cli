@@ -34,11 +34,7 @@ public static partial class Exports
     {
         ArgumentNullException.ThrowIfNull(gameplayBytes);
 
-        var payloadBytes = BinaryMagic.IsWad(gameplayBytes)
-            ? WadCompression.Decompress(gameplayBytes)
-            : gameplayBytes;
-
-        return ToWasmGameplayBlocks(UyaGameplayBlockReader.ReadCore(payloadBytes));
+        return ToWasmGameplayBlocks(UyaGameplayBlockReader.ReadCore(ReadGameplayPayload(gameplayBytes)));
     }
 
     [JSInvokable("ParseGcGameplayCore")]
@@ -46,12 +42,8 @@ public static partial class Exports
     {
         ArgumentNullException.ThrowIfNull(gameplayBytes);
 
-        var payloadBytes = BinaryMagic.IsWad(gameplayBytes)
-            ? WadCompression.Decompress(gameplayBytes)
-            : gameplayBytes;
-
         return ToWasmGameplayBlocks(
-            UyaGameplayBlockReader.ReadCore(payloadBytes, GcGameplayLayout.Core),
+            UyaGameplayBlockReader.ReadCore(ReadGameplayPayload(gameplayBytes), GcGameplayLayout.Core),
             isGc: true);
     }
 
@@ -275,6 +267,10 @@ public static partial class Exports
     {
         return blocks.FirstOrDefault(block => block.SemanticName == semanticName)?.PayloadBytes ?? [];
     }
+
+    private static byte[] ReadGameplayPayload(byte[] gameplayBytes) => BinaryMagic.IsWad(gameplayBytes)
+        ? WadCompression.Decompress(gameplayBytes)
+        : gameplayBytes;
 
     private static WasmDlPvarTableEntry[] ReadPvarTableEntries(byte[] tableBytes, byte[] dataBytes, string gameName)
     {

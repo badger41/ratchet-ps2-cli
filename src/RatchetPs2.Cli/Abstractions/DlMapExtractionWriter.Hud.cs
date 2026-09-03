@@ -1,3 +1,4 @@
+using RatchetPs2.Core.Hud;
 using RatchetPs2.Core.Textures;
 using RatchetPs2.Core.Textures.Pif;
 using RatchetPs2.Games.DL.Level;
@@ -15,14 +16,14 @@ internal static partial class DlMapExtractionWriter
         CleanLegacySpriteArtifacts(Path.Combine(mapOutputDirectory, "sprites"));
         CleanOldHudArtifacts(outputDirectory);
 
-        var hud = DlHudBankReader.Read(hudHeaderBytes, bankPayloads);
+        var hud = HudBankReader.Read(hudHeaderBytes, bankPayloads);
         var normalizedTextures = new List<object>(hud.Frames.Count);
         var writtenTextureCount = 0;
 
         foreach (var frame in hud.Frames)
         {
-            var hasTexture = DlHudBankReader.TryGetTexture(hud, frame.TextureIndex, out var texture);
-            var hasPalette = DlHudBankReader.TryGetPalette(hud, frame.PaletteIndex, out var palette);
+            var hasTexture = HudBankReader.TryGetTexture(hud, frame.TextureIndex, out var texture);
+            var hasPalette = HudBankReader.TryGetPalette(hud, frame.PaletteIndex, out var palette);
             var relativeDirectory = hasTexture ? $"bank_{texture.BankIndex}" : "unknown";
             var baseName = $"tex.{frame.Index:0000}";
             string? pifPath = null;
@@ -105,7 +106,7 @@ internal static partial class DlMapExtractionWriter
             });
         }
 
-        var bankRoutes = Enumerable.Range(0, DlHudBankReader.BankCount)
+        var bankRoutes = Enumerable.Range(0, HudBankReader.BankCount)
             .Select(index => new
             {
                 BankIndex = index,
@@ -190,7 +191,7 @@ internal static partial class DlMapExtractionWriter
 
     private static IReadOnlyList<byte[]> GetHudBankPayloads(IReadOnlyDictionary<int, DlCoreLevelSegment> coreSegmentByHeaderOffset)
     {
-        var banks = new byte[DlHudBankReader.BankCount][];
+        var banks = new byte[HudBankReader.BankCount][];
         for (var i = 0; i < banks.Length; i++)
         {
             var headerOffset = 0x28 + (i * 8);
@@ -217,7 +218,7 @@ internal static partial class DlMapExtractionWriter
         DeleteIfExists(Path.Combine(outputDirectory, "hud_header.bin"));
         DeleteMatchingFiles(outputDirectory, "hud_bank_*.wad");
 
-        for (var i = 0; i < DlHudBankReader.BankCount; i++)
+        for (var i = 0; i < HudBankReader.BankCount; i++)
         {
             DeleteMatchingFiles(Path.Combine(outputDirectory, $"bank_{i}"), "tex.*.pif", "tex.*.png");
         }

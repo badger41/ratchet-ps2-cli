@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Numerics;
 
 namespace RatchetPs2.Core.Moby;
@@ -11,8 +12,15 @@ public static class MobyModelReader
 
         using var reader = new BinaryReader(input, System.Text.Encoding.UTF8, leaveOpen: true);
         var model = ReadHeader(reader);
+        model.ModelFormat = options.ModelFormat;
         model.AnimationFormat = options.AnimationFormat;
         model.SkeletonFormat = options.AnimationFormat;
+        if (options.ModelFormat == MobyModelFormat.Rc1)
+        {
+            model.FarLodMeshCount = 0;
+            model.TeamPalettes = 0;
+            model.CornCobOffset = 0;
+        }
 
         if (!options.SkipAnimationSequences)
         {
@@ -27,7 +35,7 @@ public static class MobyModelReader
         ReadCommonTransforms(reader, model);
         ReadGifTags(reader, model);
         ReadCornCob(reader, model);
-        ReadMeshes(reader, model);
+        ReadMeshes(reader, model, options.ModelFormat);
         ReadTeamPalettes(reader, model);
         ReadSoundDefs(reader, model);
         ReadCollision(reader, model);
@@ -642,7 +650,7 @@ public static class MobyModelReader
         };
     }
 
-    private static void ReadMeshes(BinaryReader reader, MobyModel model)
+    private static void ReadMeshes(BinaryReader reader, MobyModel model, MobyModelFormat format)
     {
         if (model.MeshTableOffset == 0)
         {
@@ -665,7 +673,7 @@ public static class MobyModelReader
             {
                 reader.BaseStream.Seek(model.MeshTableOffset + (index + i) * 0x10, SeekOrigin.Begin);
                 var entry = ReadMeshEntry(reader, type);
-                AttachMeshData(reader, entry, model.GifTags);
+                AttachMeshData(reader, entry, model.GifTags, format);
                 table.Entries.Add(entry);
             }
         }
@@ -689,7 +697,11 @@ public static class MobyModelReader
         };
     }
 
-    private static void AttachMeshData(BinaryReader reader, MobyMeshTableEntry entry, List<MobyGifTag> gifTags)
+    private static void AttachMeshData(
+        BinaryReader reader,
+        MobyMeshTableEntry entry,
+        List<MobyGifTag> gifTags,
+        MobyModelFormat format)
     {
         if (entry.VifListOffset != 0)
         {
@@ -714,6 +726,44 @@ public static class MobyModelReader
 
         reader.BaseStream.Seek(entry.VertexDataOffset, SeekOrigin.Begin);
         entry.VertexData = reader.ReadBytes(entry.VertexDataSize * 0x10);
+        if (format == MobyModelFormat.Rc1 && entry.MeshType != MobyMeshType.Metal)
+        {
+            entry.VertexData = ConvertRc1VertexData(entry.VertexData);
+            entry.VertexDataSize = checked((byte)(entry.VertexData.Length / 0x10));
+        }
+    }
+
+    private static byte[] ConvertRc1VertexData(byte[] source)
+    {
+        const int headerSize = 0x20;
+        if (source.Length < headerSize)
+        {
+            throw new InvalidDataException("RC1 moby vertex data is too small to contain its header.");
+        }
+
+        var values = new uint[8];
+        for (var index = 0; index < values.Length; index++)
+        {
+            values[index] = BinaryPrimitives.ReadUInt32LittleEndian(source.AsSpan(index * sizeof(uint), sizeof(uint)));
+        }
+        var vertexTableOffset = checked((int)values[6]);
+        var dataEnd = checked((int)values[7]);
+        if (vertexTableOffset < headerSize || vertexTableOffset % 0x10 != 0
+            || dataEnd < vertexTableOffset || dataEnd > source.Length || dataEnd % 0x10 != 0)
+        {
+            throw new InvalidDataException("RC1 moby vertex table offsets are invalid.");
+        }
+
+        var converted = new byte[dataEnd - 0x10];
+        for (var index = 0; index < 6; index++)
+        {
+            BinaryPrimitives.WriteUInt16LittleEndian(
+                converted.AsSpan(index * sizeof(ushort), sizeof(ushort)),
+                checked((ushort)values[index]));
+        }
+        BinaryPrimitives.WriteUInt16LittleEndian(converted.AsSpan(0x0c, 2), checked((ushort)(vertexTableOffset - 0x10)));
+        source.AsSpan(headerSize, dataEnd - headerSize).CopyTo(converted.AsSpan(0x10));
+        return converted;
     }
 
     private static void ReadTeamPalettes(BinaryReader reader, MobyModel model)
@@ -810,4 +860,5 @@ public sealed class MobyModelReadOptions
 {
     public bool SkipAnimationSequences { get; init; }
     public MobyAnimationFormat AnimationFormat { get; init; } = MobyAnimationFormat.Standard;
+    public MobyModelFormat ModelFormat { get; init; } = MobyModelFormat.Standard;
 }

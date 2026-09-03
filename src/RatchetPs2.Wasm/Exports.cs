@@ -1,5 +1,6 @@
 using Microsoft.JSInterop;
 using RatchetPs2.Core.Games;
+using RatchetPs2.Core.Hud;
 using RatchetPs2.Core.Moby;
 using RatchetPs2.Core.Textures;
 using RatchetPs2.Core.Textures.Pif;
@@ -95,10 +96,10 @@ public static partial class Exports
         ArgumentNullException.ThrowIfNull(levelWadBytes);
 
         var package = UyaLevelWadUnpacker.Unpack(levelWadBytes);
-        var renderPackage = BuildUyaRenderPackage(
+        var renderFiles = BuildUyaRenderFiles(
             package.LevelWad.Level,
             package.Files);
-        return AppendPackedFiles(renderPackage, package.Files.Where(IsGameplayMetadataFile));
+        return PackRenderFiles(renderFiles, package.Files);
     }
 
     [JSInvokable("BuildGcLevelWadRenderPackage")]
@@ -107,11 +108,11 @@ public static partial class Exports
         ArgumentNullException.ThrowIfNull(levelWadBytes);
 
         var package = UyaLevelWadUnpacker.Unpack(levelWadBytes);
-        var renderPackage = BuildUyaRenderPackage(
+        var renderFiles = BuildUyaRenderFiles(
             package.LevelWad.Level,
             package.Files,
             GameId.GC);
-        return AppendPackedFiles(renderPackage, package.Files.Where(IsGameplayMetadataFile));
+        return PackRenderFiles(renderFiles, package.Files);
     }
 
     [JSInvokable("BuildUyaCustomMapZipRenderPackage")]
@@ -120,16 +121,16 @@ public static partial class Exports
         ArgumentNullException.ThrowIfNull(zipBytes);
 
         var package = UyaCustomMapZipUnpacker.Unpack(zipBytes);
-        var renderPackage = BuildUyaRenderPackage(levelIndex: 0, package.Files);
-        return AppendPackedFiles(renderPackage, package.Files.Where(IsGameplayMetadataFile));
+        var renderFiles = BuildUyaRenderFiles(levelIndex: 0, package.Files);
+        return PackRenderFiles(renderFiles, package.Files);
     }
 
-    private static PackedFilePackage BuildUyaRenderPackage(
+    private static IReadOnlyList<PackedFile> BuildUyaRenderFiles(
         int levelIndex,
         IReadOnlyList<PackedFile> unpackedFiles,
         GameId gameId = GameId.UYA)
     {
-        var renderPackage = UyaLevelWadRenderPackageBuilder.BuildPacked(
+        var renderFiles = UyaLevelWadRenderPackageBuilder.BuildFiles(
             levelIndex,
             unpackedFiles,
             assetFiles => DlLevelWadRenderPackageBuilder.BuildAssetFiles(
@@ -145,15 +146,15 @@ public static partial class Exports
         var hudHeader = unpackedFiles.FirstOrDefault(file => file.Path == "hud/header.bin");
         if (hudHeader is null)
         {
-            return renderPackage;
+            return renderFiles;
         }
 
-        var hudBanks = Enumerable.Range(0, DlHudBankReader.BankCount)
+        var hudBanks = Enumerable.Range(0, HudBankReader.BankCount)
             .Select(index => unpackedFiles.FirstOrDefault(file => file.Path == $"hud/bank{index}.bin")?.Bytes ?? [])
             .ToArray();
-        return AppendPackedFiles(
-            renderPackage,
-            DlLevelWadRenderPackageBuilder.BuildHudFiles(hudHeader.Bytes, hudBanks));
+        return renderFiles
+            .Concat(HudBankRenderPackageBuilder.BuildFiles(hudHeader.Bytes, hudBanks))
+            .ToArray();
     }
 
     [JSInvokable("ExportMobyGltf")]
@@ -162,10 +163,11 @@ public static partial class Exports
         ArgumentNullException.ThrowIfNull(mobyBytes);
 
         using var input = new MemoryStream(mobyBytes, writable: false);
-        var animationFormat = ParseMobyAnimationFormat(game);
+        var (animationFormat, modelFormat) = ParseMobyFormats(game);
         var options = new MobyGltfExportOptions
         {
             AnimationFormat = animationFormat,
+            ModelFormat = modelFormat,
             SkipAnimationSequences = skipAnimations,
             LodIndex = lod,
             BufferFileName = "moby.buffer.bin"
@@ -183,13 +185,14 @@ public static partial class Exports
     [JSInvokable("GetApiVersion")]
     public static string GetApiVersion() => "1";
 
-    private static MobyAnimationFormat ParseMobyAnimationFormat(string? game)
+    private static (MobyAnimationFormat Animation, MobyModelFormat Model) ParseMobyFormats(string? game)
     {
         return game?.Trim().ToUpperInvariant() switch
         {
-            null or "" or "DL" => MobyAnimationFormat.Compact,
-            "UYA" => MobyAnimationFormat.Standard,
-            _ => throw new ArgumentOutOfRangeException(nameof(game), game, "Expected DL or UYA."),
+            null or "" or "DL" => (MobyAnimationFormat.Compact, MobyModelFormat.Standard),
+            "RC1" => (MobyAnimationFormat.Standard, MobyModelFormat.Rc1),
+            "UYA" => (MobyAnimationFormat.Standard, MobyModelFormat.Standard),
+            _ => throw new ArgumentOutOfRangeException(nameof(game), game, "Expected RC1, DL, or UYA."),
         };
     }
 
@@ -215,16 +218,11 @@ public static partial class Exports
             || file.Path.StartsWith("gameplay/core/", StringComparison.Ordinal);
     }
 
-    private static PackedFilePackage AppendPackedFiles(PackedFilePackage package, IEnumerable<PackedFile> extraFiles)
+    private static PackedFilePackage PackRenderFiles(
+        IEnumerable<PackedFile> renderFiles,
+        IEnumerable<PackedFile> sourceFiles)
     {
-        var files = package.Entries
-            .Select(entry => new PackedFile(
-                entry.Path,
-                package.PackedBytes.AsSpan(entry.Offset, entry.Length).ToArray(),
-                entry.ContentType))
-            .Concat(extraFiles)
-            .ToArray();
-
-        return PackedFilePackageBuilder.Pack(files);
+        return PackedFilePackageBuilder.Pack(
+            renderFiles.Concat(sourceFiles.Where(IsGameplayMetadataFile)).ToArray());
     }
 }

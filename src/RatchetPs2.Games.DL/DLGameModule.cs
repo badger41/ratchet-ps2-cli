@@ -8,4 +8,5 @@ public sealed class DLGameModule : IGameModule, IMobyGameModule
     public GameId Id => GameId.DL;
     public string DisplayName => "Deadlocked";
     public MobyAnimationFormat AnimationFormat => MobyAnimationFormat.Compact;
+    public MobyModelFormat ModelFormat => MobyModelFormat.Standard;
 }

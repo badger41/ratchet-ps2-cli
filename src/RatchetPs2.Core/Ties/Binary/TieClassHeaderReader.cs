@@ -2,17 +2,65 @@ namespace RatchetPs2.Core.Ties;
 
 internal static class TieClassHeaderReader
 {
-    public static TieClassHeader Read(BinaryReader reader)
+    public static TieClassHeader Read(BinaryReader reader, bool useRc1Header)
     {
         ArgumentNullException.ThrowIfNull(reader);
 
         reader.BaseStream.Position = 0;
 
-        var packetTableOffsets = new uint[3];
-        for (var i = 0; i < packetTableOffsets.Length; i++)
+        return useRc1Header ? ReadRc1(reader) : ReadLaterGame(reader);
+    }
+
+    private static TieClassHeader ReadRc1(BinaryReader reader)
+    {
+        var packetTableOffsets = ReadUInt32s(reader, 3);
+        var vertexNormalsOffset = reader.ReadUInt32();
+        var nearDistance = reader.ReadSingle();
+        var mediumDistance = reader.ReadSingle();
+        var farDistance = reader.ReadSingle();
+        _ = reader.ReadUInt32();
+        var packetCounts = reader.ReadBytes(3);
+        var textureCount = reader.ReadByte();
+        _ = reader.ReadUInt32();
+        _ = reader.ReadUInt32();
+        var shadersOffset = reader.ReadUInt32();
+        var vertexNormalsCount = vertexNormalsOffset > 0
+            && shadersOffset >= vertexNormalsOffset
+            && (shadersOffset - vertexNormalsOffset) % 8 == 0
+            && (shadersOffset - vertexNormalsOffset) / 8 <= short.MaxValue
+                ? (short)((shadersOffset - vertexNormalsOffset) / 8)
+                : (short)0;
+        var boundingSphere = new TieBoundingSphere(
+            reader.ReadSingle(),
+            reader.ReadSingle(),
+            reader.ReadSingle(),
+            reader.ReadSingle());
+        var scale = reader.ReadSingle();
+
+        return new TieClassHeader
         {
-            packetTableOffsets[i] = reader.ReadUInt32();
-        }
+            PacketTableOffsets = packetTableOffsets,
+            PacketCounts = packetCounts,
+            TextureCount = textureCount,
+            NearDistance = nearDistance,
+            MediumDistance = mediumDistance,
+            FarDistance = farDistance,
+            ShadersOffset = shadersOffset,
+            VertexNormalsOffset = vertexNormalsOffset,
+            VertexNormalsCount = vertexNormalsCount,
+            CacheSizes = new short[3],
+            RgbaRemapOffsets = new ushort[3],
+            Scale = scale,
+            BoundingSphere = boundingSphere,
+            Lods = new TieLod[3],
+            UnknownOffsets78 = new ushort[3]
+        };
+    }
+
+    private static TieClassHeader ReadLaterGame(BinaryReader reader)
+    {
+
+        var packetTableOffsets = ReadUInt32s(reader, 3);
 
         var packetCounts = new byte[3];
         for (var i = 0; i < packetCounts.Length; i++)
@@ -100,5 +148,16 @@ internal static class TieClassHeaderReader
             UnknownOffsets78 = unknownOffsets78,
             Padding = reader.ReadInt16()
         };
+    }
+
+    private static uint[] ReadUInt32s(BinaryReader reader, int count)
+    {
+        var values = new uint[count];
+        for (var i = 0; i < values.Length; i++)
+        {
+            values[i] = reader.ReadUInt32();
+        }
+
+        return values;
     }
 }

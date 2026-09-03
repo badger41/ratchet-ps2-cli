@@ -37,13 +37,6 @@ internal static class TieInspectCommand
                 return;
             }
 
-            if (!TieGameFormats.IsSupported(gameId))
-            {
-                parseResult.GetResult(gameOption)?.AddError(
-                    $"Tie inspect currently supports only {TieGameFormats.SupportedTieGames}. Received {gameId}.");
-                return;
-            }
-
             if (inputFile is null)
             {
                 parseResult.GetResult(inputOption)?.AddError("Missing required --input option.");
@@ -58,7 +51,7 @@ internal static class TieInspectCommand
             }
 
             using var input = inputFile.OpenRead();
-            var gameProfile = TieGameProfile.ForGame(gameId);
+            var gameProfile = TieGameFormats.GetProfile(gameId);
             var tie = TieClassReader.Read(input, TieClassReadOptions.ForGameProfile(gameProfile));
             var report = TieClassDescriber.Describe(tie);
 

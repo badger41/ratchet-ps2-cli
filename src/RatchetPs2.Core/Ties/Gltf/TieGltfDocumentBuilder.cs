@@ -44,7 +44,8 @@ internal static class TieGltfDocumentBuilder
             externalTextureUris,
             externalTextureAlpha,
             profile,
-            metadataMode);
+            metadataMode,
+            optimizeForRuntime: minify && metadataMode != GltfExportMetadataMode.Full);
         var glowEmission = TieGltfGlowBuilder.BuildEmissionMaterial(glowColorResult.Rgba);
         using var binStream = new MemoryStream();
         using var writer = new BinaryWriter(binStream);
@@ -138,6 +139,8 @@ internal static class TieGltfDocumentBuilder
         }
 
         var primitives = new List<Dictionary<string, object>>();
+        var primitiveGroups = new List<GltfPrimitiveGroup>();
+        var mergeCompatiblePrimitives = minify && metadataMode != GltfExportMetadataMode.Full;
         var packetsByIndex = tie.PacketTables
             .FirstOrDefault(table => table.LodIndex == topology.LodIndex)?
             .Packets
@@ -146,9 +149,9 @@ internal static class TieGltfDocumentBuilder
         {
             packetsByIndex.TryGetValue(group.PacketIndex, out var packet);
             var bfcDistance = packet?.BfcDistance ?? 0;
-            var usesBackfaceCulling = backfaceCullDistanceBucket < bfcDistance;
-            var indexAccessor = gltfBufferWriter.WriteUInt32IndexAccessor(group.Indices);
-            var materialIndex = materialBuilder.GetMaterialIndex(
+            var usesBackfaceCulling = profile.UseStaticBackfaceCulling
+                || backfaceCullDistanceBucket < bfcDistance;
+            var material = materialBuilder.GetMaterial(
                 group.ShaderIndex,
                 group.MultipassOffset,
                 group.PassFlags,
@@ -157,19 +160,42 @@ internal static class TieGltfDocumentBuilder
                 tie.Header.ModeBits,
                 doubleSided: !usesBackfaceCulling,
                 group.UseGlowEmission ? glowEmission : null);
-            var glowRgbaIndexCount = TieGltfGlowBuilder.CountActiveIndices(group.Indices, geometry.GlowColors);
+            var existing = mergeCompatiblePrimitives
+                ? material.RequiresStableOrder
+                    ? primitiveGroups.LastOrDefault()
+                    : primitiveGroups.FirstOrDefault(candidate => candidate.MaterialIndex == material.Index)
+                : null;
+            if (existing is not null && existing.MaterialIndex == material.Index)
+            {
+                existing.Indices.AddRange(group.Indices);
+                continue;
+            }
+
+            primitiveGroups.Add(new GltfPrimitiveGroup(
+                group,
+                material.Index,
+                bfcDistance,
+                usesBackfaceCulling,
+                group.Indices.ToList()));
+        }
+
+        foreach (var primitiveGroup in primitiveGroups)
+        {
+            var group = primitiveGroup.Source;
+            var indexAccessor = gltfBufferWriter.WriteUInt32IndexAccessor(primitiveGroup.Indices);
+            var glowRgbaIndexCount = TieGltfGlowBuilder.CountActiveIndices(primitiveGroup.Indices, geometry.GlowColors);
             var primitiveDefinition = new Dictionary<string, object>
             {
                 ["attributes"] = attributes,
                 ["indices"] = indexAccessor,
                 ["mode"] = 4,
-                ["material"] = materialIndex
+                ["material"] = primitiveGroup.MaterialIndex
             };
             if (metadataMode == GltfExportMetadataMode.RuntimeOnly)
             {
                 primitiveDefinition["extras"] = new
                 {
-                    BfcDistance = bfcDistance
+                    BfcDistance = primitiveGroup.BfcDistance
                 };
             }
             else if (ShouldWriteFullMetadata(metadataMode))
@@ -177,9 +203,9 @@ internal static class TieGltfDocumentBuilder
                 primitiveDefinition["extras"] = new
                 {
                     group.PacketIndex,
-                    BfcDistance = bfcDistance,
+                    BfcDistance = primitiveGroup.BfcDistance,
                     TieBackfaceCullDistanceBucket = backfaceCullDistanceBucket,
-                    TieUsesBackfaceCulling = usesBackfaceCulling,
+                    TieUsesBackfaceCulling = primitiveGroup.UsesBackfaceCulling,
                     group.ShaderIndex,
                     group.MultipassOffset,
                     MultipassType = group.PassFlags,
@@ -484,6 +510,13 @@ internal static class TieGltfDocumentBuilder
 
         return new TieGltfExport(gltfBytes, binBytes, diagnosticsBytes);
     }
+
+    private sealed record GltfPrimitiveGroup(
+        PacketIndexGroup Source,
+        int MaterialIndex,
+        int BfcDistance,
+        bool UsesBackfaceCulling,
+        List<uint> Indices);
 
     private static object BuildRgbaDiagnostic(TieRgba32 rgba)
     {

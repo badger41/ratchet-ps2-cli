@@ -16,17 +16,18 @@ public static class TieClassReader
     public static TieClass Read(ReadOnlySpan<byte> data, TieClassReadOptions? options = null)
     {
         options ??= TieClassReadOptions.Default;
-        if (data.Length < TieClassHeader.Size)
+        var headerSize = options.UseRc1Header ? 0x70 : TieClassHeader.Size;
+        if (data.Length < headerSize)
         {
             throw new InvalidDataException(
-                $"Tie class binary is too short for a 0x{TieClassHeader.Size:X} byte header.");
+                $"Tie class binary is too short for a 0x{headerSize:X} byte header.");
         }
 
         var bytes = data.ToArray();
         using var stream = new MemoryStream(bytes, writable: false);
         using var reader = new BinaryReader(stream, Encoding.UTF8, leaveOpen: false);
 
-        var header = TieClassHeaderReader.Read(reader);
+        var header = TieClassHeaderReader.Read(reader, options.UseRc1Header);
         var packetTables = TiePacketTableReader.Read(reader, bytes, header);
         var packetDataBlocks = TiePacketDataBlockReader.Read(bytes, header, packetTables);
         var lodTopologies = TieLodTopologyBuilder.Build(packetDataBlocks);
@@ -35,8 +36,11 @@ public static class TieClassReader
         var vertexNormalRemaps = TieVertexNormalReader.ReadRemaps(
             bytes,
             header,
+            packetTables,
+            packetDataBlocks,
             lodTopologies,
-            vertexNormals.Count);
+            vertexNormals.Count,
+            options);
         var rgbaRemapOperations = TieRgbaRemapOperationReader.Read(bytes, header);
         var (glowRgbaRemaps, glowRgbaVertices) = TieGlowRgbaReader.Read(
             header,

@@ -1,14 +1,14 @@
 using static RatchetPs2.Core.IO.BinarySpanReader;
 
-namespace RatchetPs2.Games.DL.Level;
+namespace RatchetPs2.Core.Hud;
 
-public static class DlHudBankReader
+public static class HudBankReader
 {
     public const int HeaderFixedLength = 0xb4;
     public const int BankCount = 5;
     public const int PaletteLength = 0x400;
 
-    public static DlHudBankSet Read(
+    public static HudBankSet Read(
         ReadOnlySpan<byte> headerBytes,
         IReadOnlyList<byte[]> bankBytes)
     {
@@ -16,7 +16,7 @@ public static class DlHudBankReader
 
         if (headerBytes.Length < HeaderFixedLength)
         {
-            throw new InvalidDataException("DL HUD header is too small.");
+            throw new InvalidDataException("HUD header is too small.");
         }
 
         var banks = Enumerable.Range(0, BankCount)
@@ -28,26 +28,26 @@ public static class DlHudBankReader
         var palettes = ReadPalettes(headerBytes, banks, header);
         var textures = ReadTextures(headerBytes, banks, header);
 
-        return new DlHudBankSet(header, icons, frames, palettes, textures);
+        return new HudBankSet(header, icons, frames, palettes, textures);
     }
 
-    public static bool TryGetPalette(DlHudBankSet hud, int paletteId, out DlHudPaletteEntry palette)
+    public static bool TryGetPalette(HudBankSet hud, int paletteId, out HudPaletteEntry palette)
     {
         palette = hud.Palettes.FirstOrDefault(entry => entry.Index == paletteId)!;
         return palette is not null && palette.IsLengthValid;
     }
 
-    public static bool TryGetTexture(DlHudBankSet hud, int textureId, out DlHudTextureEntry texture)
+    public static bool TryGetTexture(HudBankSet hud, int textureId, out HudTextureEntry texture)
     {
         texture = hud.Textures.FirstOrDefault(entry => entry.Index == textureId)!;
         return texture is not null && texture.IsLengthValid;
     }
 
-    private static DlHudHeader ReadHeader(ReadOnlySpan<byte> data)
+    private static HudHeader ReadHeader(ReadOnlySpan<byte> data)
     {
         var paletteCounts = ReadInt32Array(data, 0x14, BankCount);
         var textureCounts = ReadInt32Array(data, 0x34, BankCount);
-        return new DlHudHeader(
+        return new HudHeader(
             ReadUInt16LittleEndian(data, 0x00),
             ReadUInt16LittleEndian(data, 0x02),
             ReadInt32LittleEndian(data, 0x04),
@@ -62,14 +62,14 @@ public static class DlHudBankReader
             data.Slice(0x68, HeaderFixedLength - 0x68).ToArray());
     }
 
-    private static IReadOnlyList<DlHudIconEntry> ReadIcons(ReadOnlySpan<byte> headerBytes, DlHudHeader header)
+    private static IReadOnlyList<HudIconEntry> ReadIcons(ReadOnlySpan<byte> headerBytes, HudHeader header)
     {
-        var icons = new List<DlHudIconEntry>(header.IconCount);
+        var icons = new List<HudIconEntry>(header.IconCount);
         for (var i = 0; i < header.IconCount; i++)
         {
             var offset = checked(header.IconListOffset + (i * 8));
-            ValidateHeaderRange(headerBytes, offset, 8, "DL HUD icon entry");
-            icons.Add(new DlHudIconEntry(
+            ValidateHeaderRange(headerBytes, offset, 8, "HUD icon entry");
+            icons.Add(new HudIconEntry(
                 i,
                 ReadUInt16LittleEndian(headerBytes, offset),
                 ReadUInt16LittleEndian(headerBytes, offset + 2),
@@ -80,14 +80,14 @@ public static class DlHudBankReader
         return icons;
     }
 
-    private static IReadOnlyList<DlHudFrameEntry> ReadFrames(ReadOnlySpan<byte> headerBytes, DlHudHeader header)
+    private static IReadOnlyList<HudFrameEntry> ReadFrames(ReadOnlySpan<byte> headerBytes, HudHeader header)
     {
-        var frames = new List<DlHudFrameEntry>(header.FrameCount);
+        var frames = new List<HudFrameEntry>(header.FrameCount);
         for (var i = 0; i < header.FrameCount; i++)
         {
             var offset = checked(header.FrameListOffset + (i * 4));
-            ValidateHeaderRange(headerBytes, offset, 4, "DL HUD frame entry");
-            frames.Add(new DlHudFrameEntry(
+            ValidateHeaderRange(headerBytes, offset, 4, "HUD frame entry");
+            frames.Add(new HudFrameEntry(
                 i,
                 ReadInt16LittleEndian(headerBytes, offset),
                 ReadInt16LittleEndian(headerBytes, offset + 2)));
@@ -96,23 +96,23 @@ public static class DlHudBankReader
         return frames;
     }
 
-    private static IReadOnlyList<DlHudPaletteEntry> ReadPalettes(
+    private static IReadOnlyList<HudPaletteEntry> ReadPalettes(
         ReadOnlySpan<byte> headerBytes,
         IReadOnlyList<byte[]> banks,
-        DlHudHeader header)
+        HudHeader header)
     {
         var paletteCount = GetFinalCount(header.PaletteCumulativeCounts);
-        var palettes = new List<DlHudPaletteEntry>(paletteCount);
+        var palettes = new List<HudPaletteEntry>(paletteCount);
         for (var i = 0; i < paletteCount; i++)
         {
             var offset = checked(header.PaletteListOffset + (i * 8));
-            ValidateHeaderRange(headerBytes, offset, 8, "DL HUD palette entry");
+            ValidateHeaderRange(headerBytes, offset, 8, "HUD palette entry");
             var bankIndex = GetBankIndex(header.PaletteCumulativeCounts, i);
             var encodedOffset = ReadUInt32LittleEndian(headerBytes, offset);
             var paletteOffset = DecodePayloadOffset(encodedOffset);
             var bankBytes = banks[bankIndex].AsSpan();
             var isLengthValid = IsPayloadRangeValid(bankBytes, paletteOffset, PaletteLength);
-            palettes.Add(new DlHudPaletteEntry(
+            palettes.Add(new HudPaletteEntry(
                 i,
                 bankIndex,
                 encodedOffset,
@@ -128,17 +128,17 @@ public static class DlHudBankReader
         return palettes;
     }
 
-    private static IReadOnlyList<DlHudTextureEntry> ReadTextures(
+    private static IReadOnlyList<HudTextureEntry> ReadTextures(
         ReadOnlySpan<byte> headerBytes,
         IReadOnlyList<byte[]> banks,
-        DlHudHeader header)
+        HudHeader header)
     {
         var textureCount = GetFinalCount(header.TextureCumulativeCounts);
-        var textures = new List<DlHudTextureEntry>(textureCount);
+        var textures = new List<HudTextureEntry>(textureCount);
         for (var i = 0; i < textureCount; i++)
         {
             var offset = checked(header.TextureListOffset + (i * 8));
-            ValidateHeaderRange(headerBytes, offset, 8, "DL HUD texture entry");
+            ValidateHeaderRange(headerBytes, offset, 8, "HUD texture entry");
             var bankIndex = GetBankIndex(header.TextureCumulativeCounts, i);
             var encodedOffset = ReadUInt32LittleEndian(headerBytes, offset);
             var textureOffset = DecodePayloadOffset(encodedOffset);
@@ -150,7 +150,7 @@ public static class DlHudBankReader
             var bankBytes = banks[bankIndex].AsSpan();
             var isLengthValid = IsPayloadRangeValid(bankBytes, textureOffset, pixelLength);
 
-            textures.Add(new DlHudTextureEntry(
+            textures.Add(new HudTextureEntry(
                 i,
                 bankIndex,
                 encodedOffset,
@@ -186,7 +186,7 @@ public static class DlHudBankReader
         var count = cumulativeCounts.Count == 0 ? 0 : cumulativeCounts.Max();
         if (count < 0)
         {
-            throw new InvalidDataException("DL HUD cumulative count is negative.");
+            throw new InvalidDataException("HUD cumulative count is negative.");
         }
 
         return count;
@@ -202,14 +202,14 @@ public static class DlHudBankReader
             }
         }
 
-        throw new InvalidDataException($"DL HUD item index {itemIndex} is outside cumulative bank counts.");
+        throw new InvalidDataException($"HUD item index {itemIndex} is outside cumulative bank counts.");
     }
 
     private static int DimensionFromLog(byte log)
     {
         if (log > 30)
         {
-            throw new InvalidDataException($"DL HUD texture dimension log {log} is too large.");
+            throw new InvalidDataException($"HUD texture dimension log {log} is too large.");
         }
 
         return 1 << log;
@@ -235,14 +235,14 @@ public static class DlHudBankReader
 
 }
 
-public sealed record DlHudBankSet(
-    DlHudHeader Header,
-    IReadOnlyList<DlHudIconEntry> Icons,
-    IReadOnlyList<DlHudFrameEntry> Frames,
-    IReadOnlyList<DlHudPaletteEntry> Palettes,
-    IReadOnlyList<DlHudTextureEntry> Textures);
+public sealed record HudBankSet(
+    HudHeader Header,
+    IReadOnlyList<HudIconEntry> Icons,
+    IReadOnlyList<HudFrameEntry> Frames,
+    IReadOnlyList<HudPaletteEntry> Palettes,
+    IReadOnlyList<HudTextureEntry> Textures);
 
-public sealed record DlHudHeader(
+public sealed record HudHeader(
     ushort IconCount,
     ushort FrameCount,
     int IconListOffset,
@@ -256,19 +256,19 @@ public sealed record DlHudHeader(
     IReadOnlyList<int> BankSizes,
     byte[] RuntimePointerArea);
 
-public sealed record DlHudIconEntry(
+public sealed record HudIconEntry(
     int Index,
     ushort IconId,
     ushort FrameCount,
     ushort FirstFrameIndex,
     ushort Padding);
 
-public sealed record DlHudFrameEntry(
+public sealed record HudFrameEntry(
     int Index,
     short PaletteIndex,
     short TextureIndex);
 
-public sealed record DlHudPaletteEntry(
+public sealed record HudPaletteEntry(
     int Index,
     int BankIndex,
     uint EncodedOffset,
@@ -278,7 +278,7 @@ public sealed record DlHudPaletteEntry(
     bool IsLengthValid,
     byte[] PaletteBytes);
 
-public sealed record DlHudTextureEntry(
+public sealed record HudTextureEntry(
     int Index,
     int BankIndex,
     uint EncodedOffset,

@@ -3,10 +3,12 @@ using System.IO.Compression;
 using System.Numerics;
 using System.Text.Json;
 using RatchetPs2.Core.Games;
+using RatchetPs2.Core.Hud;
 using RatchetPs2.Core.Moby;
 using RatchetPs2.Core.Textures.Pif;
 using RatchetPs2.Core.Textures.Png;
 using RatchetPs2.Core.Tfrags;
+using RatchetPs2.Core.Ties;
 using RatchetPs2.Core.Wad;
 using RatchetPs2.Core.Wad.Models;
 using RatchetPs2.Games.DL.Armor;
@@ -17,6 +19,9 @@ using RatchetPs2.Games.DL.Online;
 using RatchetPs2.Games.GC.Gameplay;
 using RatchetPs2.Games.GC.Level;
 using RatchetPs2.Games.GC.Skyboxes;
+using RatchetPs2.Games.RC1.Gameplay;
+using RatchetPs2.Games.RC1.Level;
+using RatchetPs2.Games.RC1.Ties;
 using RatchetPs2.Games.UYA.Gameplay;
 using RatchetPs2.Games.UYA.Level;
 
@@ -27,6 +32,13 @@ ValidateOnlineWadExtraction();
 ValidateOnlineArmorWadParsing();
 ValidateLooseLevelWadExtraction();
 ValidateLooseLevelWadUnpacking();
+ValidateRc1IsoLevelExtraction();
+ValidateRc1LevelAssetProfile();
+ValidateRc1TieHeaderParsing();
+ValidateRc1LevelSettingsParsing();
+ValidateRc1TieInstanceConversion();
+ValidateRc1RenderPackageLightingRouting();
+ValidateRc1MobyParsing();
 ValidateGcLevelInfoLookup();
 ValidateGcSkyRotationParsing();
 ValidateUyaLevelInfoLookup();
@@ -66,6 +78,258 @@ ValidatePifMipRoundtrip();
 ValidateNormalizedTextureArtifacts();
 
 Console.WriteLine("Level extraction tests passed.");
+
+static void ValidateRc1IsoLevelExtraction()
+{
+    const int levelId = 0;
+    const int amalgamatedHeaderSector = 1550;
+    const int levelDataSector = 1600;
+    const int gameplayNtscSector = 1602;
+    const int gameplayPalSector = 1603;
+    const int occlusionSector = 1604;
+    const int audioDataSector = 1610;
+    const int musicSector = 1611;
+    const int sceneSoundSector = 1620;
+    const int sceneWadSector = 1621;
+
+    var iso = new byte[1630 * Rc1LevelConstants.SectorSize];
+    var tocOffset = Rc1LevelConstants.TableOfContentsSector * Rc1LevelConstants.SectorSize;
+    WriteInt32(iso, tocOffset, 1);
+    WriteInt32(iso, tocOffset + 4, Rc1LevelConstants.TableOfContentsSize);
+    WriteInt32(iso, tocOffset + Rc1LevelConstants.LevelTableOffset, amalgamatedHeaderSector);
+    WriteInt32(iso, tocOffset + Rc1LevelConstants.LevelTableOffset + 4, 100);
+
+    var headerOffset = amalgamatedHeaderSector * Rc1LevelConstants.SectorSize;
+    WriteInt32(iso, headerOffset, levelId);
+    WriteInt32(iso, headerOffset + 0x04, Rc1LevelConstants.AmalgamatedHeaderSize);
+    WriteSectorRange(iso, headerOffset + 0x08, levelDataSector, 2);
+    WriteSectorRange(iso, headerOffset + 0x10, gameplayNtscSector, 1);
+    WriteSectorRange(iso, headerOffset + 0x18, gameplayPalSector, 1);
+    WriteSectorRange(iso, headerOffset + 0x20, occlusionSector, 1);
+    WriteSectorRange(iso, headerOffset + 0x28, audioDataSector, 4);
+    WriteInt32(iso, headerOffset + 0x148, musicSector);
+    WriteInt32(iso, headerOffset + 0x184, sceneSoundSector);
+    WriteInt32(iso, headerOffset + 0x184 + 0x18, sceneWadSector);
+
+    var levelDataOffset = levelDataSector * Rc1LevelConstants.SectorSize;
+    WriteSectorRange(iso, levelDataOffset + 0x00, 0x80, 4);
+    WriteSectorRange(iso, levelDataOffset + 0x08, 0x90, 4);
+    WriteSectorRange(iso, levelDataOffset + 0x10, 0xa0, 4);
+    WriteSectorRange(iso, levelDataOffset + 0x18, 0xb0, 4);
+    WriteSectorRange(iso, levelDataOffset + 0x20, 0xc0, 4);
+    WriteSectorRange(iso, levelDataOffset + 0x28, 0xd0, 4);
+    WriteSectorRange(iso, levelDataOffset + 0x50, 0xe0, 4);
+    iso[levelDataOffset + 0x80] = 0x11;
+    iso[levelDataOffset + 0x90] = 0x21;
+    iso[levelDataOffset + 0xa0] = 0x31;
+    iso[levelDataOffset + 0xb0] = 0x41;
+    iso[levelDataOffset + 0xc0] = 0x51;
+    iso[levelDataOffset + 0xd0] = 0x61;
+    iso[levelDataOffset + 0xe0] = 0x71;
+    iso[gameplayNtscSector * Rc1LevelConstants.SectorSize] = 0x81;
+    iso[gameplayPalSector * Rc1LevelConstants.SectorSize] = 0x91;
+    iso[occlusionSector * Rc1LevelConstants.SectorSize] = 0xa1;
+    iso[audioDataSector * Rc1LevelConstants.SectorSize] = 0xb1;
+
+    "VAGp"u8.CopyTo(iso.AsSpan(musicSector * Rc1LevelConstants.SectorSize));
+    "VAGp"u8.CopyTo(iso.AsSpan(sceneSoundSector * Rc1LevelConstants.SectorSize));
+    "WAD"u8.CopyTo(iso.AsSpan(sceneWadSector * Rc1LevelConstants.SectorSize));
+    WriteInt32(iso, (sceneWadSector * Rc1LevelConstants.SectorSize) + 3, 0x10);
+
+    using var stream = new MemoryStream(iso, writable: false);
+    var extracted = Rc1LooseLevelWadExtractor.ExtractAll(stream, levelId);
+    Expect(extracted.Level.LevelInfo.TableIndex == 0, "RC1 level lookup should retain the ToC table index");
+    Expect(extracted.Level.PayloadBaseSector == levelDataSector - 1, "RC1 primary WAD should reserve one header sector before its first payload");
+    Expect(extracted.Level.SectorCount == 6, "RC1 primary WAD should span all four absolute payload ranges");
+    Expect(extracted.Audio.Length == 3 * Rc1LevelConstants.SectorSize, "RC1 audio extraction should synthesize a relative header and preserve its data");
+    Expect(extracted.Scene.Length == 7 * Rc1LevelConstants.SectorSize, "RC1 scene extraction should reserve five header sectors and preserve scene data");
+
+    var package = Rc1LevelWadUnpacker.Unpack(extracted.Level.Bytes);
+    var files = package.Files.ToDictionary(file => file.Path);
+    Expect(files["code/code.bin"].Bytes[0] == 0x11, "RC1 unpack should expose the level overlay");
+    Expect(files["level_wad/sound.bnk"].Bytes[0] == 0x21, "RC1 unpack should expose the level sound bank");
+    Expect(files["assets/asset_header.bin"].Bytes[0] == 0x31, "RC1 unpack should expose the asset header");
+    Expect(files["assets/palette.bin"].Bytes[0] == 0x41, "RC1 unpack should expose GS RAM palette data");
+    Expect(files["assets/asset_wad.bin"].Bytes[0] == 0x71, "RC1 unpack should expose the asset WAD");
+    Expect(files["gameplay/gameplay_core.bin"].Bytes[0] == 0x81, "RC1 unpack should expose NTSC gameplay");
+    Expect(files["gameplay/gameplay_pal_core.bin"].Bytes[0] == 0x91, "RC1 unpack should preserve PAL gameplay");
+    Expect(files["occlusion/occlusion.bin"].Bytes[0] == 0xa1, "RC1 unpack should expose occlusion data");
+
+    var texture = DlAssetReader.BuildAssetTexture(
+        "rc1",
+        0,
+        new DlAssetTextureDefinition(0, 0, 2, 2, 0, 0, 0, -1),
+        new byte[0x400],
+        [1, 2, 3, 4],
+        0,
+        isSwizzled: false,
+        useTextureFlags: false);
+    Expect(texture.Metadata.PixelLength == 4, "RC1 texture entries should use asset data without later-game stash or mipmap flags");
+}
+
+static void ValidateRc1TieHeaderParsing()
+{
+    var bytes = new byte[0x140];
+    WriteInt32(bytes, 0x00, 0x100);
+    WriteInt32(bytes, 0x04, 0x110);
+    WriteInt32(bytes, 0x08, 0x120);
+    WriteSingle(bytes, 0x10, 10f);
+    WriteSingle(bytes, 0x14, 20f);
+    WriteSingle(bytes, 0x18, 30f);
+    bytes[0x20] = 0;
+    bytes[0x21] = 0;
+    bytes[0x22] = 0;
+    bytes[0x23] = 0;
+    WriteInt32(bytes, 0x2c, 0x130);
+    WriteSingle(bytes, 0x40, 0.5f);
+
+    var profile = Rc1TieGameProfile.Default;
+    var tie = TieClassReader.Read(bytes, TieClassReadOptions.ForGameProfile(profile));
+
+    Expect(tie.Header.PacketTableOffsets.SequenceEqual([0x100u, 0x110u, 0x120u]), "RC1 tie packet offsets should come from 0x00");
+    Expect(tie.Header.ShadersOffset == 0x130, "RC1 tie shader offset should come from 0x2c");
+    Expect(tie.Header.NearDistance == 10f && tie.Header.FarDistance == 30f, "RC1 tie LOD distances should come from 0x10");
+    Expect(tie.Header.Scale == 0.5f, "RC1 tie scale should come from 0x40");
+}
+
+static void ValidateRc1LevelAssetProfile()
+{
+    var header = new byte[0xc0];
+    WriteInt32(header, 0x04, header.Length);
+    WriteInt32(header, 0x84, 1);
+    WriteInt32(header, 0xac, 0xb0);
+
+    var files = DlLevelWadRenderPackageBuilder.BuildAssetFiles(
+        GameId.RC1,
+        levelIndex: 1,
+        header,
+        paletteBytes: [],
+        assetBytes: [],
+        DlLevelWadRenderPackageBuildOptions.Default with
+        {
+            AssetProfile = Rc1LevelAssetProfile.Default
+        });
+
+    Expect(
+        files.Any(file => file.Path == "assets/manifest.json"),
+        "RC1 asset profile should ignore later-game mipmap and GS stash header fields");
+    Expect(
+        Rc1LevelAssetProfile.Default.MobyModelFormat == MobyModelFormat.Rc1
+            && !Rc1LevelAssetProfile.Default.UseTextureFlags
+            && Rc1LevelAssetProfile.Default.TieGameProfile == Rc1TieGameProfile.Default,
+        "RC1 asset profile should select the RC1 model, texture, and TIE formats");
+}
+
+static void ValidateRc1LevelSettingsParsing()
+{
+    var bytes = new byte[Rc1LevelSettingsReader.Size];
+    WriteInt32(bytes, 0x00, 100);
+    WriteInt32(bytes, 0x04, 255);
+    WriteInt32(bytes, 0x08, 255);
+    WriteInt32(bytes, 0x0c, 105);
+    WriteInt32(bytes, 0x10, 127);
+    WriteInt32(bytes, 0x14, 180);
+    WriteSingle(bytes, 0x18, 0);
+    WriteSingle(bytes, 0x1c, 245760);
+    WriteSingle(bytes, 0x20, 255);
+    WriteSingle(bytes, 0x24, 102);
+
+    var settings = Rc1LevelSettingsReader.Read(bytes);
+    Expect(
+        settings.FogColor == new Rc1Rgb96(105, 127, 180)
+            && settings.FogNearDistance == 0
+            && settings.FogFarDistance == 245760
+            && settings.FogNearIntensity == 255
+            && settings.FogFarIntensity == 102,
+        "RC1 level settings should decode gameplay fog fields");
+}
+
+static void ValidateRc1TieInstanceConversion()
+{
+    var source = new byte[0x10 + Rc1Gameplay.TieInstanceSize];
+    WriteInt32(source, 0, 1);
+    WriteInt32(source, 0x10, 0x7e4);
+    WriteSingle(source, 0x20, 1f);
+    source[0x60] = 0x34;
+    source[0x61] = 0x12;
+    WriteInt32(source, 0xe0, 9);
+
+    var converted = Rc1Gameplay.ConvertTieInstances(source);
+
+    Expect(converted.Instances.Length == 0x70, "RC1 ties should convert from 0xe0-byte to 0x60-byte instance records");
+    Expect(BinaryPrimitives.ReadInt32LittleEndian(converted.Instances.AsSpan(0x10)) == 0x7e4, "RC1 tie conversion should preserve class ids");
+    Expect(BinaryPrimitives.ReadInt32LittleEndian(converted.Instances.AsSpan(0x60)) == 9, "RC1 tie conversion should move lighting fields after the matrix");
+    Expect(BinaryPrimitives.ReadUInt16LittleEndian(converted.AmbientRgbas.AsSpan(4)) == 0x1234, "RC1 tie conversion should preserve embedded ambient colors");
+}
+
+static void ValidateRc1RenderPackageLightingRouting()
+{
+    ExpectThrows<InvalidDataException>(() => Rc1LevelWadRenderPackageBuilder.GetAssetSources([]));
+
+    var pointLights = new byte[0x30];
+    WriteInt32(pointLights, 0, 1);
+    var files = Rc1LevelWadRenderPackageBuilder.BuildFiles(
+        1,
+        [
+            new PackedFile("assets/asset_header.bin", [1], "application/octet-stream"),
+            new PackedFile("assets/palette.bin", [1], "application/octet-stream"),
+            new PackedFile("assets/asset_wad.bin", [1], "application/octet-stream"),
+            new PackedFile("gameplay/core/directional_lights.bin", new byte[0x10], "application/octet-stream"),
+            new PackedFile("gameplay/core/point_lights.bin", pointLights, "application/octet-stream")
+        ],
+        _ => [new PackedFile("assets/manifest.json", "{}"u8.ToArray(), "application/json")]);
+
+    Expect(
+        files.Any(file => file.Path == "world/lighting/point_lights.bin"),
+        "RC1 render packages should preserve their point-light table");
+    using var worldManifest = JsonDocument.Parse(files.Single(file => file.Path == "world/manifest.json").Bytes);
+    Expect(
+        worldManifest.RootElement.GetProperty("PointLightCount").GetInt32() == 1,
+        "RC1 world manifest should expose the point-light count");
+}
+
+static void ValidateRc1MobyParsing()
+{
+    var instancesBytes = new byte[Rc1MobyInstancesReader.HeaderSize + Rc1MobyInstancesReader.RecordSize];
+    WriteInt32(instancesBytes, 0, 1);
+    WriteInt32(instancesBytes, 4, 32);
+    var recordOffset = Rc1MobyInstancesReader.HeaderSize;
+    WriteInt32(instancesBytes, recordOffset, Rc1MobyInstancesReader.RecordSize);
+    WriteInt32(instancesBytes, recordOffset + 0x18, 1007);
+    WriteSingle(instancesBytes, recordOffset + 0x1c, 1.5f);
+    WriteSingle(instancesBytes, recordOffset + 0x30, 10f);
+    WriteSingle(instancesBytes, recordOffset + 0x34, 20f);
+    WriteSingle(instancesBytes, recordOffset + 0x38, 30f);
+    WriteInt32(instancesBytes, recordOffset + 0x58, 7);
+
+    var instances = Rc1MobyInstancesReader.Read(instancesBytes);
+    Expect(instances.StaticCount == 1 && instances.SpawnableMobyCount == 32, "RC1 moby instance counts should be parsed");
+    Expect(instances.Instances[0].ClassId == 1007, "RC1 moby class ids should come from 0x18");
+    Expect(instances.Instances[0].Position == new Rc1Vector3(10f, 20f, 30f), "RC1 moby positions should come from 0x30");
+    Expect(instances.Instances[0].PvarIndex == 7, "RC1 moby pvar indices should come from 0x58");
+
+    var modelBytes = new byte[0xf0];
+    WriteInt32(modelBytes, 0, 0x48);
+    modelBytes[4] = 1;
+    modelBytes[0x0a] = 0xff;
+    modelBytes[0x0b] = 0xff;
+    WriteSingle(modelBytes, 0x24, 1f);
+    WriteInt32(modelBytes, 0x48 + 8, 0x60);
+    modelBytes[0x48 + 0x0c] = 9;
+    modelBytes[0x48 + 0x0f] = 3;
+    WriteUInt32(modelBytes, 0x60 + 0x0c, 3);
+    WriteUInt32(modelBytes, 0x60 + 0x14, 3);
+    WriteUInt32(modelBytes, 0x60 + 0x18, 0x20);
+    WriteUInt32(modelBytes, 0x60 + 0x1c, 0x90);
+
+    using var modelStream = new MemoryStream(modelBytes, writable: false);
+    var model = MobyModelReader.Read(modelStream, new MobyModelReadOptions { ModelFormat = MobyModelFormat.Rc1 });
+    var vertexData = model.MeshTable!.Entries.Single().VertexData;
+    Expect(model.FarLodMeshCount == 0 && model.TeamPalettes == 0, "RC1 header bytes 0x0a/0x0b should not become later-game mesh fields");
+    Expect(vertexData.Length == 0x80, "RC1 32-bit moby vertex headers should normalize to the shared compact layout");
+    Expect(BinaryPrimitives.ReadUInt16LittleEndian(vertexData.AsSpan(6)) == 3, "RC1 moby main vertex count should be preserved");
+    Expect(BinaryPrimitives.ReadUInt16LittleEndian(vertexData.AsSpan(0x0c)) == 0x10, "RC1 moby vertex table offset should account for the compact header");
+}
 
 static void ValidateArmorWadParsing()
 {
@@ -1400,25 +1664,39 @@ static void ValidateHudBankParsing()
     var bank0 = Enumerable.Range(0, 0x10).Select(value => (byte)value).ToArray();
     var bank1 = CreatePalette();
 
-    var hud = DlHudBankReader.Read(header, [bank0, bank1]);
+    var hud = HudBankReader.Read(header, [bank0, bank1]);
     Expect(hud.Header.IconCount == 2, "DL HUD icon count should be parsed");
     Expect(hud.Header.FrameCount == 1, "DL HUD frame count should be parsed");
     Expect(hud.Icons[0].IconId == 0x1234, "DL HUD icon id should be parsed");
     Expect(hud.Icons[0].FrameCount == 1 && hud.Icons[0].FirstFrameIndex == 0, "DL HUD icon frame range should be parsed");
     Expect(hud.Icons[1].IconId == 0xffff, "DL HUD icon terminator should be preserved");
     Expect(hud.Frames[0].PaletteIndex == 0 && hud.Frames[0].TextureIndex == 0, "DL HUD frame palette/texture handles should be parsed");
-    Expect(DlHudBankReader.TryGetPalette(hud, 0, out var palette), "DL HUD palette should be addressable by id");
-    Expect(DlHudBankReader.TryGetTexture(hud, 0, out var texture), "DL HUD texture should be addressable by id");
+    Expect(HudBankReader.TryGetPalette(hud, 0, out var palette), "HUD palette should be addressable by id");
+    Expect(HudBankReader.TryGetTexture(hud, 0, out var texture), "HUD texture should be addressable by id");
     Expect(palette.Offset == 0 && palette.BankIndex == 1, "DL HUD high-bit palette offset and bank should be decoded");
     Expect(texture.Offset == 0 && texture.BankIndex == 0, "DL HUD texture bank should be parsed from cumulative counts");
     Expect(texture.Width == 4 && texture.Height == 4, "DL HUD dimensions should be powers of two from u/v log metadata");
     Expect(texture.PixelBytes.SequenceEqual(bank0), "DL HUD texture bytes should be sliced from the source bank");
 
-    var renderFiles = DlLevelWadRenderPackageBuilder.BuildHudFiles(
+    var renderFiles = HudBankRenderPackageBuilder.BuildFiles(
         header,
         [CreateLiteralWad(bank0), bank1]);
     Expect(renderFiles.Any(file => file.Path == "hud/manifest.json"), "HUD render package should include its manifest");
     Expect(renderFiles.Any(file => file.Path == "hud/bank_0/tex.0000.png"), "HUD render package should include frame PNGs");
+
+    var rc1Files = Rc1LevelWadRenderPackageBuilder.BuildFiles(
+        1,
+        [
+            new PackedFile("assets/asset_header.bin", [1], "application/octet-stream"),
+            new PackedFile("assets/palette.bin", [1], "application/octet-stream"),
+            new PackedFile("assets/asset_wad.bin", [1], "application/octet-stream"),
+            new PackedFile("hud/header.bin", header, "application/octet-stream"),
+            new PackedFile("hud/bank0.bin", CreateLiteralWad(bank0), "application/octet-stream"),
+            new PackedFile("hud/bank1.bin", bank1, "application/octet-stream")
+        ],
+        _ => []);
+    Expect(rc1Files.Any(file => file.Path == "hud/manifest.json"), "RC1 render package should include the shared HUD manifest");
+    Expect(rc1Files.Any(file => file.Path == "hud/bank_0/tex.0000.png"), "RC1 render package should include HUD frame PNGs");
 }
 
 static void ValidateWorldInstanceParsing()
@@ -2468,6 +2746,12 @@ static void WriteByteBlock(byte[] data, int offset, UyaByteBlock block)
 {
     WriteInt32(data, offset, block.Offset);
     WriteInt32(data, offset + 4, block.Length);
+}
+
+static void WriteSectorRange(byte[] data, int offset, int rangeOffset, int rangeLength)
+{
+    WriteInt32(data, offset, rangeOffset);
+    WriteInt32(data, offset + 4, rangeLength);
 }
 
 static void WriteInt32(byte[] data, int offset, int value)
