@@ -95,7 +95,8 @@ try
         return 1;
     }
     // ponytail: one SDK version per realm; isolate runtime globals if side-by-side versions are needed.
-    File.WriteAllText(Path.Combine(output, "ratchetps2.js"), "import * as Browser from './runtime/index.js';\n(function () {\n" + result.Javascript + "\n}).call(globalThis);\n");
+    var javascript = result.Javascript!.Replace("globals = global;", "globals = globalThis;", StringComparison.Ordinal);
+    File.WriteAllText(Path.Combine(output, "ratchetps2.js"), "import * as Browser from './runtime/index.js';\n(function () {\n" + javascript + "\n}).call(globalThis);\n");
     package.Write(output);
     foreach (var name in new[] { "ratchetps2.js", "index.js" })
     {
