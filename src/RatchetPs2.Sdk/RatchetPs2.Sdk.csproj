@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\RatchetPs2.Core\RatchetPs2.Core.csproj" />
+    <ProjectReference Include="..\RatchetPs2.Games.RC1\RatchetPs2.Games.RC1.csproj" />
+    <ProjectReference Include="..\RatchetPs2.Games.GC\RatchetPs2.Games.GC.csproj" />
+    <ProjectReference Include="..\RatchetPs2.Games.UYA\RatchetPs2.Games.UYA.csproj" />
+    <ProjectReference Include="..\RatchetPs2.Games.DL\RatchetPs2.Games.DL.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RuntimeIdentifiers>linux-x64;win-x64</RuntimeIdentifiers>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

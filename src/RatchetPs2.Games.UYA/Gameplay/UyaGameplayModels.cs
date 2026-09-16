@@ -6,6 +6,7 @@ public sealed record UyaGameplayBlocks(
     string Kind,
     int HeaderSize,
     byte[] HeaderBytes,
+    GameplayPvarTables? PvarTables,
     IReadOnlyList<UyaGameplayBlock> Blocks,
     GameplayGeometry Geometry);
 

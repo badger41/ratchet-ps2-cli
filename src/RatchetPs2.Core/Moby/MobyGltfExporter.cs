@@ -1182,8 +1182,10 @@ public static partial class MobyGltfExporter
                 ["samplers"] = samplers,
                 ["channels"] = channels
             };
+            var compactAnimationSourceData = options.CompactAnimationSourceData;
             if (options.AnimationFormat == MobyAnimationFormat.Compact
-                && options.CompactAnimationSourceData?.TryGetValue(animation.SourceIndex, out var sourceData) == true)
+                && compactAnimationSourceData is not null
+                && compactAnimationSourceData.TryGetValue(animation.SourceIndex, out var sourceData))
             {
                 gltfAnimation["extras"] = new
                 {
@@ -1726,17 +1728,17 @@ public static partial class MobyGltfExporter
 
     private static object BuildMobyNodeExtras(MobyMeshTableEntry entry, int meshIndex)
     {
-        return new Dictionary<string, object?>
+        return new
         {
-            ["RatchetPs2"] = new Dictionary<string, object?>
+            RatchetPs2 = new
             {
-                ["moby"] = new Dictionary<string, object?>
+                moby = new
                 {
-                    ["kind"] = "mobyMeshNode",
-                    ["version"] = 1,
-                    ["meshIndex"] = meshIndex,
-                    ["meshType"] = entry.MeshType.ToString(),
-                    ["commonTransformJointIndex"] = entry.CommonTransformJointIndex
+                    kind = "mobyMeshNode",
+                    version = 1,
+                    meshIndex,
+                    meshType = entry.MeshType.ToString(),
+                    commonTransformJointIndex = entry.CommonTransformJointIndex
                 }
             }
         };
@@ -1756,36 +1758,36 @@ public static partial class MobyGltfExporter
             .Read(combinedVifData)
             .FirstOrDefault(packet => packet.Kind == "UNPACK_V4_8" && packet.Payload.Length >= 4);
 
-        return new Dictionary<string, object?>
+        return new
         {
-            ["RatchetPs2"] = new Dictionary<string, object?>
+            RatchetPs2 = new
             {
-                ["moby"] = new Dictionary<string, object?>
+                moby = new
                 {
-                    ["kind"] = "mobyMesh",
-                    ["version"] = 1,
-                    ["meshIndex"] = meshIndex,
-                    ["meshType"] = entry.MeshType.ToString(),
-                    ["modelScale"] = model.Scale,
-                    ["positionScale"] = scale,
-                    ["coordinateBasis"] = GltfCoordinateBasis.Ps2XzyBasisDescription,
-                    ["commonTransformJointIndex"] = entry.CommonTransformJointIndex,
-                    ["primaryTextureId"] = explicitTextureId,
-                    ["effectiveTextureId"] = effectiveTextureId,
-                    ["materialTextureId"] = materialTextureId,
-                    ["gifTextureIds"] = entry.GifTag?.TextureIds.Select(id => (int)id).ToArray(),
-                    ["meshEntry"] = new Dictionary<string, object?>
+                    kind = "mobyMesh",
+                    version = 1,
+                    meshIndex,
+                    meshType = entry.MeshType.ToString(),
+                    modelScale = model.Scale,
+                    positionScale = scale,
+                    coordinateBasis = GltfCoordinateBasis.Ps2XzyBasisDescription,
+                    commonTransformJointIndex = entry.CommonTransformJointIndex,
+                    primaryTextureId = explicitTextureId,
+                    effectiveTextureId,
+                    materialTextureId,
+                    gifTextureIds = entry.GifTag?.TextureIds.Select(id => (int)id).ToArray(),
+                    meshEntry = new
                     {
-                        ["vertexCount"] = entry.VertexCount,
-                        ["vertexDataSizeQw"] = entry.VertexDataSize,
-                        ["vifListSizeQw"] = entry.VifListSize,
-                        ["vifListTextureSizeQwMinusOne"] = entry.VifListTextureSize,
-                        ["vifDataLength"] = entry.VifData.Length,
-                        ["vifTextureDataLength"] = entry.VifTextureData?.Length ?? 0,
-                        ["gifTagMatched"] = entry.GifTag is not null
+                        vertexCount = entry.VertexCount,
+                        vertexDataSizeQw = entry.VertexDataSize,
+                        vifListSizeQw = entry.VifListSize,
+                        vifListTextureSizeQwMinusOne = entry.VifListTextureSize,
+                        vifDataLength = entry.VifData.Length,
+                        vifTextureDataLength = entry.VifTextureData?.Length ?? 0,
+                        gifTagMatched = entry.GifTag is not null
                     },
-                    ["vertexLayout"] = BuildMobyVertexLayoutExtras(entry),
-                    ["topologyPacket"] = topologyPacket is null ? null : BuildMobyTopologyPacketExtras(combinedVifData, topologyPacket, entry.VifData.Length)
+                    vertexLayout = BuildMobyVertexLayoutExtras(entry),
+                    topologyPacket = topologyPacket is null ? null : BuildMobyTopologyPacketExtras(combinedVifData, topologyPacket, entry.VifData.Length)
                 }
             }
         };
@@ -1799,26 +1801,37 @@ public static partial class MobyGltfExporter
         var payloadPaddingOffset = payloadOffset + topologyPacket.Payload.Length;
         var payloadPaddingSize = Math.Max(0, suffixOffset - payloadPaddingOffset);
 
-        return new Dictionary<string, object?>
+        var payloadBytes = GC.AllocateUninitializedArray<int>(topologyPacket.Payload.Length);
+        for (var i = 0; i < payloadBytes.Length; i++)
         {
-            ["offset"] = topologyPacket.Offset,
-            ["immediate"] = topologyPacket.Immediate,
-            ["num"] = topologyPacket.Num,
-            ["command"] = topologyPacket.Command,
-            ["commandByte"] = topologyPacket.Command | (topologyPacket.Irq << 7),
-            ["irq"] = topologyPacket.Irq,
-            ["kind"] = topologyPacket.Kind,
-            ["rawPayloadSize"] = topologyPacket.RawPayloadSize,
-            ["alignedPayloadSize"] = topologyPacket.AlignedPayloadSize,
-            ["payloadBase64"] = Convert.ToBase64String(topologyPacket.Payload),
-            ["payloadBytes"] = topologyPacket.Payload.Select(value => (int)value).ToArray(),
-            ["payloadPrefixBytes"] = topologyPacket.Payload.Take(4).Select(value => (int)value).ToArray(),
-            ["payloadTokens"] = BuildMobyTopologyPayloadTokens(topologyPacket.Payload),
-            ["alignedPayloadBase64"] = Convert.ToBase64String(combinedVifData.AsSpan(payloadOffset, alignedPayloadSize)),
-            ["payloadPaddingBase64"] = Convert.ToBase64String(combinedVifData.AsSpan(payloadPaddingOffset, payloadPaddingSize)),
-            ["beforePacketBase64"] = Convert.ToBase64String(combinedVifData.AsSpan(0, topologyPacket.Offset)),
-            ["afterPacketBase64"] = Convert.ToBase64String(combinedVifData.AsSpan(suffixOffset)),
-            ["vifDataSplitOffset"] = vifDataSplitOffset
+            payloadBytes[i] = topologyPacket.Payload[i];
+        }
+        var payloadPrefixBytes = GC.AllocateUninitializedArray<int>(Math.Min(4, topologyPacket.Payload.Length));
+        for (var i = 0; i < payloadPrefixBytes.Length; i++)
+        {
+            payloadPrefixBytes[i] = topologyPacket.Payload[i];
+        }
+
+        return new
+        {
+            offset = topologyPacket.Offset,
+            immediate = topologyPacket.Immediate,
+            num = topologyPacket.Num,
+            command = topologyPacket.Command,
+            commandByte = topologyPacket.Command | (topologyPacket.Irq << 7),
+            irq = topologyPacket.Irq,
+            kind = topologyPacket.Kind,
+            rawPayloadSize = topologyPacket.RawPayloadSize,
+            alignedPayloadSize = topologyPacket.AlignedPayloadSize,
+            payloadBase64 = Convert.ToBase64String(topologyPacket.Payload),
+            payloadBytes,
+            payloadPrefixBytes,
+            payloadTokens = BuildMobyTopologyPayloadTokens(topologyPacket.Payload),
+            alignedPayloadBase64 = Convert.ToBase64String(combinedVifData.AsSpan(payloadOffset, alignedPayloadSize)),
+            payloadPaddingBase64 = Convert.ToBase64String(combinedVifData.AsSpan(payloadPaddingOffset, payloadPaddingSize)),
+            beforePacketBase64 = Convert.ToBase64String(combinedVifData.AsSpan(0, topologyPacket.Offset)),
+            afterPacketBase64 = Convert.ToBase64String(combinedVifData.AsSpan(suffixOffset)),
+            vifDataSplitOffset
         };
     }
 
@@ -1834,11 +1847,11 @@ public static partial class MobyGltfExporter
                 : signedValue < 0
                     ? "negative_index"
                     : "index";
-            tokens.Add(new Dictionary<string, object?>
+            tokens.Add(new
             {
-                ["kind"] = kind,
-                ["negative"] = signedValue < 0,
-                ["vertexIndex"] = value == 0 ? null : (value & 0x7F) - 1
+                kind,
+                negative = signedValue < 0,
+                vertexIndex = value == 0 ? (int?)null : (value & 0x7F) - 1
             });
         }
 
@@ -1850,20 +1863,20 @@ public static partial class MobyGltfExporter
         var data = entry.VertexData;
         if (entry.MeshType == MobyMeshType.Metal)
         {
-            return new Dictionary<string, object?>
+            return new
             {
-                ["supported"] = data.Length >= 0x10 + entry.VertexCount * 0x10,
-                ["format"] = "metal",
-                ["vertexCount"] = data.Length >= 2 ? BitConverter.ToUInt16(data, 0x00) : 0,
-                ["headerBytesBase64"] = Convert.ToBase64String(data.AsSpan(0, Math.Min(data.Length, 0x10)))
+                supported = data.Length >= 0x10 + entry.VertexCount * 0x10,
+                format = "metal",
+                vertexCount = data.Length >= 2 ? BitConverter.ToUInt16(data, 0x00) : 0,
+                headerBytesBase64 = Convert.ToBase64String(data.AsSpan(0, Math.Min(data.Length, 0x10)))
             };
         }
 
         if (data.Length < 0x10)
         {
-            return new Dictionary<string, object?>
+            return new
             {
-                ["supported"] = false
+                supported = false
             };
         }
 
@@ -1883,10 +1896,10 @@ public static partial class MobyGltfExporter
                 break;
             }
 
-            matrixTransfers.Add(new Dictionary<string, object?>
+            matrixTransfers.Add(new
             {
-                ["joint"] = unchecked((sbyte)data[offset]),
-                ["vu0DestinationAddress"] = data[offset + 1]
+                joint = unchecked((sbyte)data[offset]),
+                vu0DestinationAddress = data[offset + 1]
             });
         }
 
@@ -1947,23 +1960,23 @@ public static partial class MobyGltfExporter
             }
         }
 
-        return new Dictionary<string, object?>
+        return new
         {
-            ["supported"] = true,
-            ["matrixTransferCount"] = matrixTransferCount,
-            ["twoWayBlendVertexCount"] = twoWayBlendVertexCount,
-            ["threeWayBlendVertexCount"] = threeWayBlendVertexCount,
-            ["mainVertexCount"] = mainVertexCount,
-            ["duplicateVertexCount"] = duplicateVertexCount,
-            ["vertexTableOffset"] = vertexTableOffset,
-            ["duplicateIndicesOffset"] = duplicateIndicesOffset,
-            ["epilogueVertexCount"] = Math.Max(epilogueVertexCount, 0),
-            ["headerBytesBase64"] = Convert.ToBase64String(data.AsSpan(0, 0x10)),
-            ["epilogueBytesBase64"] = Convert.ToBase64String(epilogueBytes),
-            ["matrixTransfers"] = matrixTransfers,
-            ["duplicateIndices"] = duplicateIndices,
-            ["low9StorageValues"] = low9StorageValues,
-            ["rowPrefixBytesBase64"] = Convert.ToBase64String(rowPrefixBytes.ToArray())
+            supported = true,
+            matrixTransferCount,
+            twoWayBlendVertexCount,
+            threeWayBlendVertexCount,
+            mainVertexCount,
+            duplicateVertexCount,
+            vertexTableOffset,
+            duplicateIndicesOffset,
+            epilogueVertexCount = Math.Max(epilogueVertexCount, 0),
+            headerBytesBase64 = Convert.ToBase64String(data.AsSpan(0, 0x10)),
+            epilogueBytesBase64 = Convert.ToBase64String(epilogueBytes),
+            matrixTransfers,
+            duplicateIndices,
+            low9StorageValues,
+            rowPrefixBytesBase64 = Convert.ToBase64String(rowPrefixBytes.ToArray())
         };
     }
 
@@ -2297,20 +2310,16 @@ public static partial class MobyGltfExporter
 
     private static (ushort[] Joints, float[] Weights) SkinBlendToRows(SkinBlend blend)
     {
-        var joints = new[]
-        {
-            ToJointIndex(blend.Joint0),
-            ToJointIndex(blend.Joint1),
-            ToJointIndex(blend.Joint2),
-            (ushort)0
-        };
-        var weights = new[]
-        {
-            blend.Weight0 / 255f,
-            blend.Count >= 2 ? blend.Weight1 / 255f : 0f,
-            blend.Count >= 3 ? blend.Weight2 / 255f : 0f,
-            0f
-        };
+        var joints = GC.AllocateUninitializedArray<ushort>(4);
+        joints[0] = ToJointIndex(blend.Joint0);
+        joints[1] = ToJointIndex(blend.Joint1);
+        joints[2] = ToJointIndex(blend.Joint2);
+        joints[3] = 0;
+        var weights = GC.AllocateUninitializedArray<float>(4);
+        weights[0] = blend.Weight0 / 255f;
+        weights[1] = blend.Count >= 2 ? blend.Weight1 / 255f : 0f;
+        weights[2] = blend.Count >= 3 ? blend.Weight2 / 255f : 0f;
+        weights[3] = 0f;
 
         NormalizeWeights(weights);
         return (joints, weights);
@@ -2321,9 +2330,20 @@ public static partial class MobyGltfExporter
         return joint < 0 ? (ushort)0 : (ushort)joint;
     }
 
-    private static ushort[] DefaultJoints() => [0, 0, 0, 0];
+    private static ushort[] DefaultJoints()
+    {
+        var joints = GC.AllocateUninitializedArray<ushort>(4);
+        joints[0] = joints[1] = joints[2] = joints[3] = 0;
+        return joints;
+    }
 
-    private static float[] DefaultWeights() => [1f, 0f, 0f, 0f];
+    private static float[] DefaultWeights()
+    {
+        var weights = GC.AllocateUninitializedArray<float>(4);
+        weights[0] = 1f;
+        weights[1] = weights[2] = weights[3] = 0f;
+        return weights;
+    }
 
     private static void NormalizeSkinRows(
         List<ushort[]> joints,
@@ -2508,8 +2528,14 @@ public static partial class MobyGltfExporter
         }
 
         var seenTriangles = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var strip in strips.Where(strip => strip.Indices.Count >= 3))
+        for (var stripIndex = 0; stripIndex < strips.Count; stripIndex++)
         {
+            var strip = strips[stripIndex];
+            if (strip.Indices.Count < 3)
+            {
+                continue;
+            }
+
             var flip = false;
             for (var k = 2; k < strip.Indices.Count; k++)
             {
@@ -2647,19 +2673,47 @@ public static partial class MobyGltfExporter
 
     private static string BuildGeometricTriangleKey(Vector3 a, Vector3 b, Vector3 c)
     {
-        var keys = new[]
+        var ax = BitConverter.SingleToInt32Bits(MathF.Round(a.X, 5));
+        var ay = BitConverter.SingleToInt32Bits(MathF.Round(a.Y, 5));
+        var az = BitConverter.SingleToInt32Bits(MathF.Round(a.Z, 5));
+        var bx = BitConverter.SingleToInt32Bits(MathF.Round(b.X, 5));
+        var by = BitConverter.SingleToInt32Bits(MathF.Round(b.Y, 5));
+        var bz = BitConverter.SingleToInt32Bits(MathF.Round(b.Z, 5));
+        var cx = BitConverter.SingleToInt32Bits(MathF.Round(c.X, 5));
+        var cy = BitConverter.SingleToInt32Bits(MathF.Round(c.Y, 5));
+        var cz = BitConverter.SingleToInt32Bits(MathF.Round(c.Z, 5));
+
+        if (PositionKeyGreater(ax, ay, az, bx, by, bz))
         {
-            BuildPositionKey(a),
-            BuildPositionKey(b),
-            BuildPositionKey(c)
-        };
-        Array.Sort(keys, StringComparer.Ordinal);
-        return string.Join("|", keys);
+            (ax, bx) = (bx, ax);
+            (ay, by) = (by, ay);
+            (az, bz) = (bz, az);
+        }
+        if (PositionKeyGreater(bx, by, bz, cx, cy, cz))
+        {
+            (bx, cx) = (cx, bx);
+            (by, cy) = (cy, by);
+            (bz, cz) = (cz, bz);
+        }
+        if (PositionKeyGreater(ax, ay, az, bx, by, bz))
+        {
+            (ax, bx) = (bx, ax);
+            (ay, by) = (by, ay);
+            (az, bz) = (bz, az);
+        }
+
+        return $"{ax},{ay},{az}|{bx},{by},{bz}|{cx},{cy},{cz}";
     }
 
-    private static string BuildPositionKey(Vector3 position)
+    private static bool PositionKeyGreater(
+        int ax,
+        int ay,
+        int az,
+        int bx,
+        int by,
+        int bz)
     {
-        return $"{MathF.Round(position.X, 5):R},{MathF.Round(position.Y, 5):R},{MathF.Round(position.Z, 5):R}";
+        return ax > bx || ax == bx && (ay > by || ay == by && az > bz);
     }
 
     private static Vector3 DecodePosition(byte[] vertex, float scale)

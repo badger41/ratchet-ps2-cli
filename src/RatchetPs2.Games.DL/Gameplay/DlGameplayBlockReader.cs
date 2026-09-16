@@ -51,6 +51,7 @@ public static class DlGameplayBlockReader
             layout.Kind,
             layout.HeaderSize,
             raw.HeaderBytes,
+            GameplayPvarTableReader.Read(raw.Blocks, layout.GameName),
             blocks,
             GameplayGeometryReader.Read(raw.Blocks));
     }

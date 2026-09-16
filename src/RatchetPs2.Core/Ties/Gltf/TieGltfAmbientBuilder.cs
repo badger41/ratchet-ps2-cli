@@ -267,18 +267,11 @@ internal static class TieGltfAmbientBuilder
             return [];
         }
 
-        var recipesByTargetIndex = new Dictionary<int, TieGltfAmbientColorRecipe>();
-        foreach (var operation in tie.RgbaRemapOperations
-                     .Where(operation => operation.LodIndex == lodIndex)
-                     .OrderBy(operation => operation.GroupIndex)
-                     .ThenBy(operation => operation.Offset)
-                     .ThenBy(operation => operation.OperationIndex))
+        var operationsByTargetIndex = new Dictionary<int, TieRgbaRemapOperation>();
+        for (var i = 0; i < tie.RgbaRemapOperations.Count; i++)
         {
-            var sourceIndices = operation.SourceSlots
-                .Select(slot => slot + normalIndexOffset)
-                .ToArray();
-            if (sourceIndices.Length == 0
-                || sourceIndices.Any(index => index < normalIndexOffset || index >= ambientWordCount))
+            var operation = tie.RgbaRemapOperations[i];
+            if (operation.LodIndex != lodIndex)
             {
                 continue;
             }
@@ -289,16 +282,42 @@ internal static class TieGltfAmbientBuilder
                 continue;
             }
 
-            recipesByTargetIndex[targetIndex] = new TieGltfAmbientColorRecipe(
-                targetIndex,
-                sourceIndices,
-                sourceIndices.Length,
-                operation.Kind.ToString());
+            if (!operationsByTargetIndex.TryGetValue(targetIndex, out var current)
+                || operation.GroupIndex > current.GroupIndex
+                || operation.GroupIndex == current.GroupIndex && operation.Offset > current.Offset
+                || operation.GroupIndex == current.GroupIndex && operation.Offset == current.Offset
+                    && operation.OperationIndex > current.OperationIndex)
+            {
+                operationsByTargetIndex[targetIndex] = operation;
+            }
         }
 
-        return recipesByTargetIndex.Values
-            .OrderBy(recipe => recipe.TargetIndex)
-            .ToList();
+        var recipes = new List<TieGltfAmbientColorRecipe>(operationsByTargetIndex.Count);
+        foreach (var pair in operationsByTargetIndex)
+        {
+            var operation = pair.Value;
+            var sourceIndices = GC.AllocateUninitializedArray<int>(operation.SourceSlots.Length);
+            var valid = sourceIndices.Length > 0;
+            for (var i = 0; i < sourceIndices.Length; i++)
+            {
+                var sourceIndex = operation.SourceSlots[i] + normalIndexOffset;
+                sourceIndices[i] = sourceIndex;
+                valid &= sourceIndex >= normalIndexOffset && sourceIndex < ambientWordCount;
+            }
+            if (!valid)
+            {
+                continue;
+            }
+
+            recipes.Add(new TieGltfAmbientColorRecipe(
+                pair.Key,
+                sourceIndices,
+                sourceIndices.Length,
+                operation.Kind.ToString()));
+        }
+
+        recipes.Sort(static (left, right) => left.TargetIndex.CompareTo(right.TargetIndex));
+        return recipes;
     }
 
     private static bool TryResolveColorRecipeIndex(

@@ -61,9 +61,9 @@ public static class MobyStandardAnimationDecoder
             return false;
         }
 
-        var rotationsByFrame = new Quaternion[sequence.Frames.Count + 1][];
-        var scalesByFrame = new Dictionary<int, Vector3>[sequence.Frames.Count];
-        var translationsByFrame = new Dictionary<int, Vector3>[sequence.Frames.Count];
+        var rotationsByFrame = GC.AllocateUninitializedArray<Quaternion[]>(sequence.Frames.Count + 1);
+        var scalesByFrame = GC.AllocateUninitializedArray<Dictionary<int, Vector3>>(sequence.Frames.Count);
+        var translationsByFrame = GC.AllocateUninitializedArray<Dictionary<int, Vector3>>(sequence.Frames.Count);
         for (var frameIndex = 0; frameIndex < sequence.Frames.Count; frameIndex++)
         {
             if (!TryDecodeFrame(
@@ -100,7 +100,7 @@ public static class MobyStandardAnimationDecoder
         out Dictionary<int, Vector3> translations,
         out string error)
     {
-        rotations = new Quaternion[jointCount];
+        rotations = GC.AllocateUninitializedArray<Quaternion>(jointCount);
         scales = [];
         translations = [];
         error = string.Empty;
@@ -118,14 +118,14 @@ public static class MobyStandardAnimationDecoder
             return false;
         }
 
-        var data = frame.FrameData.AsSpan();
+        var data = frame.FrameData;
         for (var joint = 0; joint < jointCount; joint++)
         {
             var offset = joint * 8;
-            var x = BinaryPrimitives.ReadInt16LittleEndian(data.Slice(offset, 2));
-            var y = BinaryPrimitives.ReadInt16LittleEndian(data.Slice(offset + 2, 2));
-            var z = BinaryPrimitives.ReadInt16LittleEndian(data.Slice(offset + 4, 2));
-            var w = BinaryPrimitives.ReadInt16LittleEndian(data.Slice(offset + 6, 2));
+            var x = BinaryPrimitives.ReadInt16LittleEndian(data.AsSpan(offset, 2));
+            var y = BinaryPrimitives.ReadInt16LittleEndian(data.AsSpan(offset + 2, 2));
+            var z = BinaryPrimitives.ReadInt16LittleEndian(data.AsSpan(offset + 4, 2));
+            var w = BinaryPrimitives.ReadInt16LittleEndian(data.AsSpan(offset + 6, 2));
             var length = MathF.Sqrt(x * (float)x + y * (float)y + z * (float)z + w * (float)w);
             if (length < 1f)
             {
@@ -139,26 +139,26 @@ public static class MobyStandardAnimationDecoder
         for (var i = 0; i < scaleCount; i++)
         {
             var offset = jointDataSize + i * 8;
-            var joint = BinaryPrimitives.ReadUInt16LittleEndian(data.Slice(offset + 6, 2)) & 0x7FFF;
+            var joint = BinaryPrimitives.ReadUInt16LittleEndian(data.AsSpan(offset + 6, 2)) & 0x7FFF;
             if (joint < jointCount)
             {
                 scales[joint] = new Vector3(
-                    BinaryPrimitives.ReadInt16LittleEndian(data.Slice(offset, 2)) / 4096f,
-                    BinaryPrimitives.ReadInt16LittleEndian(data.Slice(offset + 4, 2)) / 4096f,
-                    BinaryPrimitives.ReadInt16LittleEndian(data.Slice(offset + 2, 2)) / 4096f);
+                    BinaryPrimitives.ReadInt16LittleEndian(data.AsSpan(offset, 2)) / 4096f,
+                    BinaryPrimitives.ReadInt16LittleEndian(data.AsSpan(offset + 4, 2)) / 4096f,
+                    BinaryPrimitives.ReadInt16LittleEndian(data.AsSpan(offset + 2, 2)) / 4096f);
             }
         }
 
         for (var i = 0; i < translationCount; i++)
         {
             var offset = translationOffset + i * 8;
-            var joint = BinaryPrimitives.ReadUInt16LittleEndian(data.Slice(offset + 6, 2)) & 0x7FFF;
+            var joint = BinaryPrimitives.ReadUInt16LittleEndian(data.AsSpan(offset + 6, 2)) & 0x7FFF;
             if (joint < jointCount)
             {
                 translations[joint] = GltfCoordinateBasis.FromPs2Position(
-                    BinaryPrimitives.ReadInt16LittleEndian(data.Slice(offset, 2)) * modelScale / 1024f,
-                    BinaryPrimitives.ReadInt16LittleEndian(data.Slice(offset + 2, 2)) * modelScale / 1024f,
-                    BinaryPrimitives.ReadInt16LittleEndian(data.Slice(offset + 4, 2)) * modelScale / 1024f);
+                    BinaryPrimitives.ReadInt16LittleEndian(data.AsSpan(offset, 2)) * modelScale / 1024f,
+                    BinaryPrimitives.ReadInt16LittleEndian(data.AsSpan(offset + 2, 2)) * modelScale / 1024f,
+                    BinaryPrimitives.ReadInt16LittleEndian(data.AsSpan(offset + 4, 2)) * modelScale / 1024f);
             }
         }
 
@@ -218,7 +218,12 @@ public static class MobyStandardAnimationDecoder
         var tracks = new Dictionary<int, Quaternion[]>(frames[0].Length);
         for (var joint = 0; joint < frames[0].Length; joint++)
         {
-            tracks[joint] = frames.Select(frame => frame[joint]).ToArray();
+            var values = GC.AllocateUninitializedArray<Quaternion>(frames.Count);
+            for (var frameIndex = 0; frameIndex < frames.Count; frameIndex++)
+            {
+                values[frameIndex] = frames[frameIndex][joint];
+            }
+            tracks[joint] = values;
         }
         return tracks;
     }
@@ -227,10 +232,22 @@ public static class MobyStandardAnimationDecoder
         IReadOnlyList<Dictionary<int, Vector3>> frames,
         Func<int, Vector3> fallback)
     {
-        var tracks = new Dictionary<int, Vector3[]>();
-        foreach (var joint in frames.SelectMany(frame => frame.Keys).Distinct().Order())
+        var jointSet = new HashSet<int>();
+        for (var frameIndex = 0; frameIndex < frames.Count; frameIndex++)
         {
-            var values = new Vector3[frames.Count + 1];
+            foreach (var joint in frames[frameIndex].Keys)
+            {
+                jointSet.Add(joint);
+            }
+        }
+        var joints = jointSet.ToArray();
+        Array.Sort(joints);
+
+        var tracks = new Dictionary<int, Vector3[]>(joints.Length);
+        for (var jointIndex = 0; jointIndex < joints.Length; jointIndex++)
+        {
+            var joint = joints[jointIndex];
+            var values = GC.AllocateUninitializedArray<Vector3>(frames.Count + 1);
             for (var frameIndex = 0; frameIndex < frames.Count; frameIndex++)
             {
                 values[frameIndex] = frames[frameIndex].GetValueOrDefault(joint, fallback(joint));

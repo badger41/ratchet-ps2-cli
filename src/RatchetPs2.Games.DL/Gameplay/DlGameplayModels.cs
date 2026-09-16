@@ -6,6 +6,7 @@ public sealed record DlGameplayBlocks(
     string Kind,
     int HeaderSize,
     byte[] HeaderBytes,
+    GameplayPvarTables? PvarTables,
     IReadOnlyList<DlGameplayBlock> Blocks,
     GameplayGeometry Geometry);
 

@@ -1,3 +1,5 @@
+using RatchetPs2.Core.Textures.Png;
+
 namespace RatchetPs2.Games.DL.Level;
 
 public sealed record DlAssetHeader(
@@ -109,6 +111,7 @@ public sealed record DlNormalizedTexture(
     string Family,
     byte[] PifBytes,
     byte[] PngBytes,
+    TextureAlphaInfo Alpha,
     DlNormalizedTextureMetadata Metadata);
 
 public sealed record DlNormalizedTextureMetadata(

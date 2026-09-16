@@ -9,31 +9,45 @@ internal static class TieGlowRgbaReader
         IReadOnlyList<TieRgbaRemapOperation> rgbaRemapOperations)
     {
         var rgba = TieRgba32.FromRaw(header.GlowRgba);
-        var recipes = rgbaRemapOperations
-            .GroupBy(operation => (operation.LodIndex, operation.TargetCacheSlot))
-            .Select(group => group
-                .OrderBy(operation => operation.GroupIndex)
-                .ThenBy(operation => operation.Offset)
-                .ThenBy(operation => operation.OperationIndex)
-                .Last())
-            .Where(operation => operation.SourceSlots.Contains(TieRgbaRemapOperation.ConstantColorSourceSlot))
-            .OrderBy(operation => operation.LodIndex)
-            .ThenBy(operation => operation.GroupIndex)
-            .ThenBy(operation => operation.Offset)
-            .ThenBy(operation => operation.OperationIndex)
-            .Select((operation, remapIndex) => (Operation: operation, RemapIndex: remapIndex))
-            .ToArray();
-        if (recipes.Length == 0)
+        var recipesByLodAndTarget = new Dictionary<(int LodIndex, int TargetCacheSlot), TieRgbaRemapOperation>();
+        for (var i = 0; i < rgbaRemapOperations.Count; i++)
+        {
+            var operation = rgbaRemapOperations[i];
+            var key = (operation.LodIndex, operation.TargetCacheSlot);
+            if (!recipesByLodAndTarget.TryGetValue(key, out var current)
+                || CompareOperations(operation, current) > 0)
+            {
+                recipesByLodAndTarget[key] = operation;
+            }
+        }
+
+        var recipes = new List<TieRgbaRemapOperation>(recipesByLodAndTarget.Count);
+        foreach (var operation in recipesByLodAndTarget.Values)
+        {
+            if (Array.IndexOf(operation.SourceSlots, TieRgbaRemapOperation.ConstantColorSourceSlot) >= 0)
+            {
+                recipes.Add(operation);
+            }
+        }
+        recipes.Sort(CompareOperations);
+        if (recipes.Count == 0)
         {
             return ([], []);
         }
 
         var vertices = new List<TieGlowRgbaVertex>();
-        foreach (var topology in lodTopologies)
+        for (var topologyIndex = 0; topologyIndex < lodTopologies.Count; topologyIndex++)
         {
-            var recipesByTarget = recipes
-                .Where(recipe => recipe.Operation.LodIndex == topology.LodIndex)
-                .ToDictionary(recipe => recipe.Operation.TargetCacheSlot);
+            var topology = lodTopologies[topologyIndex];
+            var recipesByTarget = new Dictionary<int, int>();
+            for (var recipeIndex = 0; recipeIndex < recipes.Count; recipeIndex++)
+            {
+                var recipe = recipes[recipeIndex];
+                if (recipe.LodIndex == topology.LodIndex)
+                {
+                    recipesByTarget[recipe.TargetCacheSlot] = recipeIndex;
+                }
+            }
             if (recipesByTarget.Count == 0)
             {
                 continue;
@@ -42,23 +56,33 @@ internal static class TieGlowRgbaReader
             var packetUploadLayouts = TieGltfNormalRemapTargetResolver.BuildPacketUploadLayouts(
                 packetDataBlocks,
                 topology);
-            foreach (var vertex in topology.LogicalVertices)
+            for (var vertexIndex = 0; vertexIndex < topology.LogicalVertices.Count; vertexIndex++)
             {
+                var vertex = topology.LogicalVertices[vertexIndex];
                 var row = vertex.VertexRow ?? vertex.AddressRow;
                 if (row is null
                     || !TieGltfNormalRemapTargetResolver.TryGetPacketUploadTarget(
                         vertex,
                         packetUploadLayouts,
                         out var target)
-                    || !recipesByTarget.TryGetValue(target, out var recipe))
+                    || !recipesByTarget.TryGetValue(target, out var recipeIndex))
                 {
                     continue;
                 }
 
+                var recipe = recipes[recipeIndex];
+                var constantColorSourceCount = 0;
+                for (var sourceIndex = 0; sourceIndex < recipe.SourceSlots.Length; sourceIndex++)
+                {
+                    if (recipe.SourceSlots[sourceIndex] == TieRgbaRemapOperation.ConstantColorSourceSlot)
+                    {
+                        constantColorSourceCount++;
+                    }
+                }
                 vertices.Add(new TieGlowRgbaVertex
                 {
-                    RemapIndex = recipe.RemapIndex,
-                    RemapOffset = recipe.Operation.Offset,
+                    RemapIndex = recipeIndex,
+                    RemapOffset = recipe.Offset,
                     LodIndex = vertex.LodIndex,
                     PacketIndex = vertex.PacketIndex,
                     StripIndex = vertex.StripIndex,
@@ -69,16 +93,32 @@ internal static class TieGlowRgbaReader
                     VertexRowOffset = row.Offset,
                     RawRgba = header.GlowRgba,
                     Rgba = rgba,
-                    GlowWeight = recipe.Operation.SourceSlots.Count(
-                        source => source == TieRgbaRemapOperation.ConstantColorSourceSlot)
-                        / (float)recipe.Operation.SourceSlots.Length
+                    GlowWeight = constantColorSourceCount / (float)recipe.SourceSlots.Length
                 });
             }
         }
 
-        return (
-            recipes.Select(recipe => BuildRemap(recipe.RemapIndex, recipe.Operation, vertices, header.GlowRgba, rgba)).ToList(),
-            vertices.OrderBy(vertex => vertex.LodIndex).ThenBy(vertex => vertex.LogicalVertexIndex).ToList());
+        var remaps = new List<TieGlowRgbaRemap>(recipes.Count);
+        for (var recipeIndex = 0; recipeIndex < recipes.Count; recipeIndex++)
+        {
+            remaps.Add(BuildRemap(recipeIndex, recipes[recipeIndex], vertices, header.GlowRgba, rgba));
+        }
+        vertices.Sort(static (left, right) =>
+        {
+            var comparison = left.LodIndex.CompareTo(right.LodIndex);
+            return comparison != 0 ? comparison : left.LogicalVertexIndex.CompareTo(right.LogicalVertexIndex);
+        });
+        return (remaps, vertices);
+    }
+
+    private static int CompareOperations(TieRgbaRemapOperation left, TieRgbaRemapOperation right)
+    {
+        var comparison = left.LodIndex.CompareTo(right.LodIndex);
+        if (comparison != 0) return comparison;
+        comparison = left.GroupIndex.CompareTo(right.GroupIndex);
+        if (comparison != 0) return comparison;
+        comparison = left.Offset.CompareTo(right.Offset);
+        return comparison != 0 ? comparison : left.OperationIndex.CompareTo(right.OperationIndex);
     }
 
     private static TieGlowRgbaRemap BuildRemap(
@@ -88,30 +128,53 @@ internal static class TieGlowRgbaReader
         int rawRgba,
         TieRgba32 rgba)
     {
-        var resolved = vertices.Where(vertex => vertex.RemapIndex == remapIndex).ToArray();
-        var packetIndices = resolved.Select(vertex => vertex.PacketIndex).Distinct().Order().ToArray();
-        var rowCount = resolved.Select(vertex => (vertex.PacketIndex, vertex.VertexRowIndex)).Distinct().Count();
-        var packetIndex = packetIndices.Length > 0 ? packetIndices[0] : (int?)null;
+        var packetIndexSet = new HashSet<int>();
+        var rowSet = new HashSet<long>();
+        var resolvedCount = 0;
+        var minOffset = int.MaxValue;
+        var maxOffset = int.MinValue;
+        var minRowIndex = int.MaxValue;
+        var maxRowIndex = int.MinValue;
+        for (var i = 0; i < vertices.Count; i++)
+        {
+            var vertex = vertices[i];
+            if (vertex.RemapIndex != remapIndex)
+            {
+                continue;
+            }
+
+            resolvedCount++;
+            packetIndexSet.Add(vertex.PacketIndex);
+            rowSet.Add(((long)vertex.PacketIndex << 32) | (uint)vertex.VertexRowIndex);
+            minOffset = Math.Min(minOffset, vertex.VertexRowOffset);
+            maxOffset = Math.Max(maxOffset, vertex.VertexRowOffset);
+            minRowIndex = Math.Min(minRowIndex, vertex.VertexRowIndex);
+            maxRowIndex = Math.Max(maxRowIndex, vertex.VertexRowIndex);
+        }
+
+        var packetIndices = packetIndexSet.ToArray();
+        Array.Sort(packetIndices);
+        var packetIndex = packetIndices.Length == 0 ? (int?)null : packetIndices[0];
         return new TieGlowRgbaRemap
         {
             RemapIndex = remapIndex,
             Offset = operation.Offset,
             RawRgba = rawRgba,
             Rgba = rgba,
-            ResolutionKind = resolved.Length > 0
+            ResolutionKind = resolvedCount > 0
                 ? TieGlowRgbaRemapResolutionKind.PacketVertexRowRange
                 : TieGlowRgbaRemapResolutionKind.Unresolved,
-            ResolvedStartOffset = resolved.Length > 0 ? resolved.Min(vertex => vertex.VertexRowOffset) : null,
-            EndOffset = resolved.Length > 0 ? resolved.Max(vertex => vertex.VertexRowOffset) + 0x10 : null,
+            ResolvedStartOffset = resolvedCount > 0 ? minOffset : null,
+            EndOffset = resolvedCount > 0 ? maxOffset + 0x10 : null,
             LodIndex = operation.LodIndex,
             PacketIndex = packetIndex,
             ResolvedPacketIndex = packetIndex,
             ResolvedPacketIndices = packetIndices,
-            StartVertexRowIndex = packetIndices.Length == 1 ? resolved.Min(vertex => (int?)vertex.VertexRowIndex) : null,
-            EndVertexRowIndexExclusive = packetIndices.Length == 1 ? resolved.Max(vertex => (int?)vertex.VertexRowIndex) + 1 : null,
+            StartVertexRowIndex = packetIndices.Length == 1 ? minRowIndex : null,
+            EndVertexRowIndexExclusive = packetIndices.Length == 1 ? maxRowIndex + 1 : null,
             ResolvedPacketCount = packetIndices.Length,
-            ResolvedVertexRowCount = rowCount,
-            ResolvedLogicalVertexCount = resolved.Length
+            ResolvedVertexRowCount = rowSet.Count,
+            ResolvedLogicalVertexCount = resolvedCount
         };
     }
 }

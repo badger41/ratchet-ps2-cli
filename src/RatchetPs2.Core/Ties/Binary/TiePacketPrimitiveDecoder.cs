@@ -31,7 +31,11 @@ internal static class TiePacketPrimitiveDecoder
             return [];
         }
 
-        var verticesByOffset = vertices.ToDictionary(vertex => vertex.GsPacketWriteOffset);
+        var verticesByOffset = new Dictionary<int, TiePacketVertexReference>(vertices.Count);
+        for (var i = 0; i < vertices.Count; i++)
+        {
+            verticesByOffset[vertices[i].GsPacketWriteOffset] = vertices[i];
+        }
         var primitives = new List<TiePacketPrimitive>();
         var currentVertices = new List<TiePacketVertexReference>();
         var materialIndex = adGifSourceOffsets[0] / TieShader.Size;
@@ -110,8 +114,9 @@ internal static class TiePacketPrimitiveDecoder
         }
 
         var references = new List<TiePacketVertexReference>(stripControl.DecodedTokens.Count);
-        foreach (var token in stripControl.DecodedTokens)
+        for (var i = 0; i < stripControl.DecodedTokens.Count; i++)
         {
+            var token = stripControl.DecodedTokens[i];
             if (!token.ReferencedGsPacketWriteOffset.HasValue
                 || !verticesByOffset.TryGetValue(token.ReferencedGsPacketWriteOffset.Value, out var reference))
             {
@@ -126,18 +131,23 @@ internal static class TiePacketPrimitiveDecoder
 
     private static int[] ReadSetupOffsets(TiePacketSetupRow row)
     {
-        return row.Words
-            .OrderBy(word => word.WordIndex)
-            .Select(word => word.Raw)
-            .ToArray();
+        var words = row.Words.ToArray();
+        Array.Sort(words, static (left, right) => left.WordIndex.CompareTo(right.WordIndex));
+        var offsets = GC.AllocateUninitializedArray<int>(words.Length);
+        for (var i = 0; i < words.Length; i++)
+        {
+            offsets[i] = words[i].Raw;
+        }
+        return offsets;
     }
 
     private static List<TiePacketVertexReference> BuildPacketVertexReferences(
         IReadOnlyList<TiePacketDecodedVertex> decodedVertices)
     {
         var raw = new List<TiePacketVertexReference>();
-        foreach (var vertex in decodedVertices)
+        for (var vertexIndex = 0; vertexIndex < decodedVertices.Count; vertexIndex++)
         {
+            var vertex = decodedVertices[vertexIndex];
             raw.Add(new TiePacketVertexReference
             {
                 Index = raw.Count,
@@ -159,14 +169,17 @@ internal static class TiePacketPrimitiveDecoder
             }
         }
 
-        var ordered = raw
-            .OrderBy(vertex => vertex.GsPacketWriteOffset)
-            .ThenBy(vertex => vertex.Vertex.Index)
-            .ThenBy(vertex => vertex.IsSecondaryWriteOffset)
-            .ToArray();
-        var unique = new List<TiePacketVertexReference>(ordered.Length);
-        foreach (var vertex in ordered)
+        raw.Sort(static (left, right) =>
         {
+            var comparison = left.GsPacketWriteOffset.CompareTo(right.GsPacketWriteOffset);
+            if (comparison != 0) return comparison;
+            comparison = left.Vertex.Index.CompareTo(right.Vertex.Index);
+            return comparison != 0 ? comparison : left.IsSecondaryWriteOffset.CompareTo(right.IsSecondaryWriteOffset);
+        });
+        var unique = new List<TiePacketVertexReference>(raw.Count);
+        for (var vertexIndex = 0; vertexIndex < raw.Count; vertexIndex++)
+        {
+            var vertex = raw[vertexIndex];
             if (unique.Count > 0 && unique[^1].GsPacketWriteOffset == vertex.GsPacketWriteOffset)
             {
                 continue;

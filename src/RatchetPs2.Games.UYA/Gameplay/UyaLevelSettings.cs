@@ -30,7 +30,10 @@ public static class UyaLevelSettingsReader
         var chunkPlanes = new List<UyaLevelSettingsChunkPlane>();
         if (chunkPlaneCount > 0)
         {
-            EnsureRange(data, chunkPlaneCursor, checked(chunkPlaneCount * ChunkPlaneSize), "UYA level settings chunk planes");
+            // Explicit overflow validation also works with C# to JavaScript compilers.
+            if (chunkPlaneCount > int.MaxValue / ChunkPlaneSize)
+                throw new OverflowException();
+            EnsureRange(data, chunkPlaneCursor, chunkPlaneCount * ChunkPlaneSize, "UYA level settings chunk planes");
             for (var i = 0; i < chunkPlaneCount; i++)
             {
                 chunkPlanes.Add(ReadChunkPlane(data, chunkPlaneCursor));
@@ -67,7 +70,7 @@ public static class UyaLevelSettingsReader
             chunkPlanes,
             coreSoundsCount,
             rac3ThirdPart,
-            data[trailingOffset..].ToArray());
+            SliceToArray(data, trailingOffset, data.Length - trailingOffset, "UYA level settings trailing bytes"));
     }
 
     private static UyaRgb96 ReadRgb(ReadOnlySpan<byte> data, int offset)

@@ -233,11 +233,22 @@ internal static class TieGltfPacketIndexGroupBuilder
 
     private static int[] GetPacketShaderIndices(TiePacket? packet)
     {
-        return packet?.ShaderReferences
-            .Select(reference => reference.ShaderIndex)
-            .Where(shaderIndex => shaderIndex >= 0)
-            .Distinct()
-            .ToArray() ?? [];
+        if (packet is null || packet.ShaderReferences.Count == 0)
+        {
+            return [];
+        }
+
+        var seen = new HashSet<int>();
+        var shaderIndices = new List<int>(packet.ShaderReferences.Count);
+        for (var i = 0; i < packet.ShaderReferences.Count; i++)
+        {
+            var shaderIndex = packet.ShaderReferences[i].ShaderIndex;
+            if (shaderIndex >= 0 && seen.Add(shaderIndex))
+            {
+                shaderIndices.Add(shaderIndex);
+            }
+        }
+        return shaderIndices.ToArray();
     }
 
     private static void ValidateTriangleIndex(TieLodTopology topology, int index)

@@ -6,7 +6,7 @@ This repository is being structured so it can serve three roles over time:
 
 1. A cross-platform CLI
 2. A reusable SDK/dependency for other .NET projects
-3. A codebase that can later be adapted to WASM-friendly hosts
+3. A generated TypeScript SDK for browser applications and workers
 
 Because of that, the architecture should keep domain logic separate from host-specific behavior.
 
@@ -59,9 +59,10 @@ Anything placed here should be usable by:
 - the CLI
 - tests
 - another .NET application
-- a future WASM host
+- the generated TypeScript SDK
 
-`RatchetPs2.Core` currently multi-targets `net9.0` and `net9.0-browser`, so browser compatibility is already part of the build contract rather than only a future aspiration.
+All library and CLI projects target `net10.0`. Browser support comes from the
+TypeScript SDK generator, not a separate .NET browser target or runtime host.
 
 Current major areas in `Core` are:
 
@@ -74,7 +75,7 @@ Current major areas in `Core` are:
 
 The texture pipeline intentionally exposes byte/stream-oriented entry points.
 This is important because the same PIF conversion path is used by both the CLI
-and the browser-facing WASM host.
+and the browser-facing TypeScript SDK.
 
 Moby diagnostics and research workflows should not be added directly to the
 stable moby root. If a diagnostic or research tool still needs importer
@@ -119,41 +120,23 @@ If a type or behavior is truly shared, it should be moved to `RatchetPs2.Core`.
 
 At the moment these modules are lightweight. They implement `IGameModule` with a `GameId` and display name, and provide the extension point where future per-game services and quirks should live. Shared tie reader/exporter code now lives in `RatchetPs2.Core`; keep future per-game tie quirks in the game projects and promote only behavior that has cross-game evidence.
 
-### `RatchetPs2.Wasm`
+### `RatchetPs2.Sdk`
 
-This project is the browser-facing host for selected `RatchetPs2.Core` capabilities.
+This project is the host-independent composition layer. It may reference Core and
+all game libraries to expose byte-oriented workflows that cross project boundaries.
+Frontend SDK generation includes this project directly; it must not depend on the
+CLI, browser APIs, or filesystem-only orchestration.
 
-It is responsible for:
+### `RatchetPs2.TypeScriptSdk.Generator`
 
-- exposing JS-invokable entry points through `Exports.cs`
-- packaging the Blazor WebAssembly runtime assets
-- shipping generated JavaScript and TypeScript wrapper files for consuming web apps
-- keeping browser host concerns out of `RatchetPs2.Core`
+This repository build tool discovers reusable public APIs in Core, the game
+libraries, and `RatchetPs2.Sdk`, then emits native JavaScript and TypeScript
+declarations. Browser compatibility rewrites belong here; browser-specific code
+must not leak into the reusable source projects.
 
-The current exported surface focuses on PIF-to-PNG conversion:
-
-- `getApiVersion`
-- single-image PIF conversion
-- batch PIF conversion
-- packed batch conversion to reduce JS/WASM transfer overhead
-
-`RatchetPs2.Wasm` should continue to depend on `RatchetPs2.Core`, not on the CLI or per-game projects unless a browser use case clearly requires game-specific behavior.
-
-### `RatchetPs2.Wasm.Generator`
-
-This small tool generates the browser wrapper contract for `RatchetPs2.Wasm`.
-
-It reads:
-
-- `src/RatchetPs2.Wasm/wasm-exports.json`
-- JavaScript and TypeScript templates under `src/RatchetPs2.Wasm.Generator/Templates/`
-
-It writes:
-
-- `src/RatchetPs2.Wasm/ratchetps2-wasm.js`
-- `src/RatchetPs2.Wasm/ratchetps2-wasm.d.ts`
-
-The WASM project runs this generator before build. When changing the JS-facing WASM API, update the manifest and generated wrappers together with the C# export implementation.
+Native browser implementations live in strictly checked `Runtime/*.ts` modules.
+The SDK release packages the generated per-game entrypoints and their runtime
+modules; map-o-matic consumes those packages in dedicated workers.
 
 ## Contract for SDK-friendly code
 
@@ -185,7 +168,7 @@ This makes APIs easier to use in:
 - CLI tools
 - unit tests
 - web apps
-- WASM environments
+- browser workers
 
 ### 3. Keep core logic deterministic and side-effect-light
 
@@ -205,16 +188,16 @@ Prefer:
 
 Avoid exposing CLI-specific types from reusable projects.
 
-### 5. WASM compatibility should remain possible
+### 5. Preserve browser SDK compatibility
 
-To preserve future WASM support, avoid baking in assumptions about:
+To keep the generated TypeScript SDK usable, avoid baking in assumptions about:
 
 - unrestricted filesystem access
 - unrestricted threading/background workers
 - native platform interop
 - infinite memory for large asset processing
 
-WASM support does not need to be fully implemented now, but new reusable APIs should avoid blocking it unnecessarily.
+Browser-specific bindings belong in the TypeScript generator, not the shared libraries.
 
 ## Recommended dependency direction
 
@@ -226,8 +209,8 @@ RatchetPs2.Cli -> RatchetPs2.Experimental
 RatchetPs2.Cli -> RatchetPs2.Games.*
 RatchetPs2.Games.* -> RatchetPs2.Core
 RatchetPs2.Experimental -> RatchetPs2.Core
-RatchetPs2.Wasm -> RatchetPs2.Core
-RatchetPs2.Wasm -> RatchetPs2.Wasm.Generator (build-time only)
+RatchetPs2.Sdk -> RatchetPs2.Core + RatchetPs2.Games.*
+RatchetPs2.TypeScriptSdk.Generator -> Core + Games.* + Sdk (source discovery only)
 ```
 
 Avoid reverse dependencies such as:
@@ -235,13 +218,12 @@ Avoid reverse dependencies such as:
 - `Core -> Cli`
 - `Games.* -> Cli`
 - one game project depending on another game project unless there is a very strong reason
-- `Core -> Wasm`
-- `Wasm -> Cli`
+- `Core -> TypeScriptSdk.Generator`
 
-The current solution has two host-style projects:
+The two consumption paths are:
 
 - `RatchetPs2.Cli`, which owns console UX and file-oriented command orchestration
-- `RatchetPs2.Wasm`, which owns browser/WASM interop and packaging
+- the generated TypeScript SDK, which owns browser bindings and packaging
 
 Both should call reusable library APIs rather than duplicating parsing or conversion logic.
 
@@ -271,6 +253,6 @@ The CLI should stay as thin orchestration over those reusable APIs.
 
 - `System.CommandLine` is a CLI-only dependency.
 - PNG encoding is implemented inside `RatchetPs2.Core.Textures` rather than through a host-specific image library.
-- Current WAD and PIF APIs generally expose stream or byte-array entry points; preserve that pattern for SDK and WASM reuse.
+- Current WAD and PIF APIs generally expose stream or byte-array entry points; preserve that pattern for .NET and TypeScript SDK reuse.
 - Some HW3D/HBN functionality is still exploratory and includes reverse-engineering notes/report generation. Keep this in the reusable layer only while it remains byte-oriented and host-neutral; move presentation-heavy output choices to host projects as they grow.
 - The game-module abstraction is intentionally small today. Add capability interfaces in `Core` when multiple hosts or games need the same behavior, then implement them in the appropriate game projects.

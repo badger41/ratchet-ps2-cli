@@ -49,12 +49,7 @@ public static class UyaLevelWadRenderPackageBuilder
         };
 
         var assetsStart = Stopwatch.GetTimestamp();
-        var assetFiles = buildAssetFiles(new UyaLevelAssetSourceFiles(
-            RequireSourceFile(sourceFiles, "assets/asset_header.bin").Bytes,
-            RequireSourceFile(sourceFiles, "assets/palette.bin").Bytes,
-            RequireSourceFile(sourceFiles, "assets/asset_wad.bin").Bytes,
-            TryGetSourceFile(sourceFiles, "code/code.bin")?.Bytes ?? [],
-            CollectChunkWads(sourceFiles)));
+        var assetFiles = buildAssetFiles(CreateAssetSourceFiles(sourceFiles));
         files.AddRange(assetFiles);
         AddMobyManifest(manifest, assetFiles);
         AddTiming(
@@ -82,6 +77,23 @@ public static class UyaLevelWadRenderPackageBuilder
         manifest["PerformanceTimings"] = timings;
         AddJsonFile(files, "manifest.json", manifest);
         return files;
+    }
+
+    public static UyaLevelAssetSourceFiles ReadAssetSourceFiles(IReadOnlyList<PackedFile> unpackedFiles)
+    {
+        ArgumentNullException.ThrowIfNull(unpackedFiles);
+        return CreateAssetSourceFiles(CreateSourceFileLookup(unpackedFiles));
+    }
+
+    private static UyaLevelAssetSourceFiles CreateAssetSourceFiles(
+        IReadOnlyDictionary<string, PackedFile> sourceFiles)
+    {
+        return new UyaLevelAssetSourceFiles(
+            RequireSourceFile(sourceFiles, "assets/asset_header.bin").Bytes,
+            RequireSourceFile(sourceFiles, "assets/palette.bin").Bytes,
+            RequireSourceFile(sourceFiles, "assets/asset_wad.bin").Bytes,
+            TryGetSourceFile(sourceFiles, "code/code.bin")?.Bytes ?? [],
+            CollectChunkWads(sourceFiles));
     }
 
     private static void AddMobyManifest(

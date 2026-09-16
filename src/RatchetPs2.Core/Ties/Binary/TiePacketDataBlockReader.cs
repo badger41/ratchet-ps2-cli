@@ -11,15 +11,25 @@ internal static class TiePacketDataBlockReader
         TieClassHeader header,
         IReadOnlyList<TiePacketTable> tables)
     {
-        var packets = tables
-            .SelectMany(table => table.Packets)
-            .Where(packet => packet.DataOffset > 0)
-            .OrderBy(packet => packet.AbsoluteDataOffset)
-            .ToArray();
-
-        var blocks = new List<TiePacketDataBlock>(packets.Length);
-        foreach (var packet in packets)
+        var packets = new List<TiePacket>();
+        for (var tableIndex = 0; tableIndex < tables.Count; tableIndex++)
         {
+            var table = tables[tableIndex];
+            for (var packetIndex = 0; packetIndex < table.Packets.Count; packetIndex++)
+            {
+                var packet = table.Packets[packetIndex];
+                if (packet.DataOffset > 0)
+                {
+                    packets.Add(packet);
+                }
+            }
+        }
+        packets.Sort(static (left, right) => left.AbsoluteDataOffset.CompareTo(right.AbsoluteDataOffset));
+
+        var blocks = new List<TiePacketDataBlock>(packets.Count);
+        for (var packetIndex = 0; packetIndex < packets.Count; packetIndex++)
+        {
+            var packet = packets[packetIndex];
             var offset = packet.AbsoluteDataOffset;
             var qwordCount = GetPacketQwordCount(packet);
             var length = qwordCount * 0x10;
@@ -54,7 +64,7 @@ internal static class TiePacketDataBlockReader
                 UnpackHeader = unpackHeader,
                 ControlRows = controlRows,
                 StripControls = stripControls,
-                StripTokens = stripControls.SelectMany(strip => strip.DecodedTokens).ToArray(),
+                StripTokens = CollectStripTokens(stripControls),
                 ScissorTokens = TiePacketControlDecoder.DecodeScissorTokens(bytes, packet, stripControls),
                 VertexRows = vertexRows,
                 DecodedVertices = decodedVertices,
@@ -65,6 +75,27 @@ internal static class TiePacketDataBlockReader
         }
 
         return blocks;
+    }
+
+    private static TiePacketStripToken[] CollectStripTokens(IReadOnlyList<TiePacketStripControl> stripControls)
+    {
+        var count = 0;
+        for (var i = 0; i < stripControls.Count; i++)
+        {
+            count += stripControls[i].DecodedTokens.Count;
+        }
+
+        var tokens = GC.AllocateUninitializedArray<TiePacketStripToken>(count);
+        var tokenIndex = 0;
+        for (var stripIndex = 0; stripIndex < stripControls.Count; stripIndex++)
+        {
+            var stripTokens = stripControls[stripIndex].DecodedTokens;
+            for (var i = 0; i < stripTokens.Count; i++)
+            {
+                tokens[tokenIndex++] = stripTokens[i];
+            }
+        }
+        return tokens;
     }
 
     public static int GetPacketQwordCount(TiePacket packet)
@@ -112,10 +143,12 @@ internal static class TiePacketDataBlockReader
                 TiePassFlags.GeneratedEnvPassHeaderQwords + packet.MultipassUvSize);
         }
 
-        return regions
-            .OrderBy(region => region.QwordOffset)
-            .ThenBy(region => region.Name, StringComparer.Ordinal)
-            .ToList();
+        regions.Sort(static (left, right) =>
+        {
+            var comparison = left.QwordOffset.CompareTo(right.QwordOffset);
+            return comparison != 0 ? comparison : StringComparer.Ordinal.Compare(left.Name, right.Name);
+        });
+        return regions;
 
         void AddRegion(string name, int qwordOffset, int regionQwordCount)
         {

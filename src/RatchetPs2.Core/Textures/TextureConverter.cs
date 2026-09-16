@@ -102,6 +102,25 @@ public static class TextureConverter
         return stream.ToArray();
     }
 
+    public static TextureAlphaInfo AnalyzeAlpha(Rgba32Image image)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+
+        byte minAlpha = 255;
+        byte maxAlpha = 0;
+        var usesBinaryAlpha = true;
+
+        for (var i = 3; i < image.PixelData.Length; i += 4)
+        {
+            var alpha = image.PixelData[i];
+            minAlpha = Math.Min(minAlpha, alpha);
+            maxAlpha = Math.Max(maxAlpha, alpha);
+            usesBinaryAlpha &= alpha is 0 or 255;
+        }
+
+        return new TextureAlphaInfo(minAlpha, maxAlpha, usesBinaryAlpha);
+    }
+
     public static byte[] EncodePng(IndexedImage image)
     {
         ArgumentNullException.ThrowIfNull(image);
@@ -123,9 +142,9 @@ public static class TextureConverter
 
         stream.Write(PngSignature);
 
-        Span<byte> ihdr = stackalloc byte[13];
-        BinaryPrimitives.WriteUInt32BigEndian(ihdr[0..4], (uint)image.Width);
-        BinaryPrimitives.WriteUInt32BigEndian(ihdr[4..8], (uint)image.Height);
+        var ihdr = new byte[13];
+        BinaryPrimitives.WriteUInt32BigEndian(ihdr.AsSpan(0, 4), (uint)image.Width);
+        BinaryPrimitives.WriteUInt32BigEndian(ihdr.AsSpan(4, 4), (uint)image.Height);
         ihdr[8] = 8;
         ihdr[9] = 6;
         ihdr[10] = 0;
@@ -136,7 +155,7 @@ public static class TextureConverter
         var filtered = BuildFilteredScanlines(image);
         var compressed = ZlibCompressStored(filtered);
         WriteChunk(stream, "IDAT", compressed);
-        WriteChunk(stream, "IEND", ReadOnlySpan<byte>.Empty);
+        WriteChunk(stream, "IEND", []);
     }
 
     public static void WritePng(Stream stream, IndexedImage image)
@@ -151,9 +170,9 @@ public static class TextureConverter
 
         stream.Write(PngSignature);
 
-        Span<byte> ihdr = stackalloc byte[13];
-        BinaryPrimitives.WriteUInt32BigEndian(ihdr[0..4], (uint)image.Width);
-        BinaryPrimitives.WriteUInt32BigEndian(ihdr[4..8], (uint)image.Height);
+        var ihdr = new byte[13];
+        BinaryPrimitives.WriteUInt32BigEndian(ihdr.AsSpan(0, 4), (uint)image.Width);
+        BinaryPrimitives.WriteUInt32BigEndian(ihdr.AsSpan(4, 4), (uint)image.Height);
         ihdr[8] = (byte)image.BitsPerPixel;
         ihdr[9] = 3;
         ihdr[10] = 0;
@@ -167,7 +186,7 @@ public static class TextureConverter
         var filtered = BuildFilteredScanlines(image);
         var compressed = ZlibCompressStored(filtered);
         WriteChunk(stream, "IDAT", compressed);
-        WriteChunk(stream, "IEND", ReadOnlySpan<byte>.Empty);
+        WriteChunk(stream, "IEND", []);
     }
 
     public static int RemapPixelIndexFromRac4(int index, int width)
@@ -601,8 +620,9 @@ public static class TextureConverter
         uint a = 1;
         uint b = 0;
 
-        foreach (var value in data)
+        for (var i = 0; i < data.Length; i++)
         {
+            var value = data[i];
             a = (a + value) % ModAdler;
             b = (b + a) % ModAdler;
         }
@@ -610,13 +630,13 @@ public static class TextureConverter
         return (b << 16) | a;
     }
 
-    private static void WriteChunk(Stream stream, string chunkType, ReadOnlySpan<byte> data)
+    private static void WriteChunk(Stream stream, string chunkType, byte[] data)
     {
         Span<byte> lengthBytes = stackalloc byte[4];
         BinaryPrimitives.WriteUInt32BigEndian(lengthBytes, (uint)data.Length);
         stream.Write(lengthBytes);
 
-        Span<byte> typeBytes = stackalloc byte[4];
+        var typeBytes = new byte[4];
         for (var i = 0; i < 4; i++)
         {
             typeBytes[i] = (byte)chunkType[i];
@@ -631,17 +651,19 @@ public static class TextureConverter
         stream.Write(crcBytes);
     }
 
-    private static uint Crc32(ReadOnlySpan<byte> chunkType, ReadOnlySpan<byte> data)
+    private static uint Crc32(byte[] chunkType, byte[] data)
     {
         uint crc = 0xffffffff;
 
-        foreach (var value in chunkType)
+        for (var i = 0; i < chunkType.Length; i++)
         {
+            var value = chunkType[i];
             crc = (crc >> 8) ^ s_crcTable[(crc ^ value) & 0xff];
         }
 
-        foreach (var value in data)
+        for (var i = 0; i < data.Length; i++)
         {
+            var value = data[i];
             crc = (crc >> 8) ^ s_crcTable[(crc ^ value) & 0xff];
         }
 

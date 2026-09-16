@@ -1,0 +1,97 @@
+name: Release TypeScript SDK
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: typescript-sdk-release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release-sdk:
+    name: Build and Release TypeScript SDK
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+      DOTNET_NOLOGO: true
+      SDK_DIR: src/RatchetPs2.TypeScriptSdk.Generator/bin
+      PACKAGE_DIR: artifacts/ratchetps2-typescript-sdk
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Restore
+        run: |
+          npm --prefix src/RatchetPs2.TypeScriptSdk.Generator ci
+          dotnet restore src/RatchetPs2.Sdk/RatchetPs2.Sdk.csproj
+          dotnet restore src/RatchetPs2.TypeScriptSdk.Generator/RatchetPs2.TypeScriptSdk.Generator.csproj
+
+      - name: Build TypeScript SDK
+        run: |
+          npm --prefix src/RatchetPs2.TypeScriptSdk.Generator run check:runtime
+          rm -rf "$PACKAGE_DIR"
+          npm --prefix src/RatchetPs2.TypeScriptSdk.Generator run build:frontend
+          mkdir -p "$PACKAGE_DIR/package"
+          for game in rc1 gc uya dl; do
+            cp -R "$SDK_DIR/frontend-$game" "$PACKAGE_DIR/package/"
+          done
+
+      - name: Verify Package Layout
+        run: |
+          for game in rc1 gc uya dl; do
+            test -f "$PACKAGE_DIR/package/frontend-$game/ratchetps2.js"
+            test -f "$PACKAGE_DIR/package/frontend-$game/index.js"
+            test -f "$PACKAGE_DIR/package/frontend-$game/index.d.ts"
+            test -f "$PACKAGE_DIR/package/frontend-$game/package.json"
+            test -f "$PACKAGE_DIR/package/frontend-$game/runtime/index.js"
+          done
+
+      - name: Add Release Metadata
+        run: |
+          cat > "$PACKAGE_DIR/package/ratchetps2-typescript-sdk-release.json" <<EOF
+          {
+            "sourceRepository": "${GITHUB_REPOSITORY}",
+            "sourceRef": "${GITHUB_REF_NAME}",
+            "sourceSha": "${GITHUB_SHA}",
+            "builtAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          }
+          EOF
+
+      - name: Package Release Asset
+        id: package
+        run: |
+          artifact_name="ratchetps2-typescript-sdk-${GITHUB_REF_NAME}.tar.gz"
+          artifact_path="${RUNNER_TEMP}/${artifact_name}"
+          tar -czf "$artifact_path" -C "$PACKAGE_DIR" package
+          echo "artifact_path=$artifact_path" >> "$GITHUB_OUTPUT"
+
+      - name: Create or Update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag_name="${GITHUB_REF_NAME}"
+          artifact_path="${{ steps.package.outputs.artifact_path }}"
+
+          if gh release view "$tag_name" >/dev/null 2>&1; then
+            gh release upload "$tag_name" "$artifact_path" --clobber
+          else
+            gh release create "$tag_name" "$artifact_path" \
+              --title "$tag_name" \
+              --notes "Ratchet PS2 TypeScript SDK for $tag_name."
+          fi

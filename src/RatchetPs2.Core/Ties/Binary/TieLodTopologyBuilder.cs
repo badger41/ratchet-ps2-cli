@@ -12,16 +12,28 @@ internal static class TieLodTopologyBuilder
             var triangles = new List<TieTriangle>();
             var logicalVertexIndex = 0;
             var packetVertexRowCount = 0;
+            var primaryAddressMappedLogicalVertexCount = 0;
+            var secondaryAddressMappedLogicalVertexCount = 0;
+            var unresolvedLogicalVertexCount = 0;
 
-            foreach (var block in blocks
-                         .Where(block => block.LodIndex == lodIndex)
-                         .OrderBy(block => block.PacketIndex))
+            var lodBlocks = new List<TiePacketDataBlock>();
+            for (var blockIndex = 0; blockIndex < blocks.Count; blockIndex++)
             {
+                if (blocks[blockIndex].LodIndex == lodIndex)
+                {
+                    lodBlocks.Add(blocks[blockIndex]);
+                }
+            }
+            lodBlocks.Sort(static (left, right) => left.PacketIndex.CompareTo(right.PacketIndex));
+            for (var blockIndex = 0; blockIndex < lodBlocks.Count; blockIndex++)
+            {
+                var block = lodBlocks[blockIndex];
                 packetVertexRowCount += block.VertexRows.Count;
                 if (CanUseDecodedPacketPrimitives(block))
                 {
-                    foreach (var primitive in block.Primitives)
+                    for (var primitiveIndex = 0; primitiveIndex < block.Primitives.Count; primitiveIndex++)
                     {
+                        var primitive = block.Primitives[primitiveIndex];
                         var stripControl = block.StripControls[primitive.PacketStripIndex];
                         var stripIndex = strips.Count;
                         var logicalVertexStartIndex = logicalVertexIndex;
@@ -53,6 +65,14 @@ internal static class TieLodTopologyBuilder
                             };
                             stripLogicalVertices.Add(logicalVertex);
                             logicalVertices.Add(logicalVertex);
+                            if (logicalVertex.MappingKind == TieLogicalVertexMappingKind.PrimaryRowAddress)
+                            {
+                                primaryAddressMappedLogicalVertexCount++;
+                            }
+                            else
+                            {
+                                secondaryAddressMappedLogicalVertexCount++;
+                            }
                         }
 
                         var stripTriangles = BuildPhysicalPrimitiveTriangles(
@@ -87,8 +107,9 @@ internal static class TieLodTopologyBuilder
 
                 var vertexRowsByVuAddress = BuildVertexAddressLookup(block.VertexRows);
 
-                foreach (var stripControl in block.StripControls)
+                for (var stripControlIndex = 0; stripControlIndex < block.StripControls.Count; stripControlIndex++)
                 {
+                    var stripControl = block.StripControls[stripControlIndex];
                     var stripIndex = strips.Count;
                     var logicalVertexStartIndex = logicalVertexIndex;
                     var triangleStartIndex = triangles.Count;
@@ -122,6 +143,18 @@ internal static class TieLodTopologyBuilder
                         };
                         stripLogicalVertices.Add(logicalVertex);
                         logicalVertices.Add(logicalVertex);
+                        switch (mappingKind)
+                        {
+                            case TieLogicalVertexMappingKind.PrimaryRowAddress:
+                                primaryAddressMappedLogicalVertexCount++;
+                                break;
+                            case TieLogicalVertexMappingKind.SecondaryRowAddress:
+                                secondaryAddressMappedLogicalVertexCount++;
+                                break;
+                            default:
+                                unresolvedLogicalVertexCount++;
+                                break;
+                        }
                     }
 
                     strips.Add(new TieTriangleStrip
@@ -162,12 +195,9 @@ internal static class TieLodTopologyBuilder
                 LodIndex = lodIndex,
                 LogicalVertexCount = logicalVertexIndex,
                 PacketVertexRowCount = packetVertexRowCount,
-                PrimaryAddressMappedLogicalVertexCount = logicalVertices.Count(
-                    vertex => vertex.MappingKind == TieLogicalVertexMappingKind.PrimaryRowAddress),
-                SecondaryAddressMappedLogicalVertexCount = logicalVertices.Count(
-                    vertex => vertex.MappingKind == TieLogicalVertexMappingKind.SecondaryRowAddress),
-                UnresolvedLogicalVertexCount = logicalVertices.Count(
-                    vertex => vertex.MappingKind == TieLogicalVertexMappingKind.Unresolved),
+                PrimaryAddressMappedLogicalVertexCount = primaryAddressMappedLogicalVertexCount,
+                SecondaryAddressMappedLogicalVertexCount = secondaryAddressMappedLogicalVertexCount,
+                UnresolvedLogicalVertexCount = unresolvedLogicalVertexCount,
                 StripCount = strips.Count,
                 TriangleCount = triangles.Count,
                 LogicalVertices = logicalVertices,
@@ -186,8 +216,9 @@ internal static class TieLodTopologyBuilder
             return false;
         }
 
-        foreach (var primitive in block.Primitives)
+        for (var i = 0; i < block.Primitives.Count; i++)
         {
+            var primitive = block.Primitives[i];
             if (primitive.PacketStripIndex < 0 || primitive.PacketStripIndex >= block.StripControls.Count)
             {
                 return false;
@@ -227,8 +258,9 @@ internal static class TieLodTopologyBuilder
     private static Dictionary<int, VertexAddressMapping> BuildVertexAddressLookup(IReadOnlyList<TiePacketVertexRow> rows)
     {
         var lookup = new Dictionary<int, VertexAddressMapping>();
-        foreach (var row in rows)
+        for (var i = 0; i < rows.Count; i++)
         {
+            var row = rows[i];
             if (row.HasPrimaryVuAddress)
             {
                 AddVertexAddressMapping(
@@ -240,8 +272,9 @@ internal static class TieLodTopologyBuilder
             }
         }
 
-        foreach (var row in rows)
+        for (var i = 0; i < rows.Count; i++)
         {
+            var row = rows[i];
             if (!row.HasSecondaryVuAddress)
             {
                 continue;

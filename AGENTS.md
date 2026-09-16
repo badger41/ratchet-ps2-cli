@@ -8,7 +8,7 @@ This repository is intended to support:
 
 1. a cross-platform CLI
 2. reusable SDK-style library consumption from other .NET projects
-3. possible future WASM-oriented hosts
+3. a generated TypeScript SDK for browser applications and workers
 
 Because of that, contributors should preserve a clean separation between:
 
@@ -50,7 +50,7 @@ Use this project for:
 - reusable parsing/transformation logic
 - APIs intended for non-CLI consumers
 
-Anything in this project should ideally be safe to consume from tests, other apps, and future WASM-friendly hosts.
+Anything in this project should be safe to consume from tests, other .NET apps, and the generated TypeScript SDK.
 
 ### `RatchetPs2.Games.RC1`, `GC`, `UYA`, `DL`
 
@@ -62,6 +62,18 @@ Use these projects for:
 - quirks or version-specific behavior
 
 Do not move something to `Core` unless it is meaningfully shared.
+
+### `RatchetPs2.Sdk`
+
+Use this project only for host-independent workflows that compose Core with more
+than one game library. It may expose byte-oriented frontend entry points, but must
+not depend on the CLI, browser APIs, or filesystem-only orchestration.
+
+### `RatchetPs2.TypeScriptSdk.Generator`
+
+Use this project for SDK discovery, browser-target Roslyn rewrites, TypeScript
+package generation, and parity probes. Keep transpiler compatibility code here,
+not in Core or the game libraries.
 
 ## Placement rules
 
@@ -83,9 +95,9 @@ To preserve library usability:
 - avoid static mutable global state
 - prefer explicit models and service abstractions
 
-## WASM-friendly rules
+## Browser SDK rules
 
-To preserve future WASM compatibility:
+To preserve TypeScript SDK usability:
 
 - do not assume unrestricted filesystem access
 - do not require native platform interop in core logic
@@ -100,6 +112,7 @@ Preferred dependency direction:
 RatchetPs2.Cli -> RatchetPs2.Core
 RatchetPs2.Cli -> RatchetPs2.Games.*
 RatchetPs2.Games.* -> RatchetPs2.Core
+RatchetPs2.Sdk -> RatchetPs2.Core + RatchetPs2.Games.*
 ```
 
 Avoid:

@@ -60,7 +60,5 @@ Thumbs.db
 
 # Other
 test-assets/
-src/RatchetPs2.Wasm/dist/
-src/RatchetPs2.Wasm/package-dist/
 tools/
 docs/.local-only/

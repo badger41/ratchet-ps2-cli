@@ -533,13 +533,15 @@ public static class DlAssetReader
             mips,
             isSwizzled);
         var pifBytes = PifWriter.Write(texture);
-        var pngBytes = TextureConverter.ConvertToPng(texture, TexturePixelFormat.Rgba32);
+        var image = TextureConverter.Decode(texture);
+        var pngBytes = TextureConverter.EncodePng(image);
 
         return new DlNormalizedTexture(
             outputIndex,
             family,
             pifBytes,
             pngBytes,
+            TextureConverter.AnalyzeAlpha(image),
             new DlNormalizedTextureMetadata(
                 family,
                 outputIndex,

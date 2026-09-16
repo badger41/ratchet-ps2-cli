@@ -28,7 +28,7 @@ public static partial class SkyboxGltfExporter
             var uri = string.IsNullOrEmpty(textureDirectory)
                 ? fileName
                 : $"{textureDirectory}/{fileName}";
-            var alpha = AnalyzeAlpha(image);
+            var alpha = TextureConverter.AnalyzeAlpha(image);
             resources.Add(new SkyboxGltfTextureResource(
                 texture.Index,
                 uri,
@@ -41,20 +41,4 @@ public static partial class SkyboxGltfExporter
         return resources;
     }
 
-    private static TextureAlphaInfo AnalyzeAlpha(Rgba32Image image)
-    {
-        byte minAlpha = 255;
-        byte maxAlpha = 0;
-        var usesBinaryAlpha = true;
-
-        for (var i = 3; i < image.PixelData.Length; i += 4)
-        {
-            var alpha = image.PixelData[i];
-            minAlpha = Math.Min(minAlpha, alpha);
-            maxAlpha = Math.Max(maxAlpha, alpha);
-            usesBinaryAlpha &= alpha is 0 or 255;
-        }
-
-        return new TextureAlphaInfo(minAlpha, maxAlpha, usesBinaryAlpha);
-    }
 }

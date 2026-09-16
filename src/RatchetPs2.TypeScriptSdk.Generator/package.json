@@ -1,0 +1,20 @@
+{
+  "name": "ratchet-ps2-typescript-sdk-generator",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check:runtime": "node tests/check-runtime.mjs",
+    "build:frontend": "npm run build:frontend-rc1 && npm run build:frontend-gc && npm run build:frontend-uya && npm run build:frontend-dl",
+    "build:frontend-uya": "dotnet run --no-restore -- --output bin/frontend-uya --type RatchetPs2.Sdk.UyaFrontendMapPackageBuilder --type RatchetPs2.Games.UYA.Gameplay.UyaGameplayBlockReader",
+    "build:frontend-dl": "dotnet run --no-restore -- --output bin/frontend-dl --type RatchetPs2.Sdk.DlFrontendMapPackageBuilder --type RatchetPs2.Games.DL.Gameplay.DlGameplayBlockReader",
+    "build:frontend-gc": "dotnet run --no-restore -- --output bin/frontend-gc --type RatchetPs2.Sdk.GcFrontendMapPackageBuilder --type RatchetPs2.Games.UYA.Gameplay.UyaGameplayBlockReader --type RatchetPs2.Games.GC.Gameplay.GcGameplayLayout --type RatchetPs2.Games.GC.Gameplay.GcLevelSettingsReader",
+    "build:frontend-rc1": "dotnet run --no-restore -- --output bin/frontend-rc1 --type RatchetPs2.Sdk.Rc1FrontendMapPackageBuilder --type RatchetPs2.Games.RC1.Gameplay.Rc1Gameplay --type RatchetPs2.Games.RC1.Gameplay.Rc1LevelSettingsReader --type RatchetPs2.Games.RC1.Gameplay.Rc1MobyInstancesReader --type RatchetPs2.Core.Gameplay.GameplayGeometryReader --type RatchetPs2.Core.Gameplay.GameplayPvarTableReader",
+    "check": "node tests/check-all.mjs"
+  },
+  "dependencies": {
+    "fflate": "0.8.3"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3"
+  }
+}

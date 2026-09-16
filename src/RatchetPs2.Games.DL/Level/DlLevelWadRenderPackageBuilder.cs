@@ -45,6 +45,15 @@ public sealed record DlLevelWadRenderPackageBuildOptions
     public LevelAssetProfile AssetProfile { get; init; } = LevelAssetProfile.Default;
 }
 
+public enum DlLevelAssetGroup
+{
+    All,
+    Common,
+    Terrain,
+    Mobys,
+    Ties
+}
+
 public static class DlLevelWadRenderPackageBuilder
 {
     private const string SkyboxSourcePath = "skybox/sky.bin";
@@ -64,9 +73,15 @@ public static class DlLevelWadRenderPackageBuilder
 
     public static IReadOnlyList<PackedFile> BuildFiles(
         ReadOnlySpan<byte> levelWadBytes,
-        DlLevelWadRenderPackageBuildOptions? options = null)
+        DlLevelWadRenderPackageBuildOptions? options = null,
+        DlLevelAssetGroup assetGroup = DlLevelAssetGroup.All)
     {
+        if ((uint)assetGroup > (uint)DlLevelAssetGroup.Ties)
+        {
+            throw new ArgumentOutOfRangeException(nameof(assetGroup));
+        }
         options ??= DlLevelWadRenderPackageBuildOptions.Default;
+        var buildCommon = assetGroup is DlLevelAssetGroup.All or DlLevelAssetGroup.Common;
         var totalStart = Stopwatch.GetTimestamp();
         var timings = new List<RenderPackageTiming>();
         var levelWad = DlLevelWadReader.ReadLevelWad(levelWadBytes);
@@ -99,7 +114,7 @@ public static class DlLevelWadRenderPackageBuilder
             ["CoreSegments"] = CreateCoreSegmentManifest(coreSegments)
         };
 
-        if (coreSegmentByHeaderOffset.TryGetValue(0x20, out var hudHeader))
+        if (buildCommon && coreSegmentByHeaderOffset.TryGetValue(0x20, out var hudHeader))
         {
             files.AddRange(HudBankRenderPackageBuilder.BuildFiles(
                 hudHeader.PayloadBytes,
@@ -129,30 +144,35 @@ public static class DlLevelWadRenderPackageBuilder
             timings,
             options,
             ReadChunkWads(levelWadBytes, levelWad.Chunks),
-            null);
+            null,
+            assetGroup);
         var exportedMobyClassIds = mobyEntries
             .Where(entry => entry.Status == "written")
             .Select(entry => entry.ClassId)
             .ToHashSet();
 
-        for (var missionIndex = 0; missionIndex < levelWad.GameplayMissionData.Count; missionIndex++)
+        if (buildCommon || assetGroup == DlLevelAssetGroup.Mobys)
         {
-            var missionData = DlLevelWadReader.ReadSectorFileBlock(
-                levelWadBytes,
-                levelWad.GameplayMissionData[missionIndex]);
-            var gameplay = DlMissionDataReader.ReadGameplay(missionData);
-            if (gameplay.Length > 0)
+            for (var missionIndex = 0; missionIndex < levelWad.GameplayMissionData.Count; missionIndex++)
             {
-                AddFile(files, $"missions/mission_{missionIndex}/gameplay.bin", gameplay);
-            }
-            if (!options.IncludeMissionMobys)
-            {
-                continue;
-            }
-            var classes = DlMissionDataReader.ReadClasses(missionData);
-            if (classes.Length > 0)
-            {
-                BuildMissionMobyGltfs(files, mobyEntries, exportedMobyClassIds, missionIndex, classes, options);
+                var missionData = DlLevelWadReader.ReadSectorFileBlock(
+                    levelWadBytes,
+                    levelWad.GameplayMissionData[missionIndex]);
+                var gameplay = DlMissionDataReader.ReadGameplay(missionData);
+                if (buildCommon && gameplay.Length > 0)
+                {
+                    AddFile(files, $"missions/mission_{missionIndex}/gameplay.bin", gameplay);
+                }
+                if (assetGroup is not (DlLevelAssetGroup.All or DlLevelAssetGroup.Mobys)
+                    || !options.IncludeMissionMobys)
+                {
+                    continue;
+                }
+                var classes = DlMissionDataReader.ReadClasses(missionData);
+                if (classes.Length > 0)
+                {
+                    BuildMissionMobyGltfs(files, mobyEntries, exportedMobyClassIds, missionIndex, classes, options);
+                }
             }
         }
         manifest["Mobys"] = mobyEntries;
@@ -164,6 +184,15 @@ public static class DlLevelWadRenderPackageBuilder
             "Asset package build",
             assetsStart,
             $"{files.Count} files so far");
+
+        if (assetGroup != DlLevelAssetGroup.All)
+        {
+            AddJsonFile(files, "assets/render_manifest.json", manifest);
+        }
+        if (!buildCommon)
+        {
+            return files;
+        }
 
         if (coreSegmentByHeaderOffset.TryGetValue(0x58, out var worldInstances))
         {
@@ -205,11 +234,16 @@ public static class DlLevelWadRenderPackageBuilder
         byte[] assetBytes,
         DlLevelWadRenderPackageBuildOptions? options = null,
         IReadOnlyDictionary<int, byte[]>? chunkWads = null,
-        IReadOnlyDictionary<int, Vector3>? skyRotationDeltasRadiansPerFrame = null)
+        IReadOnlyDictionary<int, Vector3>? skyRotationDeltasRadiansPerFrame = null,
+        DlLevelAssetGroup assetGroup = DlLevelAssetGroup.All)
     {
         ArgumentNullException.ThrowIfNull(headerBytes);
         ArgumentNullException.ThrowIfNull(paletteBytes);
         ArgumentNullException.ThrowIfNull(assetBytes);
+        if ((uint)assetGroup > (uint)DlLevelAssetGroup.Ties)
+        {
+            throw new ArgumentOutOfRangeException(nameof(assetGroup));
+        }
 
         options ??= DlLevelWadRenderPackageBuildOptions.Default;
         var assetWadWasCompressed = BinaryMagic.IsWad(assetBytes);
@@ -241,7 +275,8 @@ public static class DlLevelWadRenderPackageBuilder
             timings,
             options,
             chunkWads,
-            skyRotationDeltasRadiansPerFrame);
+            skyRotationDeltasRadiansPerFrame,
+            assetGroup);
         manifest["Mobys"] = mobyEntries;
 
         AddTiming(
@@ -266,7 +301,8 @@ public static class DlLevelWadRenderPackageBuilder
         List<RenderPackageTiming> timings,
         DlLevelWadRenderPackageBuildOptions options,
         IReadOnlyDictionary<int, byte[]>? chunkWads,
-        IReadOnlyDictionary<int, Vector3>? skyRotationDeltasRadiansPerFrame)
+        IReadOnlyDictionary<int, Vector3>? skyRotationDeltasRadiansPerFrame,
+        DlLevelAssetGroup assetGroup)
     {
         var header = DlAssetReader.ReadHeader(headerBytes);
         var assetProfile = options.AssetProfile;
@@ -278,7 +314,10 @@ public static class DlLevelWadRenderPackageBuilder
                 header.GsRamCount
                     + (assetProfile.IncludeExtraMipmapDefinitions ? header.ExtraMipmapCount : 0)));
         var gsStashDefinitions = allMipmapDefinitions.Skip(header.GsRamCount).ToArray();
-        var environmentTextures = BuildEnvironmentTextures(files, header, paletteBytes, gsStashDefinitions);
+        var buildCommon = assetGroup is DlLevelAssetGroup.All or DlLevelAssetGroup.Common;
+        IReadOnlyDictionary<string, string> environmentTextures = buildCommon
+            ? BuildEnvironmentTextures(files, header, paletteBytes, gsStashDefinitions)
+            : new Dictionary<string, string>();
         var mobyGsStashClassIds = assetProfile.HasMobyGsStashClassList
             ? DlAssetReader.ReadMobyGsStashClassIds(headerBytes, header.MobyGsStashListOffset)
             : [];
@@ -300,144 +339,160 @@ public static class DlLevelWadRenderPackageBuilder
             shrubDefinitions);
         var gltfExports = new List<GltfExportRoute>();
 
-        var skyboxStart = Stopwatch.GetTimestamp();
-        gltfExports.Add(BuildSkybox(
-            files,
-            gameId,
-            levelIndex,
-            header,
-            assetBytes,
-            knownAssetOffsets,
-            options,
-            skyRotationDeltasRadiansPerFrame));
-        AddTiming(
-            timings,
-            "managed.assets.skybox",
-            "Skybox glTF export",
-            skyboxStart,
-            SummarizeRoutes(gltfExports, route => route.Family == "skybox"));
-
-        var tfragStart = Stopwatch.GetTimestamp();
-        var tfragTimings = new List<RenderPackageTiming>();
-        var tfragTextureResources = BuildTfragTextureResources(
-            files,
-            header,
-            tfragTextureDefinitions,
-            paletteBytes,
-            assetBytes,
-            textureIsSwizzled,
-            assetProfile.UseTextureFlags);
-        gltfExports.Add(BuildTfrag(
-            files,
-            gameId,
-            null,
-            ReadAssetRange(
+        if (buildCommon)
+        {
+            var skyboxStart = Stopwatch.GetTimestamp();
+            gltfExports.Add(BuildSkybox(
+                files,
+                gameId,
+                levelIndex,
+                header,
                 assetBytes,
-                header.TerrainOffset,
-                header.OcclusionOffset,
-                allowZeroOffset: true),
-            "tfrag/tfrag.bin",
-            "tfrag/tfrag.gltf",
-            "tfrag/tfrag.buffer.bin",
-            "tfrag/tfrag.diagnostics.json",
-            "assets/tfrag",
-            tfragTextureResources,
-            tfragTimings,
-            options));
-        gltfExports.AddRange(BuildChunkTfrags(
-            files,
-            gameId,
-            chunkWads,
-            tfragTextureResources,
-            tfragTimings,
-            options));
-        AddTiming(
-            timings,
-            "managed.assets.tfrag",
-            "Terrain glTF export",
-            tfragStart,
-            SummarizeRoutes(gltfExports, route => route.Family == "tfrag"));
-        timings.AddRange(tfragTimings);
+                knownAssetOffsets,
+                options,
+                skyRotationDeltasRadiansPerFrame));
+            AddTiming(
+                timings,
+                "managed.assets.skybox",
+                "Skybox glTF export",
+                skyboxStart,
+                SummarizeRoutes(gltfExports, route => route.Family == "skybox"));
+        }
 
-        var mobyStart = Stopwatch.GetTimestamp();
-        var mobyRoutes = BuildMobyGltfs(
-            files,
-            gameId,
-            mobyDefinitions,
-            mobyTextureDefinitions,
-            paletteBytes,
-            assetBytes,
-            header.TextureDataOffset,
-            gsStashDefinitions,
-            mobyGsStashClassIds,
-            knownAssetOffsets,
-            textureIsSwizzled,
-            options).ToArray();
-        gltfExports.AddRange(mobyRoutes);
-        var mobyEntries = CreateMobyManifestEntries("main", "assets", mobyRoutes).ToList();
-        AddTiming(
-            timings,
-            "managed.assets.mobys",
-            "Moby glTF exports",
-            mobyStart,
-            SummarizeRoutes(mobyRoutes));
+        if (assetGroup is DlLevelAssetGroup.All or DlLevelAssetGroup.Terrain)
+        {
+            var tfragStart = Stopwatch.GetTimestamp();
+            var tfragTimings = new List<RenderPackageTiming>();
+            var tfragTextureResources = BuildTfragTextureResources(
+                files,
+                header,
+                tfragTextureDefinitions,
+                paletteBytes,
+                assetBytes,
+                textureIsSwizzled,
+                assetProfile.UseTextureFlags);
+            gltfExports.Add(BuildTfrag(
+                files,
+                gameId,
+                null,
+                ReadAssetRange(
+                    assetBytes,
+                    header.TerrainOffset,
+                    header.OcclusionOffset,
+                    allowZeroOffset: true),
+                "tfrag/tfrag.bin",
+                "tfrag/tfrag.gltf",
+                "tfrag/tfrag.buffer.bin",
+                "tfrag/tfrag.diagnostics.json",
+                "assets/tfrag",
+                tfragTextureResources,
+                tfragTimings,
+                options));
+            gltfExports.AddRange(BuildChunkTfrags(
+                files,
+                gameId,
+                chunkWads,
+                tfragTextureResources,
+                tfragTimings,
+                options));
+            AddTiming(
+                timings,
+                "managed.assets.tfrag",
+                "Terrain glTF export",
+                tfragStart,
+                SummarizeRoutes(gltfExports, route => route.Family == "tfrag"));
+            timings.AddRange(tfragTimings);
+        }
 
-        var tieStart = Stopwatch.GetTimestamp();
-        var tieRouteStart = gltfExports.Count;
-        var tieTimingAggregates = new Dictionary<string, TimingAggregate>(StringComparer.Ordinal);
-        gltfExports.AddRange(BuildTieGltfs(
-            files,
-            gameId,
-            tieDefinitions,
-            tieTextureDefinitions,
-            paletteBytes,
-            assetBytes,
-            header.TextureDataOffset,
-            knownAssetOffsets,
-            (key, label, durationMs, detail) => AddAggregateTiming(
-                tieTimingAggregates,
-                $"managed.{key}",
-                label,
-                durationMs,
-                detail),
-            textureIsSwizzled,
-            options));
-        AddTiming(
-            timings,
-            "managed.assets.ties",
-            "Tie glTF exports",
-            tieStart,
-            SummarizeRoutes(gltfExports.Skip(tieRouteStart)));
-        FlushAggregateTimings(timings, tieTimingAggregates.Values);
+        var mobyEntries = new List<MobyExportManifestEntry>();
+        if (assetGroup is DlLevelAssetGroup.All or DlLevelAssetGroup.Mobys)
+        {
+            var mobyStart = Stopwatch.GetTimestamp();
+            var mobyRoutes = BuildMobyGltfs(
+                files,
+                gameId,
+                mobyDefinitions,
+                mobyTextureDefinitions,
+                paletteBytes,
+                assetBytes,
+                header.TextureDataOffset,
+                gsStashDefinitions,
+                mobyGsStashClassIds,
+                knownAssetOffsets,
+                textureIsSwizzled,
+                options).ToArray();
+            gltfExports.AddRange(mobyRoutes);
+            mobyEntries.AddRange(CreateMobyManifestEntries("main", "assets", mobyRoutes));
+            AddTiming(
+                timings,
+                "managed.assets.mobys",
+                "Moby glTF exports",
+                mobyStart,
+                SummarizeRoutes(mobyRoutes));
+        }
 
-        var shrubStart = Stopwatch.GetTimestamp();
-        var shrubRouteStart = gltfExports.Count;
-        gltfExports.AddRange(BuildShrubGltfs(
-            files,
-            gameId,
-            shrubDefinitions,
-            shrubTextureDefinitions,
-            paletteBytes,
-            assetBytes,
-            header.TextureDataOffset,
-            knownAssetOffsets,
-            textureIsSwizzled,
-            options));
-        AddTiming(
-            timings,
-            "managed.assets.shrubs",
-            "Shrub glTF exports",
-            shrubStart,
-            SummarizeRoutes(gltfExports.Skip(shrubRouteStart)));
+        if (assetGroup is DlLevelAssetGroup.All or DlLevelAssetGroup.Ties)
+        {
+            var tieStart = Stopwatch.GetTimestamp();
+            var tieRouteStart = gltfExports.Count;
+            var tieTimingAggregates = new Dictionary<string, TimingAggregate>(StringComparer.Ordinal);
+            gltfExports.AddRange(BuildTieGltfs(
+                files,
+                gameId,
+                tieDefinitions,
+                tieTextureDefinitions,
+                paletteBytes,
+                assetBytes,
+                header.TextureDataOffset,
+                knownAssetOffsets,
+                (key, label, durationMs, detail) => AddAggregateTiming(
+                    tieTimingAggregates,
+                    $"managed.{key}",
+                    label,
+                    durationMs,
+                    detail),
+                textureIsSwizzled,
+                options));
+            AddTiming(
+                timings,
+                "managed.assets.ties",
+                "Tie glTF exports",
+                tieStart,
+                SummarizeRoutes(gltfExports.Skip(tieRouteStart)));
+            FlushAggregateTimings(timings, tieTimingAggregates.Values);
+        }
 
-        var fxStart = Stopwatch.GetTimestamp();
-        BuildFxTextures(files, fxDefinitions, assetBytes, header.FxTextureDataOffset, textureIsSwizzled);
-        AddTiming(
-            timings,
-            "managed.assets.fx-textures",
-            "FX texture exports",
-            fxStart,
-            $"{fxDefinitions.Count} textures");
+        if (buildCommon)
+        {
+            var shrubStart = Stopwatch.GetTimestamp();
+            var shrubRouteStart = gltfExports.Count;
+            gltfExports.AddRange(BuildShrubGltfs(
+                files,
+                gameId,
+                shrubDefinitions,
+                shrubTextureDefinitions,
+                paletteBytes,
+                assetBytes,
+                header.TextureDataOffset,
+                knownAssetOffsets,
+                textureIsSwizzled,
+                options));
+            AddTiming(
+                timings,
+                "managed.assets.shrubs",
+                "Shrub glTF exports",
+                shrubStart,
+                SummarizeRoutes(gltfExports.Skip(shrubRouteStart)));
+
+            var fxStart = Stopwatch.GetTimestamp();
+            BuildFxTextures(files, fxDefinitions, assetBytes, header.FxTextureDataOffset, textureIsSwizzled);
+            AddTiming(
+                timings,
+                "managed.assets.fx-textures",
+                "FX texture exports",
+                fxStart,
+                $"{fxDefinitions.Count} textures");
+        }
 
         var assetManifest = new Dictionary<string, object?>
         {
@@ -852,11 +907,13 @@ public static class DlLevelWadRenderPackageBuilder
                 for (var textureIndex = 0; textureIndex < moby.PifTextures.Count; textureIndex++)
                 {
                     var texture = PifAssetExporter.Export(moby.PifTextures[textureIndex]);
+                    var image = TextureConverter.Decode(texture.Texture);
                     var normalized = new DlNormalizedTexture(
                         textureIndex,
                         "mission_moby",
                         texture.PifBytes,
                         texture.PngBytes,
+                        TextureConverter.AnalyzeAlpha(image),
                         new DlNormalizedTextureMetadata(
                             "mission_moby",
                             textureIndex,
@@ -1409,15 +1466,14 @@ public static class DlLevelWadRenderPackageBuilder
         string? outputFileName = null)
     {
         var fileName = outputFileName ?? $"tex.{texture.Index:0000}.png";
-        var metadata = ReadPngMetadata(texture.PngBytes);
         AddFile(files, $"{packageDirectory}/{fileName}", texture.PngBytes, "image/png");
 
         var uri = $"{gltfTextureDirectory.Trim().Trim('/')}/{fileName}";
         var resource = new RenderTextureResource(
             texture.Index,
             uri,
-            new TextureSize(metadata.Size.Width, metadata.Size.Height),
-            metadata.Alpha);
+            new TextureSize(texture.Metadata.Width, texture.Metadata.Height),
+            texture.Alpha);
         resources?.Add(resource);
         return resource;
     }
@@ -1437,12 +1493,6 @@ public static class DlLevelWadRenderPackageBuilder
             ? endOffset
             : assetBytes.Length;
         return assetBytes.AsSpan(offset, end - offset).ToArray();
-    }
-
-    private static TextureMetadata ReadPngMetadata(byte[] bytes)
-    {
-        using var input = new MemoryStream(bytes, writable: false);
-        return PngTextureMetadataReader.ReadPng(input);
     }
 
     private static WorldSlotRoute CreateWorldSlotRoute(DlWorldInstanceSlot slot, string? relativePath, string status)
