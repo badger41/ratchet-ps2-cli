@@ -37,8 +37,11 @@ public sealed class GltfBufferWriter
             _writer.Write(value.X);
             _writer.Write(value.Y);
             _writer.Write(value.Z);
-            min = Vector3.Min(min, value);
-            max = Vector3.Max(max, value);
+            if (includeMinMax)
+            {
+                min = Vector3.Min(min, value);
+                max = Vector3.Max(max, value);
+            }
         }
 
         var bufferView = AddBufferView(byteOffset, values.Count * 3 * sizeof(float), target);
@@ -100,8 +103,11 @@ public sealed class GltfBufferWriter
         foreach (var value in values)
         {
             _writer.Write(value);
-            min = MathF.Min(min, value);
-            max = MathF.Max(max, value);
+            if (includeMinMax)
+            {
+                min = MathF.Min(min, value);
+                max = MathF.Max(max, value);
+            }
         }
 
         var bufferView = AddBufferView(byteOffset, values.Count * sizeof(float), target);
@@ -141,15 +147,19 @@ public sealed class GltfBufferWriter
 
         Align(4);
         var byteOffset = checked((int)_writer.BaseStream.Position);
+        var min = uint.MaxValue;
+        var max = uint.MinValue;
         foreach (var index in indices)
         {
             _writer.Write(index);
+            min = Math.Min(min, index);
+            max = Math.Max(max, index);
         }
 
         var bufferView = AddBufferView(byteOffset, indices.Count * sizeof(uint), ElementArrayBufferTarget);
         var accessor = CreateAccessor(bufferView, UnsignedIntComponentType, indices.Count, "SCALAR");
-        accessor["min"] = new[] { indices.Count == 0 ? 0L : indices.Min(index => (long)index) };
-        accessor["max"] = new[] { indices.Count == 0 ? 0L : indices.Max(index => (long)index) };
+        accessor["min"] = new[] { indices.Count == 0 ? 0L : (long)min };
+        accessor["max"] = new[] { indices.Count == 0 ? 0L : (long)max };
         return AddAccessor(accessor);
     }
 

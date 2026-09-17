@@ -65,6 +65,7 @@ declare global {
                 _items?: unknown[];
                 _size?: number;
             }, type?: unknown): number;
+            type(elementType: unknown, rank?: number, array?: unknown[]): unknown;
         };
         IO: {
             IOException: ExceptionConstructor;
@@ -82,9 +83,20 @@ declare global {
                 };
             };
         };
+        Numerics: {
+            Vector3: {
+                prototype: {
+                    X: number;
+                    Y: number;
+                    Z: number;
+                    $clone(to?: { X: number; Y: number; Z: number }): { X: number; Y: number; Z: number };
+                };
+            };
+        };
     };
     var Transpose: {
         unbox<T>(value: T | Boxed<T>, noClone?: boolean): T;
+        getHashCode(value: unknown, safe?: boolean, deep?: boolean): number;
         Int: {
             check(value: number, type: unknown): number;
             trunc(value: number): number;

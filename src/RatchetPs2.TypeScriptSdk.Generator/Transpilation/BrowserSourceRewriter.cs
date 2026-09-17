@@ -66,6 +66,20 @@ internal sealed class BrowserSourceRewriter(SemanticModel model, HashSet<Microso
                 .WithExpressionBody(null)
                 .WithSemicolonToken(default);
         }
+        if (symbol?.ContainingType.ToDisplayString() == "RatchetPs2.Core.Textures.TextureConverter" &&
+            symbol.Name == "AnalyzeAlpha")
+        {
+            var method = (MethodDeclarationSyntax)base.VisitMethodDeclaration(node)!;
+            return method.WithBody((BlockSyntax)SyntaxFactory.ParseStatement("""
+                {
+                    global::RatchetPs2.JavaScript.Guards.ThrowIfNull(image, "image");
+                    var alpha = global::RatchetPs2.JavaScript.ByteTextures.AnalyzeAlpha(image.PixelData);
+                    return new global::RatchetPs2.Core.Textures.Png.TextureAlphaInfo(alpha[0], alpha[1], alpha[2] != 0);
+                }
+                """))
+                .WithExpressionBody(null)
+                .WithSemicolonToken(default);
+        }
         if (symbol?.ContainingType.ToDisplayString() == "RatchetPs2.Core.Wad.WadDecompressor" &&
             symbol.Name == "Decompress" && symbol.Parameters is [{ Type: IArrayTypeSymbol { ElementType.SpecialType: SpecialType.System_Byte } }])
         {

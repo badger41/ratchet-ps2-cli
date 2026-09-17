@@ -28,9 +28,13 @@ export const BrowserWad = {
             if (cursor + count > end || cursor < payloadStart)
                 throw new RatchetPs2.JavaScript.InvalidDataException('Unexpected end of compressed WAD buffer.');
             ensure(count);
-            for (let i = 0; i < count; i++)
-                destination[length++] = source[cursor + i];
+            if (source instanceof Uint8Array)
+                destination.set(source.subarray(cursor, cursor + count), length);
+            else
+                for (let index = 0; index < count; index++)
+                    destination[length + index] = source[cursor + index];
             cursor += count;
+            length += count;
         }
         function match(offset: number, count: number) {
             if (count === 1)

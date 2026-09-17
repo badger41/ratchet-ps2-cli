@@ -97,7 +97,9 @@ export const FloatMath = {
 };
 export const ReadOnlyListCompatibility = {
     Value<T>(value: T | Boxed<T>): T {
-        return Transpose.unbox(value);
+        return value && typeof value === 'object' && '$boxed' in value
+            ? Transpose.unbox(value)
+            : value as T;
     },
 };
 export const SortedDictionary = {

@@ -30,6 +30,9 @@ namespace RatchetPs2.JavaScript
 
     public static class ByteTextures
     {
+        [Transpose.Template("Browser.ByteTextures.AnalyzeAlpha({pixels})")]
+        public static extern byte[] AnalyzeAlpha(byte[] pixels);
+
         [Transpose.Template("Browser.ByteTextures.DecodeIndexed8({pixels}, {palette}, {width}, {pixelCount}, {swizzled}, {decodePaletteIndexes})")]
         public static extern byte[] DecodeIndexed8(
             byte[] pixels,

@@ -226,13 +226,18 @@ internal static class TieGltfNormalBuilder
         TieGltfSourceNormalState[] sourceIndexStates)
     {
         var packetUploadLayouts = TieGltfNormalRemapTargetResolver.BuildPacketUploadLayouts(tie, topology);
-        var recipesByTargetSlot = tie.RgbaRemapOperations
-            .Where(operation => operation.LodIndex == topology.LodIndex)
-            .OrderBy(operation => operation.GroupIndex)
-            .ThenBy(operation => operation.Offset)
-            .ThenBy(operation => operation.OperationIndex)
-            .GroupBy(operation => operation.TargetCacheSlot)
-            .ToDictionary(group => group.Key, group => group.Last());
+        var recipesByTargetSlot = new Dictionary<int, TieRgbaRemapOperation>();
+        foreach (var operation in tie.RgbaRemapOperations)
+        {
+            if (operation.LodIndex != topology.LodIndex
+                || recipesByTargetSlot.TryGetValue(operation.TargetCacheSlot, out var current)
+                && CompareRecipeOrder(operation, current) < 0)
+            {
+                continue;
+            }
+
+            recipesByTargetSlot[operation.TargetCacheSlot] = operation;
+        }
         var normalCount = 0;
         var constantColorCount = 0;
         var unresolvedCount = 0;
@@ -326,6 +331,14 @@ internal static class TieGltfNormalBuilder
         }
 
         return new TieGltfLightingRecipeNormalApplyResult(normalCount, constantColorCount, unresolvedCount);
+
+        static int CompareRecipeOrder(TieRgbaRemapOperation left, TieRgbaRemapOperation right)
+        {
+            var comparison = left.GroupIndex.CompareTo(right.GroupIndex);
+            if (comparison != 0) return comparison;
+            comparison = left.Offset.CompareTo(right.Offset);
+            return comparison != 0 ? comparison : left.OperationIndex.CompareTo(right.OperationIndex);
+        }
     }
 
     private static int ApplyDuplicatePositionExactNormals(

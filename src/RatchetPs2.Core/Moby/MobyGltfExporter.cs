@@ -2527,7 +2527,7 @@ public static partial class MobyGltfExporter
             currentStrip.Indices.Add((uint)decoded);
         }
 
-        var seenTriangles = new HashSet<string>(StringComparer.Ordinal);
+        var seenTriangles = new HashSet<GeometricTriangleKey>();
         for (var stripIndex = 0; stripIndex < strips.Count; stripIndex++)
         {
             var strip = strips[stripIndex];
@@ -2637,7 +2637,7 @@ public static partial class MobyGltfExporter
 
     private static TriangleAppendResult TryAppendTriangle(
         List<uint> indices,
-        HashSet<string> seenTriangles,
+        HashSet<GeometricTriangleKey> seenTriangles,
         uint i0,
         uint i1,
         uint i2,
@@ -2671,7 +2671,7 @@ public static partial class MobyGltfExporter
         return TriangleAppendResult.Added;
     }
 
-    private static string BuildGeometricTriangleKey(Vector3 a, Vector3 b, Vector3 c)
+    private static GeometricTriangleKey BuildGeometricTriangleKey(Vector3 a, Vector3 b, Vector3 c)
     {
         var ax = BitConverter.SingleToInt32Bits(MathF.Round(a.X, 5));
         var ay = BitConverter.SingleToInt32Bits(MathF.Round(a.Y, 5));
@@ -2702,8 +2702,19 @@ public static partial class MobyGltfExporter
             (az, bz) = (bz, az);
         }
 
-        return $"{ax},{ay},{az}|{bx},{by},{bz}|{cx},{cy},{cz}";
+        return new GeometricTriangleKey(ax, ay, az, bx, by, bz, cx, cy, cz);
     }
+
+    private readonly record struct GeometricTriangleKey(
+        int Ax,
+        int Ay,
+        int Az,
+        int Bx,
+        int By,
+        int Bz,
+        int Cx,
+        int Cy,
+        int Cz);
 
     private static bool PositionKeyGreater(
         int ax,
@@ -2918,9 +2929,13 @@ public static partial class MobyGltfExporter
     {
         Align(writer, 4);
         var indexByteOffset = checked((int)writer.BaseStream.Position);
+        var min = uint.MaxValue;
+        var max = uint.MinValue;
         foreach (var index in indices)
         {
             writer.Write(index);
+            min = Math.Min(min, index);
+            max = Math.Max(max, index);
         }
 
         var indexBufferView = bufferViews.Count;
@@ -2940,8 +2955,8 @@ public static partial class MobyGltfExporter
             componentType = 5125,
             count = indices.Count,
             type = "SCALAR",
-            min = new[] { indices.Count == 0 ? 0L : indices.Min(i => (long)i) },
-            max = new[] { indices.Count == 0 ? 0L : indices.Max(i => (long)i) }
+            min = new[] { indices.Count == 0 ? 0L : (long)min },
+            max = new[] { indices.Count == 0 ? 0L : (long)max }
         });
 
         return indexAccessor;

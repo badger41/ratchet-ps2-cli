@@ -6,27 +6,100 @@ export function installRuntime(): void {
             sourceOffset > source.length - length || destinationOffset > destination.length - length)
             return originalArrayCopy(source, sourceOffset, destination, destinationOffset, length);
         if (destination instanceof Uint8Array && (source instanceof Uint8Array || Array.isArray(source))) {
-            destination.set(source.slice(sourceOffset, sourceOffset + length) as number[] | Uint8Array, destinationOffset);
+            destination.set((source instanceof Uint8Array
+                ? source.subarray(sourceOffset, sourceOffset + length)
+                : source.slice(sourceOffset, sourceOffset + length)) as number[] | Uint8Array, destinationOffset);
             return;
         }
         if ((Array.isArray(source) || source instanceof Uint8Array) && Array.isArray(destination)) {
-            const values = source.slice(sourceOffset, sourceOffset + length);
-            for (let offset = 0; offset < length; offset += 8192) {
-                const count = Math.min(8192, length - offset);
-                destination.splice(destinationOffset + offset, count, ...values.slice(offset, offset + count));
-            }
+            if (source === destination)
+                destination.copyWithin(destinationOffset, sourceOffset, sourceOffset + length);
+            else
+                for (let index = 0; index < length; index++)
+                    destination[destinationOffset + index] = source[sourceOffset + index];
             return;
         }
         originalArrayCopy(source, sourceOffset, destination, destinationOffset, length);
+    };
+    const originalArrayType = globalThis.System.Array.type;
+    const arrayTypes = new Map<number, Map<unknown, unknown>>();
+    globalThis.System.Array.type = (elementType, rank = 1, array) => {
+        rank ||= 1;
+        let rankTypes = arrayTypes.get(rank);
+        if (!rankTypes) arrayTypes.set(rank, rankTypes = new Map());
+        let type = rankTypes.get(elementType);
+        if (type === undefined) {
+            type = originalArrayType(elementType, rank);
+            rankTypes.set(elementType, type);
+        }
+        if (array) {
+            (array as unknown[] & { $type?: unknown }).$type = type;
+            return array;
+        }
+        return type;
+    };
+    const originalHashCode = globalThis.Transpose.getHashCode;
+    const hashView = new DataView(new ArrayBuffer(8));
+    globalThis.Transpose.getHashCode = (value, safe, deep) => {
+        if (value && typeof value === 'object' &&
+            (value as { constructor?: { $kind?: string } }).constructor?.$kind === 'struct' &&
+            typeof (value as { getHashCode?: unknown }).getHashCode === 'function')
+            return (value as { getHashCode(): number }).getHashCode();
+        if (typeof value === 'number') {
+            if (value === 0 || Number.isInteger(value))
+                return value;
+            if (Number.isNaN(value))
+                return 0x7ff80000;
+            hashView.setFloat64(0, value, true);
+            return hashView.getInt32(0, true) ^ hashView.getInt32(4, true);
+        }
+        if (typeof value === 'boolean')
+            return value ? 1 : 0;
+        if (typeof value === 'string') {
+            let hash = 0;
+            for (let index = 0; index < value.length; index++)
+                hash = Math.imul(31, hash) + value.charCodeAt(index) | 0;
+            return hash;
+        }
+        return originalHashCode(value, safe, deep);
     };
     const originalArrayCount = globalThis.System.Array.getCount;
     globalThis.System.Array.getCount = (value, type) => value && Array.isArray(value._items) && Number.isInteger(value._size)
         ? value._size!
         : originalArrayCount(value, type);
+    const vector3 = globalThis.System.Numerics.Vector3;
+    vector3.prototype.$clone = function (to) {
+        const copy = to ?? Object.create(vector3.prototype);
+        copy.X = this.X;
+        copy.Y = this.Y;
+        copy.Z = this.Z;
+        return copy;
+    };
     const originalRuntimeArray = globalThis.TransposeR.array;
-    globalThis.TransposeR.array = (length, value) => typeof value !== 'function' && (value === null || typeof value !== 'object')
-        ? new Array(length).fill(value)
-        : originalRuntimeArray(length, value);
+    globalThis.TransposeR.array = (length, value) => {
+        if (typeof value !== 'function' && (value === null || typeof value !== 'object'))
+            return new Array(length).fill(value);
+        const clone = value && typeof value === 'object' && (value as { $clone?: unknown }).$clone;
+        if (typeof clone !== 'function')
+            return originalRuntimeArray(length, value);
+        const result = new Array(length);
+        const prototype = Object.getPrototypeOf(value);
+        if ((value as { constructor?: { $$fullname?: string } }).constructor?.$$fullname?.startsWith('System.Collections.Generic.Dictionary`2+Entry')) {
+            const entry = value as { hashCode: number; next: number; key: unknown; value: unknown };
+            for (let index = 0; index < length; index++) {
+                const copy = Object.create(prototype);
+                copy.hashCode = entry.hashCode;
+                copy.next = entry.next;
+                copy.key = entry.key;
+                copy.value = entry.value;
+                result[index] = copy;
+            }
+            return result;
+        }
+        for (let index = 0; index < length; index++)
+            result[index] = clone.call(value, Object.create(prototype));
+        return result;
+    };
     globalThis.System.IO.MemoryStream.prototype.EnsureCapacity = function (value) {
         if (value < 0)
             throw new globalThis.System.IO.IOException.$ctor1('IO.IO_StreamTooLong');
@@ -37,7 +110,9 @@ export function installRuntime(): void {
             capacity = value > 2147483591 ? value : 2147483591;
         const buffer = new Uint8Array(capacity);
         if (this._length > 0)
-            buffer.set(this._buffer.slice(0, this._length));
+            buffer.set(this._buffer instanceof Uint8Array
+                ? this._buffer.subarray(0, this._length)
+                : this._buffer.slice(0, this._length));
         this._buffer = buffer;
         this._capacity = capacity;
         return true;
@@ -68,7 +143,9 @@ export function installRuntime(): void {
         const source = buffer.__ratchetBytes;
         const start = (buffer.__ratchetStart || 0) + offset;
         if (this._buffer instanceof Uint8Array) {
-            const values = source ? source.slice(start, start + count)
+            const values = source ? (source instanceof Uint8Array
+                ? source.subarray(start, start + count)
+                : source.slice(start, start + count))
                 : buffer instanceof Uint8Array ? buffer.subarray(offset, offset + count)
                     : buffer.slice(offset, offset + count);
             this._buffer.set(values, this._position);
