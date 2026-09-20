@@ -17,4 +17,6 @@ public sealed record UyaGameplayBlock(
     string SemanticName,
     byte[] PayloadBytes,
     UyaLevelSettings? LevelSettings = null,
-    UyaMobyInstances? MobyInstances = null);
+    UyaMobyInstances? MobyInstances = null,
+    UyaTieInstances? TieInstances = null,
+    UyaShrubInstances? ShrubInstances = null);

@@ -30,6 +30,13 @@ public static class UyaGameplayBlockReader
                 mobyInstances = parsedMobyInstances;
             }
 
+            UyaTieInstances? tieInstances = null;
+            if (block.SemanticName == "tie_instances")
+                UyaTieInstancesReader.TryRead(block.PayloadBytes, out tieInstances);
+            UyaShrubInstances? shrubInstances = null;
+            if (block.SemanticName == "shrub_instances")
+                UyaShrubInstancesReader.TryRead(block.PayloadBytes, out shrubInstances);
+
             return new UyaGameplayBlock(
                 block.Index,
                 block.HeaderOffset,
@@ -37,7 +44,9 @@ public static class UyaGameplayBlockReader
                 block.SemanticName,
                 block.PayloadBytes,
                 levelSettings,
-                mobyInstances);
+                mobyInstances,
+                tieInstances,
+                shrubInstances);
         }).ToArray();
 
         return new UyaGameplayBlocks(

@@ -50,6 +50,7 @@ ValidateUyaStandaloneLevelDataUnpacking();
 ValidateUyaStandaloneGameplayUnpacking();
 ValidateUyaCustomMapZipUnpacking();
 ValidateUyaGameplayTypedParsing();
+ValidateUyaStaticInstanceParsing();
 ValidateGameplayGeometryParsing();
 ValidateUyaAssetRenderPackageBuild();
 ValidateChunkTfragAssetRenderPackageWhenAvailable();
@@ -983,6 +984,51 @@ static void ValidateUyaGameplayTypedParsing()
     var gcSettings = GcLevelSettingsReader.Read(gcLevelSettingsBytes);
     Expect(gcSettings.BackgroundColor == new GcRgb96(57, 65, 50), "GC level settings background color should be parsed");
     Expect(gcSettings.FogFarDistance == 179200, "GC level settings fog distance should be parsed");
+}
+
+static void ValidateUyaStaticInstanceParsing()
+{
+    var ties = new byte[UyaTieInstancesReader.HeaderSize + UyaTieInstancesReader.RecordSize + 2];
+    WriteInt32(ties, 0, 1);
+    WriteInt32(ties, 4, 2);
+    var tie = UyaTieInstancesReader.HeaderSize;
+    WriteInt32(ties, tie, 0x2132);
+    WriteSingle(ties, tie + 0x10, 2);
+    WriteSingle(ties, tie + 0x24, 3);
+    WriteSingle(ties, tie + 0x38, 4);
+    WriteSingle(ties, tie + 0x40, 10);
+    WriteSingle(ties, tie + 0x44, 20);
+    WriteSingle(ties, tie + 0x48, 30);
+    ties[^2] = 0xaa;
+    ties[^1] = 0xbb;
+
+    var shrubs = new byte[UyaShrubInstancesReader.HeaderSize + UyaShrubInstancesReader.RecordSize];
+    WriteInt32(shrubs, 0, 1);
+    var shrub = UyaShrubInstancesReader.HeaderSize;
+    WriteInt32(shrubs, shrub, 0x20f0);
+    WriteSingle(shrubs, shrub + 4, 256);
+    WriteSingle(shrubs, shrub + 0x10, 1);
+    WriteSingle(shrubs, shrub + 0x24, 1);
+    WriteSingle(shrubs, shrub + 0x38, 1);
+    WriteSingle(shrubs, shrub + 0x40, -5);
+
+    var gameplay = UyaGameplayBlockReader.ReadCore(BuildGameplayData(
+        UyaGameplayBlockReader.CoreHeaderSize,
+        (0x34, ties),
+        (0x40, shrubs)));
+    var parsedTies = gameplay.Blocks.Single(block => block.SemanticName == "tie_instances").TieInstances!;
+    var parsedShrubs = gameplay.Blocks.Single(block => block.SemanticName == "shrub_instances").ShrubInstances!;
+
+    Expect(parsedTies.Count == 1 && parsedTies.HeaderWords.SequenceEqual([2, 0, 0]), "UYA tie instance header should be parsed");
+    Expect(parsedTies.Instances[0].ClassId == 0x2132, "UYA tie class should be parsed");
+    Expect(parsedTies.Instances[0].Transform.BasisX.X == 2, "UYA tie transform should be parsed");
+    Expect(parsedTies.Instances[0].Transform.Position == new UyaVector4(10, 20, 30, 0), "UYA tie position should be parsed");
+    Expect(parsedTies.Instances[0].RawBytes.Length == UyaTieInstancesReader.RecordSize, "UYA tie raw record should be retained");
+    Expect(parsedTies.TrailingBytes.SequenceEqual(new byte[] { 0xaa, 0xbb }), "UYA tie trailing bytes should be retained");
+    Expect(parsedShrubs.Count == 1 && parsedShrubs.Instances[0].ClassId == 0x20f0, "UYA shrub class should be parsed");
+    Expect(parsedShrubs.Instances[0].DrawDistance == 256, "UYA shrub draw distance should be parsed");
+    Expect(parsedShrubs.Instances[0].Transform.Position.X == -5, "UYA shrub position should be parsed");
+    ExpectThrows<InvalidDataException>(() => UyaTieInstancesReader.Read(ties.AsSpan(0, ties.Length - 3)));
 }
 
 static void ValidateGameplayGeometryParsing()
