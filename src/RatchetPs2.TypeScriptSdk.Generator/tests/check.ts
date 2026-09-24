@@ -3,7 +3,8 @@ import {
   RatchetPs2_Games_UYA_Gameplay_UyaLevelSettings as UyaLevelSettings,
   RatchetPs2_Core_IO_BinarySpanReader as binary,
   RatchetPs2_Core_Games_GameId as gameId,
-  RatchetPs2_Sdk_FrontendMapPackageBuilder as maps
+  RatchetPs2_Sdk_FrontendMapPackageBuilder as maps,
+  RatchetPs2_Games_UYA_Builders_UyaFrontendMapPackageBuilder as uyaMaps
 } from '../bin/probe/index.js';
 const parseUyaLevelSettings = uya.read;
 
@@ -29,6 +30,6 @@ binary.readInt32LittleEndian({ length: 4, 0: 1 }, 0);
 const packageResult = maps.buildLevelWad(new Uint8Array(), gameId.uya);
 const packageBytes: Uint8Array = packageResult.packedBytes;
 const firstPackagePath: string = packageResult.entries[0].path;
-maps.buildUyaCustomMapZip(new ArrayBuffer(0));
+uyaMaps.buildCustomMapZip(new ArrayBuffer(0));
 // @ts-expect-error Map entry points accept binary buffers, not untyped number arrays.
-maps.buildUyaCustomMapZip([1, 2, 3]);
+uyaMaps.buildCustomMapZip([1, 2, 3]);

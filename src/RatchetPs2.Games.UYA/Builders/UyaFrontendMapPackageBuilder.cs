@@ -4,7 +4,7 @@ using RatchetPs2.Core.Wad.Models;
 using RatchetPs2.Games.DL.Level;
 using RatchetPs2.Games.UYA.Level;
 
-namespace RatchetPs2.Sdk;
+namespace RatchetPs2.Games.UYA.Builders;
 
 public static class UyaFrontendMapPackageBuilder
 {
@@ -24,7 +24,7 @@ public static class UyaFrontendMapPackageBuilder
         return BuildFiles(0, package.Files);
     }
 
-    public static PackedFilePackage BuildLevelWadPart(byte[] levelWadBytes, DlLevelAssetGroup assetGroup)
+    public static PackedFilePackage BuildLevelWadPart(byte[] levelWadBytes, FrontendMapAssetGroup assetGroup)
     {
         ArgumentNullException.ThrowIfNull(levelWadBytes);
 
@@ -32,7 +32,7 @@ public static class UyaFrontendMapPackageBuilder
         return BuildPart(package.LevelWad.Level, package.Files, assetGroup);
     }
 
-    public static PackedFilePackage BuildCustomMapZipPart(byte[] zipBytes, DlLevelAssetGroup assetGroup)
+    public static PackedFilePackage BuildCustomMapZipPart(byte[] zipBytes, FrontendMapAssetGroup assetGroup)
     {
         ArgumentNullException.ThrowIfNull(zipBytes);
 
@@ -41,16 +41,16 @@ public static class UyaFrontendMapPackageBuilder
     }
 
     private static PackedFilePackage BuildFiles(int levelIndex, IReadOnlyList<PackedFile> sourceFiles)
-        => BuildFiles(levelIndex, sourceFiles, DlLevelAssetGroup.All);
+        => BuildFiles(levelIndex, sourceFiles, FrontendMapAssetGroup.All);
 
     private static PackedFilePackage BuildPart(
         int levelIndex,
         IReadOnlyList<PackedFile> sourceFiles,
-        DlLevelAssetGroup assetGroup)
+        FrontendMapAssetGroup assetGroup)
     {
-        if (assetGroup is DlLevelAssetGroup.All or DlLevelAssetGroup.Common)
+        if (assetGroup is FrontendMapAssetGroup.All or FrontendMapAssetGroup.Common)
         {
-            return assetGroup == DlLevelAssetGroup.All
+            return assetGroup == FrontendMapAssetGroup.All
                 ? BuildFiles(levelIndex, sourceFiles)
                 : BuildFiles(levelIndex, sourceFiles, assetGroup);
         }
@@ -70,7 +70,7 @@ public static class UyaFrontendMapPackageBuilder
     private static PackedFilePackage BuildFiles(
         int levelIndex,
         IReadOnlyList<PackedFile> sourceFiles,
-        DlLevelAssetGroup assetGroup)
+        FrontendMapAssetGroup assetGroup)
     {
         var files = UyaLevelWadRenderPackageBuilder.BuildFiles(
             levelIndex,

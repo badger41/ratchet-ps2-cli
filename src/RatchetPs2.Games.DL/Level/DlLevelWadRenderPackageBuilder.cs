@@ -45,15 +45,6 @@ public sealed record DlLevelWadRenderPackageBuildOptions
     public LevelAssetProfile AssetProfile { get; init; } = LevelAssetProfile.Default;
 }
 
-public enum DlLevelAssetGroup
-{
-    All,
-    Common,
-    Terrain,
-    Mobys,
-    Ties
-}
-
 public static class DlLevelWadRenderPackageBuilder
 {
     private const string SkyboxSourcePath = "skybox/sky.bin";
@@ -74,14 +65,14 @@ public static class DlLevelWadRenderPackageBuilder
     public static IReadOnlyList<PackedFile> BuildFiles(
         ReadOnlySpan<byte> levelWadBytes,
         DlLevelWadRenderPackageBuildOptions? options = null,
-        DlLevelAssetGroup assetGroup = DlLevelAssetGroup.All)
+        FrontendMapAssetGroup assetGroup = FrontendMapAssetGroup.All)
     {
-        if ((uint)assetGroup > (uint)DlLevelAssetGroup.Ties)
+        if ((uint)assetGroup > (uint)FrontendMapAssetGroup.Ties)
         {
             throw new ArgumentOutOfRangeException(nameof(assetGroup));
         }
         options ??= DlLevelWadRenderPackageBuildOptions.Default;
-        var buildCommon = assetGroup is DlLevelAssetGroup.All or DlLevelAssetGroup.Common;
+        var buildCommon = assetGroup is FrontendMapAssetGroup.All or FrontendMapAssetGroup.Common;
         var totalStart = Stopwatch.GetTimestamp();
         var timings = new List<RenderPackageTiming>();
         var levelWad = DlLevelWadReader.ReadLevelWad(levelWadBytes);
@@ -151,7 +142,7 @@ public static class DlLevelWadRenderPackageBuilder
             .Select(entry => entry.ClassId)
             .ToHashSet();
 
-        if (buildCommon || assetGroup == DlLevelAssetGroup.Mobys)
+        if (buildCommon || assetGroup == FrontendMapAssetGroup.Mobys)
         {
             for (var missionIndex = 0; missionIndex < levelWad.GameplayMissionData.Count; missionIndex++)
             {
@@ -163,7 +154,7 @@ public static class DlLevelWadRenderPackageBuilder
                 {
                     AddFile(files, $"missions/mission_{missionIndex}/gameplay.bin", gameplay);
                 }
-                if (assetGroup is not (DlLevelAssetGroup.All or DlLevelAssetGroup.Mobys)
+                if (assetGroup is not (FrontendMapAssetGroup.All or FrontendMapAssetGroup.Mobys)
                     || !options.IncludeMissionMobys)
                 {
                     continue;
@@ -185,7 +176,7 @@ public static class DlLevelWadRenderPackageBuilder
             assetsStart,
             $"{files.Count} files so far");
 
-        if (assetGroup != DlLevelAssetGroup.All)
+        if (assetGroup != FrontendMapAssetGroup.All)
         {
             AddJsonFile(files, "assets/render_manifest.json", manifest);
         }
@@ -235,12 +226,12 @@ public static class DlLevelWadRenderPackageBuilder
         DlLevelWadRenderPackageBuildOptions? options = null,
         IReadOnlyDictionary<int, byte[]>? chunkWads = null,
         IReadOnlyDictionary<int, Vector3>? skyRotationDeltasRadiansPerFrame = null,
-        DlLevelAssetGroup assetGroup = DlLevelAssetGroup.All)
+        FrontendMapAssetGroup assetGroup = FrontendMapAssetGroup.All)
     {
         ArgumentNullException.ThrowIfNull(headerBytes);
         ArgumentNullException.ThrowIfNull(paletteBytes);
         ArgumentNullException.ThrowIfNull(assetBytes);
-        if ((uint)assetGroup > (uint)DlLevelAssetGroup.Ties)
+        if ((uint)assetGroup > (uint)FrontendMapAssetGroup.Ties)
         {
             throw new ArgumentOutOfRangeException(nameof(assetGroup));
         }
@@ -302,7 +293,7 @@ public static class DlLevelWadRenderPackageBuilder
         DlLevelWadRenderPackageBuildOptions options,
         IReadOnlyDictionary<int, byte[]>? chunkWads,
         IReadOnlyDictionary<int, Vector3>? skyRotationDeltasRadiansPerFrame,
-        DlLevelAssetGroup assetGroup)
+        FrontendMapAssetGroup assetGroup)
     {
         var header = DlAssetReader.ReadHeader(headerBytes);
         var assetProfile = options.AssetProfile;
@@ -314,7 +305,7 @@ public static class DlLevelWadRenderPackageBuilder
                 header.GsRamCount
                     + (assetProfile.IncludeExtraMipmapDefinitions ? header.ExtraMipmapCount : 0)));
         var gsStashDefinitions = allMipmapDefinitions.Skip(header.GsRamCount).ToArray();
-        var buildCommon = assetGroup is DlLevelAssetGroup.All or DlLevelAssetGroup.Common;
+        var buildCommon = assetGroup is FrontendMapAssetGroup.All or FrontendMapAssetGroup.Common;
         IReadOnlyDictionary<string, string> environmentTextures = buildCommon
             ? BuildEnvironmentTextures(files, header, paletteBytes, gsStashDefinitions)
             : new Dictionary<string, string>();
@@ -359,7 +350,7 @@ public static class DlLevelWadRenderPackageBuilder
                 SummarizeRoutes(gltfExports, route => route.Family == "skybox"));
         }
 
-        if (assetGroup is DlLevelAssetGroup.All or DlLevelAssetGroup.Terrain)
+        if (assetGroup is FrontendMapAssetGroup.All or FrontendMapAssetGroup.Terrain)
         {
             var tfragStart = Stopwatch.GetTimestamp();
             var tfragTimings = new List<RenderPackageTiming>();
@@ -405,7 +396,7 @@ public static class DlLevelWadRenderPackageBuilder
         }
 
         var mobyEntries = new List<MobyExportManifestEntry>();
-        if (assetGroup is DlLevelAssetGroup.All or DlLevelAssetGroup.Mobys)
+        if (assetGroup is FrontendMapAssetGroup.All or FrontendMapAssetGroup.Mobys)
         {
             var mobyStart = Stopwatch.GetTimestamp();
             var mobyRoutes = BuildMobyGltfs(
@@ -431,7 +422,7 @@ public static class DlLevelWadRenderPackageBuilder
                 SummarizeRoutes(mobyRoutes));
         }
 
-        if (assetGroup is DlLevelAssetGroup.All or DlLevelAssetGroup.Ties)
+        if (assetGroup is FrontendMapAssetGroup.All or FrontendMapAssetGroup.Ties)
         {
             var tieStart = Stopwatch.GetTimestamp();
             var tieRouteStart = gltfExports.Count;

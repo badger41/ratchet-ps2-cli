@@ -77,7 +77,7 @@ public static class UyaLooseLevelWadExtractor
         return bytes;
     }
 
-    private static int CalculatePrimarySectorCount(UyaLevelWad levelWad)
+    public static int CalculatePrimarySectorCount(UyaLevelWad levelWad)
     {
         var sectorCount = AlignToSectorCount(levelWad.HeaderSize);
 

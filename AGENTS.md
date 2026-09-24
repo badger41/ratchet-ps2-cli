@@ -126,6 +126,10 @@ Avoid:
 - Game IDs use abbreviated uppercase names: `RC1`, `GC`, `UYA`, `DL`
 - Per-game project names should match that abbreviation style
 - Commands should remain clearly separated from non-command infrastructure
+- Public `Core` APIs must use game-neutral names, inputs, outputs, and diagnostics; do not remove a game prefix while retaining game-specific assumptions
+- Game-specific archive and disc implementations belong under `RatchetPs2.Games.<GAME>/Builders` and retain that game's prefix
+- Public SDK entry points stay game-neutral and dispatch to the target implementation using `GameId` or equivalent target metadata
+- A per-game frontend builder may remain public in its game project when the TypeScript generator needs it as a package root; desktop consumers should still use the neutral SDK facade
 
 ## Implementation preference
 

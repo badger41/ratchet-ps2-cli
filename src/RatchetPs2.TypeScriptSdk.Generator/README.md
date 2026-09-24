@@ -151,17 +151,18 @@ should select a game/feature-specific root instead; no WASM host is involved:
 import {
   RatchetPs2_Core_Games_GameId as gameId,
   RatchetPs2_Sdk_FrontendMapPackageBuilder as maps,
+  RatchetPs2_Games_UYA_Builders_UyaFrontendMapPackageBuilder as uyaMaps,
 } from './bin/probe/index.js';
 
 const renderPackage = maps.buildLevelWad(wadBytes, gameId.uya);
-const customMapPackage = maps.buildUyaCustomMapZip(zipBytes);
+const customMapPackage = uyaMaps.buildCustomMapZip(zipBytes);
 ```
 
 Map-o-matic imports the matching `bin/frontend-{game}/index.js`; each worker statically
 references only its own generated package. For UYA:
 
 ```ts
-import { RatchetPs2_Sdk_UyaFrontendMapPackageBuilder as maps } from './bin/frontend-uya/index.js';
+import { RatchetPs2_Games_UYA_Builders_UyaFrontendMapPackageBuilder as maps } from './bin/frontend-uya/index.js';
 
 const renderPackage = maps.buildLevelWad(wadBytes);
 const customMapPackage = maps.buildCustomMapZip(zipBytes);

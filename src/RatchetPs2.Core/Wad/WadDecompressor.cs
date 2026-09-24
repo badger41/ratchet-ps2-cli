@@ -1,4 +1,6 @@
+using System.Buffers.Binary;
 using RatchetPs2.Core.IO;
+using RatchetPs2.Core.Wad.Models;
 
 namespace RatchetPs2.Core.Wad;
 
@@ -21,7 +23,12 @@ internal static class WadDecompressor
     private const int CompressedBlockAlignmentBytes = 0x1000;
     private static ReadOnlySpan<byte> WadMagic => "WAD"u8;
 
-    public static byte[] Decompress(Stream stream)
+    public static byte[] Decompress(Stream stream) => Decompress(stream, new(), default);
+
+    public static byte[] Decompress(
+        Stream stream,
+        WadDecompressionOptions options,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(stream);
 
@@ -29,16 +36,23 @@ internal static class WadDecompressor
         {
             throw new ArgumentException("The provided stream must be readable and seekable.", nameof(stream));
         }
+        if (stream.Length > int.MaxValue)
+            throw new InvalidDataException("The compressed WAD stream is too large to read in memory.");
 
+        cancellationToken.ThrowIfCancellationRequested();
         stream.Position = 0;
-        return Decompress(stream.ReadBytesExactly((int)stream.Length));
+        return Decompress(stream.ReadBytesExactly((int)stream.Length), options, cancellationToken);
     }
 
-    public static byte[] Decompress(ReadOnlySpan<byte> source) => Decompress(source.ToArray());
+    public static byte[] Decompress(ReadOnlySpan<byte> source) => Decompress(source, new(), default);
 
-    public static byte[] Decompress(byte[] source)
+    public static byte[] Decompress(
+        ReadOnlySpan<byte> source,
+        WadDecompressionOptions options,
+        CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(source);
+        WadCompression.ValidateOptions(options);
+        cancellationToken.ThrowIfCancellationRequested();
 
         if (source.Length < HeaderSize)
         {
@@ -47,8 +61,8 @@ internal static class WadDecompressor
 
         ValidateWadMagic(source);
 
-        var compressedSize = BitConverter.ToInt32(source, 3);
-        if (compressedSize <= 0 || compressedSize > source.Length)
+        var compressedSize = BinaryPrimitives.ReadInt32LittleEndian(source.Slice(3, sizeof(int)));
+        if (compressedSize < HeaderSize || compressedSize > source.Length)
         {
             throw new InvalidDataException("Compressed WAD size is invalid.");
         }
@@ -56,14 +70,33 @@ internal static class WadDecompressor
         var end = compressedSize;
         var cursor = HeaderSize;
         var payloadStart = HeaderSize;
-        var destination = new List<byte>(compressedSize * 2);
+        var payloadLength = compressedSize - HeaderSize;
+        var ratioLimit = Math.Min(int.MaxValue, (long)payloadLength * options.MaxExpansionRatio);
+        var outputLimit = (int)Math.Min(options.MaxOutputBytes, ratioLimit);
+        var destination = new List<byte>(Math.Min(compressedSize, outputLimit));
 
         while (cursor < end)
         {
-            DecompressPacket(destination, source, ref cursor, payloadStart, end);
+            cancellationToken.ThrowIfCancellationRequested();
+            DecompressPacket(destination, source, ref cursor, payloadStart, end, outputLimit, cancellationToken);
         }
 
         return destination.ToArray();
+    }
+
+    public static byte[] Decompress(byte[] source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        return Decompress(source.AsSpan(), new(), default);
+    }
+
+    public static byte[] Decompress(
+        byte[] source,
+        WadDecompressionOptions options,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        return Decompress(source.AsSpan(), options, cancellationToken);
     }
 
     private static void ValidateWadMagic(ReadOnlySpan<byte> source)
@@ -75,13 +108,20 @@ internal static class WadDecompressor
         }
     }
 
-    private static void DecompressPacket(List<byte> destination, byte[] source, ref int cursor, int payloadStart, int end)
+    private static void DecompressPacket(
+        List<byte> destination,
+        ReadOnlySpan<byte> source,
+        ref int cursor,
+        int payloadStart,
+        int end,
+        int outputLimit,
+        CancellationToken cancellationToken)
     {
         var packetFlag = Read8(source, ref cursor, payloadStart, end);
 
         if (packetFlag < LiteralPacketMaxFlag)
         {
-            HandleLiteralPacket(destination, source, ref cursor, payloadStart, end, packetFlag);
+            HandleLiteralPacket(destination, source, ref cursor, payloadStart, end, packetFlag, outputLimit);
             return;
         }
 
@@ -90,7 +130,8 @@ internal static class WadDecompressor
 
         if (packetFlag < FarMatchPacketMaxFlag)
         {
-            if (TryHandleFarMatchPacket(destination, source, ref cursor, payloadStart, end, packetFlag, out lookbackOffset, out matchLength))
+            if (TryHandleFarMatchPacket(destination, source, ref cursor, payloadStart, end, packetFlag,
+                    cancellationToken, out lookbackOffset, out matchLength))
             {
                 return;
             }
@@ -104,13 +145,13 @@ internal static class WadDecompressor
             HandleSmallMatchPacket(destination, source, ref cursor, payloadStart, end, packetFlag, out lookbackOffset, out matchLength);
         }
 
-        CopyMatch(destination, lookbackOffset, matchLength);
+        CopyMatch(destination, lookbackOffset, matchLength, outputLimit);
 
         var littleLiteralSize = source[cursor - 2] & 0b11;
-        CopyLiteral(destination, source, ref cursor, payloadStart, end, littleLiteralSize);
+        CopyLiteral(destination, source, ref cursor, payloadStart, end, littleLiteralSize, outputLimit);
     }
 
-    private static byte Read8(byte[] source, ref int cursor, int payloadStart, int end)
+    private static byte Read8(ReadOnlySpan<byte> source, ref int cursor, int payloadStart, int end)
     {
         if (cursor >= end || cursor < payloadStart)
         {
@@ -120,13 +161,21 @@ internal static class WadDecompressor
         return source[cursor++];
     }
 
-    private static void CopyLiteral(List<byte> destination, byte[] source, ref int cursor, int payloadStart, int end, int size)
+    private static void CopyLiteral(
+        List<byte> destination,
+        ReadOnlySpan<byte> source,
+        ref int cursor,
+        int payloadStart,
+        int end,
+        int size,
+        int outputLimit)
     {
         if (cursor + size > end || cursor < payloadStart)
         {
             throw new InvalidDataException("Unexpected end of compressed WAD buffer.");
         }
 
+        EnsureOutputCapacity(destination, size, outputLimit);
         for (var i = 0; i < size; i++)
         {
             destination.Add(source[cursor + i]);
@@ -135,13 +184,20 @@ internal static class WadDecompressor
         cursor += size;
     }
 
-    private static void HandleLiteralPacket(List<byte> destination, byte[] source, ref int cursor, int payloadStart, int end, byte packetFlag)
+    private static void HandleLiteralPacket(
+        List<byte> destination,
+        ReadOnlySpan<byte> source,
+        ref int cursor,
+        int payloadStart,
+        int end,
+        byte packetFlag,
+        int outputLimit)
     {
         var literalLength = packetFlag != 0
             ? packetFlag + SmallLiteralBaseLength
             : Read8(source, ref cursor, payloadStart, end) + LargeLiteralBaseLength;
 
-        CopyLiteral(destination, source, ref cursor, payloadStart, end, literalLength);
+        CopyLiteral(destination, source, ref cursor, payloadStart, end, literalLength, outputLimit);
 
         if (cursor < end && source[cursor] < LiteralPacketMaxFlag)
         {
@@ -149,7 +205,16 @@ internal static class WadDecompressor
         }
     }
 
-    private static bool TryHandleFarMatchPacket(List<byte> destination, byte[] source, ref int cursor, int payloadStart, int end, byte packetFlag, out int lookbackOffset, out int matchLength)
+    private static bool TryHandleFarMatchPacket(
+        List<byte> destination,
+        ReadOnlySpan<byte> source,
+        ref int cursor,
+        int payloadStart,
+        int end,
+        byte packetFlag,
+        CancellationToken cancellationToken,
+        out int lookbackOffset,
+        out int matchLength)
     {
         matchLength = packetFlag & 0b111;
         if (matchLength == 0)
@@ -177,11 +242,11 @@ internal static class WadDecompressor
             return false;
         }
 
-        AlignCursorToNextCompressedBlockBoundary(ref cursor, payloadStart, end);
+        AlignCursorToNextCompressedBlockBoundary(ref cursor, payloadStart, end, cancellationToken);
         return true;
     }
 
-    private static void HandleMediumMatchPacket(List<byte> destination, byte[] source, ref int cursor, int payloadStart, int end, byte packetFlag, out int lookbackOffset, out int matchLength)
+    private static void HandleMediumMatchPacket(List<byte> destination, ReadOnlySpan<byte> source, ref int cursor, int payloadStart, int end, byte packetFlag, out int lookbackOffset, out int matchLength)
     {
         matchLength = packetFlag & 0x1f;
         if (matchLength == 0)
@@ -196,14 +261,14 @@ internal static class WadDecompressor
         lookbackOffset = destination.Count - (highOffsetBits * MatchLookbackHighByteStrideBytes) - (lowOffsetBits >> 2) - 1;
     }
 
-    private static void HandleSmallMatchPacket(List<byte> destination, byte[] source, ref int cursor, int payloadStart, int end, byte packetFlag, out int lookbackOffset, out int matchLength)
+    private static void HandleSmallMatchPacket(List<byte> destination, ReadOnlySpan<byte> source, ref int cursor, int payloadStart, int end, byte packetFlag, out int lookbackOffset, out int matchLength)
     {
         var majorLookbackByte = Read8(source, ref cursor, payloadStart, end);
         lookbackOffset = destination.Count - majorLookbackByte * SmallMatchLookbackStrideBytes - ((packetFlag >> 2) & 0b111) - 1;
         matchLength = (packetFlag >> 5) + 1;
     }
 
-    private static void CopyMatch(List<byte> destination, int lookbackOffset, int matchLength)
+    private static void CopyMatch(List<byte> destination, int lookbackOffset, int matchLength, int outputLimit)
     {
         if (matchLength == 1)
         {
@@ -215,21 +280,34 @@ internal static class WadDecompressor
             throw new InvalidDataException("Match packet points outside of the decompressed buffer.");
         }
 
+        EnsureOutputCapacity(destination, matchLength, outputLimit);
         for (var i = 0; i < matchLength; i++)
         {
             destination.Add(destination[lookbackOffset + i]);
         }
     }
 
-    private static void AlignCursorToNextCompressedBlockBoundary(ref int cursor, int payloadStart, int end)
+    private static void AlignCursorToNextCompressedBlockBoundary(
+        ref int cursor,
+        int payloadStart,
+        int end,
+        CancellationToken cancellationToken)
     {
         while (((cursor - payloadStart) % CompressedBlockAlignmentBytes) != 0)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             cursor++;
             if (cursor > end)
             {
                 throw new InvalidDataException("Compressed WAD padding stepped outside the buffer.");
             }
         }
+    }
+
+    private static void EnsureOutputCapacity(List<byte> destination, int additionalBytes, int outputLimit)
+    {
+        if ((long)destination.Count + additionalBytes > outputLimit)
+            throw new InvalidDataException(
+                $"Decompressed WAD exceeds the configured 0x{outputLimit:X}-byte output or expansion limit.");
     }
 }

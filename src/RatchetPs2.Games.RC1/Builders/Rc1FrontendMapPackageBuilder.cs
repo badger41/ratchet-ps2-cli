@@ -3,18 +3,18 @@ using RatchetPs2.Core.Wad.Models;
 using RatchetPs2.Games.DL.Level;
 using RatchetPs2.Games.RC1.Level;
 
-namespace RatchetPs2.Sdk;
+namespace RatchetPs2.Games.RC1.Builders;
 
 public static class Rc1FrontendMapPackageBuilder
 {
     public static PackedFilePackage BuildLevelWad(byte[] levelWadBytes)
-        => BuildLevelWadPart(levelWadBytes, DlLevelAssetGroup.All);
+        => BuildLevelWadPart(levelWadBytes, FrontendMapAssetGroup.All);
 
-    public static PackedFilePackage BuildLevelWadPart(byte[] levelWadBytes, DlLevelAssetGroup assetGroup)
+    public static PackedFilePackage BuildLevelWadPart(byte[] levelWadBytes, FrontendMapAssetGroup assetGroup)
     {
         ArgumentNullException.ThrowIfNull(levelWadBytes);
         var package = Rc1LevelWadUnpacker.Unpack(levelWadBytes);
-        if (assetGroup is not (DlLevelAssetGroup.All or DlLevelAssetGroup.Common))
+        if (assetGroup is not (FrontendMapAssetGroup.All or FrontendMapAssetGroup.Common))
         {
             return PackedFilePackageBuilder.Pack(BuildAssetFiles(
                 package.LevelWad.Level,
@@ -25,13 +25,13 @@ public static class Rc1FrontendMapPackageBuilder
             package.LevelWad.Level,
             package.Files,
             assets => BuildAssetFiles(package.LevelWad.Level, assets, assetGroup));
-        return FrontendMapPackage.PackWithGameplay(files, package.Files);
+        return PackedFilePackageBuilder.Pack(files.Concat(package.Files.Where(IsGameplayMetadata)).ToArray());
     }
 
     private static IReadOnlyList<PackedFile> BuildAssetFiles(
         int levelIndex,
         Rc1LevelAssetSourceFiles assets,
-        DlLevelAssetGroup assetGroup) =>
+        FrontendMapAssetGroup assetGroup) =>
         DlLevelWadRenderPackageBuilder.BuildAssetFiles(
             GameId.RC1,
             levelIndex,
@@ -43,4 +43,8 @@ public static class Rc1FrontendMapPackageBuilder
                 AssetProfile = Rc1LevelAssetProfile.Default
             },
             assetGroup: assetGroup);
+
+    private static bool IsGameplayMetadata(PackedFile file) =>
+        file.Path == "gameplay/gameplay_core.bin"
+        || file.Path.StartsWith("gameplay/core/", StringComparison.Ordinal);
 }

@@ -12,7 +12,7 @@ public static class PifReader
                 header => checked(header.USize * header.VSize)),
             [0x14] = new(
                 PifTextureEncoding.Indexed4,
-                header => checked((header.USize * header.VSize) / 2)),
+                header => checked((header.USize * header.VSize + 1) / 2)),
         };
 
     public static PifTextureData Read(Stream stream)

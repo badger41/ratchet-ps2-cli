@@ -31,14 +31,16 @@ internal static class WadCompressor
     private static ReadOnlySpan<byte> WadMagic => "WAD"u8;
     private static ReadOnlySpan<byte> DefaultHeaderTag => "RACCLI001"u8;
 
-    private sealed class MatchResult
+    private struct MatchResult
     {
         public int LiteralLength { get; set; }
         public int MatchOffset { get; set; }
         public int MatchLength { get; set; }
     }
 
-    public static byte[] Compress(Stream stream)
+    public static byte[] Compress(Stream stream) => Compress(stream, default);
+
+    public static byte[] Compress(Stream stream, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(stream);
 
@@ -46,44 +48,63 @@ internal static class WadCompressor
         {
             throw new ArgumentException("The provided stream must be readable and seekable.", nameof(stream));
         }
+        if (stream.Length > int.MaxValue)
+            throw new InvalidDataException("The input stream is too large to compress in memory.");
 
+        cancellationToken.ThrowIfCancellationRequested();
         stream.Position = 0;
-        return Compress(stream.ReadBytesExactly((int)stream.Length));
+        return Compress(stream.ReadBytesExactly((int)stream.Length), cancellationToken);
     }
 
-    public static byte[] Compress(ReadOnlySpan<byte> source) => Compress(source.ToArray());
+    public static byte[] Compress(ReadOnlySpan<byte> source) => Compress(source, default);
 
-    public static byte[] Compress(byte[] source)
+    public static byte[] Compress(ReadOnlySpan<byte> source, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(source);
-
         var destination = new List<byte>(source.Length / 2 + HeaderSize);
-        Compress(destination, source, DefaultHeaderTag, DefaultThreadCount);
+        Compress(destination, source, DefaultHeaderTag, DefaultThreadCount, cancellationToken);
         return destination.ToArray();
     }
 
-    private static void Compress(List<byte> destination, byte[] source, ReadOnlySpan<byte> muffin, int threadCount)
+    public static byte[] Compress(byte[] source) => Compress(source, default);
+
+    public static byte[] Compress(byte[] source, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        return Compress(source.AsSpan(), cancellationToken);
+    }
+
+    private static void Compress(
+        List<byte> destination,
+        ReadOnlySpan<byte> source,
+        ReadOnlySpan<byte> muffin,
+        int threadCount,
+        CancellationToken cancellationToken)
     {
         var intermediateBuffers = new List<byte>[threadCount];
         for (var index = 0; index < threadCount; index++)
         {
-            intermediateBuffers[index] = new List<byte>();
+            intermediateBuffers[index] = new List<byte>(source.Length / 2);
         }
 
-        CompressIntermediate(intermediateBuffers[0], source, 0, source.Length);
+        CompressIntermediate(intermediateBuffers[0], source, 0, source.Length, cancellationToken);
 
         var headerOffset = destination.Count;
         WriteCompressionHeader(destination, muffin);
 
         foreach (var intermediate in intermediateBuffers)
         {
-            AppendCompressedBuffer(destination, intermediate, headerOffset);
+            AppendCompressedBuffer(destination, intermediate, headerOffset, cancellationToken);
         }
 
         WriteInt32LittleEndian(destination, headerOffset + 3, destination.Count - headerOffset);
     }
 
-    private static void CompressIntermediate(List<byte> destination, byte[] source, int sourceOffset, int sourceEnd)
+    private static void CompressIntermediate(
+        List<byte> destination,
+        ReadOnlySpan<byte> source,
+        int sourceOffset,
+        int sourceEnd,
+        CancellationToken cancellationToken)
     {
         var lastFlag = DoNotInjectLiteralFlag;
         var hashTable = Enumerable.Repeat(-HashWindowSize, HashWindowSize).ToArray();
@@ -91,9 +112,8 @@ internal static class WadCompressor
 
         while (sourceOffset < sourceEnd)
         {
-            var match = sourceOffset + MaxMatchLength >= sourceEnd
-                ? FindMatch(source, sourceOffset, sourceEnd, hashTable, chain, endOfBuffer: true)
-                : FindMatch(source, sourceOffset, sourceEnd, hashTable, chain, endOfBuffer: false);
+            cancellationToken.ThrowIfCancellationRequested();
+            var match = FindMatch(source, sourceOffset, sourceEnd, hashTable, chain, cancellationToken);
 
             if (match.LiteralLength > 0)
             {
@@ -107,15 +127,23 @@ internal static class WadCompressor
         }
     }
 
-    private static MatchResult FindMatch(byte[] source, int sourceOffset, int sourceEnd, int[] hashTable, int[] chain, bool endOfBuffer)
+    private static MatchResult FindMatch(
+        ReadOnlySpan<byte> source,
+        int sourceOffset,
+        int sourceEnd,
+        int[] hashTable,
+        int[] chain,
+        CancellationToken cancellationToken)
     {
-        var maxLiteralLength = endOfBuffer ? Math.Min(MaxLiteralLength, sourceEnd - sourceOffset) : MaxLiteralLength;
+        var maxLiteralLength = Math.Min(MaxLiteralLength, sourceEnd - sourceOffset);
         var bestMatch = new MatchResult { LiteralLength = maxLiteralLength };
 
         for (var literalIndex = 0; literalIndex < maxLiteralLength; literalIndex++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var target = sourceOffset + literalIndex;
-            var maxMatchLength = endOfBuffer ? Math.Min(MaxMatchLength, sourceEnd - sourceOffset - literalIndex) : MaxMatchLength;
+            if (sourceEnd - target < 3) break;
+            var maxMatchLength = Math.Min(MaxMatchLength, sourceEnd - target);
             var hashKey = Hash32(source[target] | (source[target + 1] << 8) | (source[target + 2] << 16)) & HashWindowMask;
             var next = hashTable[hashKey];
             var minimumOffset = target - MaxFarMatchLookbackWithoutPageFlag;
@@ -123,13 +151,13 @@ internal static class WadCompressor
 
             while (next > minimumOffset && ++hits < 16)
             {
-                if (!endOfBuffer && BitConverter.ToUInt16(source, next) != BitConverter.ToUInt16(source, target))
+                if (source[next] != source[target] || source[next + 1] != source[target + 1])
                 {
                     next = chain[next & HashWindowMask];
                     continue;
                 }
 
-                var matchedBytes = endOfBuffer ? 0 : 2;
+                var matchedBytes = 2;
                 while (matchedBytes < maxMatchLength && source[target + matchedBytes] == source[next + matchedBytes])
                 {
                     matchedBytes++;
@@ -217,14 +245,19 @@ internal static class WadCompressor
         lastFlag = destination[packetStart];
     }
 
-    private static void EncodeLiteralPacket(List<byte> destination, byte[] source, ref int sourceOffset, ref int lastFlag, int literalLength)
+    private static void EncodeLiteralPacket(
+        List<byte> destination,
+        ReadOnlySpan<byte> source,
+        ref int sourceOffset,
+        ref int lastFlag,
+        int literalLength)
     {
         var packetStart = destination.Count;
 
         if (lastFlag < LiteralPacketMaxFlag)
         {
             lastFlag = 0x11;
-            destination.AddRange([0x11, 0x00, 0x00]);
+            Append(destination, [0x11, 0x00, 0x00]);
             packetStart = destination.Count;
         }
 
@@ -233,12 +266,12 @@ internal static class WadCompressor
             if (lastFlag == DoNotInjectLiteralFlag)
             {
                 lastFlag = 0x11;
-                destination.AddRange([0x11, 0x00, 0x00]);
+                Append(destination, [0x11, 0x00, 0x00]);
                 packetStart = destination.Count;
             }
 
             destination[packetStart - 2] |= (byte)literalLength;
-            destination.AddRange(source.AsSpan(sourceOffset, literalLength).ToArray());
+            Append(destination, source.Slice(sourceOffset, literalLength));
             sourceOffset += literalLength;
             lastFlag = DoNotInjectLiteralFlag;
             return;
@@ -254,22 +287,27 @@ internal static class WadCompressor
             destination.Add((byte)(literalLength - LargeLiteralBaseLength));
         }
 
-        destination.AddRange(source.AsSpan(sourceOffset, literalLength).ToArray());
+        Append(destination, source.Slice(sourceOffset, literalLength));
         sourceOffset += literalLength;
         lastFlag = destination[packetStart];
     }
 
-    private static void AppendCompressedBuffer(List<byte> destination, List<byte> intermediate, int headerOffset)
+    private static void AppendCompressedBuffer(
+        List<byte> destination,
+        List<byte> intermediate,
+        int headerOffset,
+        CancellationToken cancellationToken)
     {
         for (var position = 0; position < intermediate.Count;)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var packetSize = GetPacketSize(intermediate, position);
             var insertDummyPacket = destination.Count != headerOffset + HeaderSize && position == 0;
             var insertSize = packetSize + (insertDummyPacket ? PaddingPacketSizeBytes : 0);
 
             if ((((destination.Count - headerOffset) + CompressedChunkPayloadSizeBytes) % CompressedChunkSizeBytes) + insertSize > CompressedChunkSizeBytes - PaddingPacketSizeBytes)
             {
-                destination.AddRange([0x12, 0x00, 0x00]);
+                Append(destination, [0x12, 0x00, 0x00]);
                 while ((destination.Count - headerOffset) % CompressedChunkSizeBytes != HeaderSize)
                 {
                     destination.Add(0xEE);
@@ -278,10 +316,11 @@ internal static class WadCompressor
 
             if (insertDummyPacket)
             {
-                destination.AddRange([0x11, 0x00, 0x00]);
+                Append(destination, [0x11, 0x00, 0x00]);
             }
 
-            destination.AddRange(intermediate.GetRange(position, packetSize));
+            for (var index = 0; index < packetSize; index++)
+                destination.Add(intermediate[position + index]);
             position += packetSize;
         }
     }
@@ -338,7 +377,7 @@ internal static class WadCompressor
         WadMagic.CopyTo(header);
         var muffinBytes = muffin.Length > 0 ? muffin : DefaultHeaderTag;
         muffinBytes[..Math.Min(9, muffinBytes.Length)].CopyTo(header.AsSpan(7));
-        destination.AddRange(header);
+        Append(destination, header);
     }
 
     private static void WriteInt32LittleEndian(List<byte> destination, int offset, int value)
@@ -348,5 +387,10 @@ internal static class WadCompressor
         {
             destination[offset + index] = bytes[index];
         }
+    }
+
+    private static void Append(List<byte> destination, ReadOnlySpan<byte> source)
+    {
+        foreach (var value in source) destination.Add(value);
     }
 }

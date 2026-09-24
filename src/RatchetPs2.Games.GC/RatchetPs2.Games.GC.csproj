@@ -2,6 +2,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\RatchetPs2.Core\RatchetPs2.Core.csproj" />
+    <ProjectReference Include="..\RatchetPs2.Games.DL\RatchetPs2.Games.DL.csproj" />
+    <ProjectReference Include="..\RatchetPs2.Games.UYA\RatchetPs2.Games.UYA.csproj" />
+    <InternalsVisibleTo Include="RatchetPs2.Sdk" />
   </ItemGroup>
 
   <PropertyGroup>

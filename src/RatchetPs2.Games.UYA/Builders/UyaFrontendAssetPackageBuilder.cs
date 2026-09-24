@@ -1,5 +1,6 @@
 using RatchetPs2.Core.Games;
 using RatchetPs2.Core.Gltf;
+using RatchetPs2.Core.LevelAssets;
 using RatchetPs2.Core.Moby;
 using RatchetPs2.Core.Shrubs;
 using RatchetPs2.Core.Textures;
@@ -8,23 +9,14 @@ using RatchetPs2.Core.Textures.Png;
 using RatchetPs2.Core.Ties;
 using RatchetPs2.Core.Wad.Models;
 
-namespace RatchetPs2.Sdk;
+namespace RatchetPs2.Games.UYA.Builders;
 
-public enum UyaFrontendAssetKind
-{
-    Moby = 1,
-    Tie = 2,
-    Shrub = 3,
-}
-
-public sealed record UyaFrontendAssetTexture(byte Role, byte[] PifBytes);
-
-public static class UyaFrontendAssetPackageBuilder
+internal static class UyaFrontendAssetPackageBuilder
 {
     public static PackedFilePackage Build(
-        UyaFrontendAssetKind kind,
+        FrontendAssetKind kind,
         byte[] modelBytes,
-        IReadOnlyList<UyaFrontendAssetTexture> textures)
+        IReadOnlyList<FrontendAssetTexture> textures)
     {
         ArgumentNullException.ThrowIfNull(modelBytes);
         ArgumentNullException.ThrowIfNull(textures);
@@ -63,9 +55,9 @@ public static class UyaFrontendAssetPackageBuilder
         using var input = new MemoryStream(modelBytes, writable: false);
         var (gltf, buffer) = kind switch
         {
-            UyaFrontendAssetKind.Moby => ExportMoby(input, uris, sizes, alpha),
-            UyaFrontendAssetKind.Tie => ExportTie(input, uris, sizes, alpha),
-            UyaFrontendAssetKind.Shrub => ExportShrub(input, uris, sizes, alpha, billboard),
+            FrontendAssetKind.Moby => ExportMoby(input, uris, sizes, alpha),
+            FrontendAssetKind.Tie => ExportTie(input, uris, sizes, alpha),
+            FrontendAssetKind.Shrub => ExportShrub(input, uris, sizes, alpha, billboard),
             _ => throw new ArgumentOutOfRangeException(nameof(kind)),
         };
         files.Add(new("model.gltf", gltf, "model/gltf+json"));

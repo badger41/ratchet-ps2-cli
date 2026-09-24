@@ -20,8 +20,9 @@ internal static class Verification
         string zipPath)
     {
         var builder = assembly.GetType("RatchetPs2.Sdk.FrontendMapPackageBuilder")!;
+        var uyaBuilder = assembly.GetType("RatchetPs2.Games.UYA.Builders.UyaFrontendMapPackageBuilder")!;
         var buildWad = builder.GetMethod("BuildLevelWad")!;
-        var buildZip = builder.GetMethod("BuildUyaCustomMapZip")!;
+        var buildZip = uyaBuilder.GetMethod("BuildCustomMapZip")!;
         var gameId = assembly.GetType("RatchetPs2.Core.Games.GameId")!;
         var uya = Enum.Parse(gameId, "UYA");
 

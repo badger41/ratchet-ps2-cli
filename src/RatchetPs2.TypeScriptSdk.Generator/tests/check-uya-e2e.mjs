@@ -15,7 +15,7 @@ assert.ok(existsSync(new URL(zipPath, pathToFileURL(cwd))), `Missing UYA custom 
 const native = spawnSync(dotnet, [
   'run', '--no-restore', '--',
   '--output', sdkDir,
-  '--type', 'RatchetPs2.Sdk.UyaFrontendMapPackageBuilder',
+  '--type', 'RatchetPs2.Games.UYA.Builders.UyaFrontendMapPackageBuilder',
   '--type', 'RatchetPs2.Games.UYA.Gameplay.UyaGameplayBlockReader',
   '--verify-uya', wadPath, zipPath
 ], { cwd, encoding: 'utf8', stdio: 'inherit' });
@@ -27,7 +27,7 @@ assert.ok(report.compiledFiles.every((path) => !/RatchetPs2\.Games\.(?:RC1|GC)\/
 
 const {
   RatchetPs2_Games_UYA_Gameplay_UyaGameplayBlockReader: gameplayReader,
-  RatchetPs2_Sdk_UyaFrontendMapPackageBuilder: maps
+  RatchetPs2_Games_UYA_Builders_UyaFrontendMapPackageBuilder: maps
 } = await import(`${pathToFileURL(`${sdkDir}/index.js`)}?v=${Date.now()}`);
 const expected = JSON.parse(readFileSync(`${sdkDir}/uya-e2e.json`, 'utf8'));
 const wad = readFileSync(new URL(wadPath, pathToFileURL(cwd)));

@@ -1,10 +1,14 @@
 using System.Buffers.Binary;
 using System.IO.Compression;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using RatchetPs2.Core.Games;
 using RatchetPs2.Core.Hud;
+using RatchetPs2.Core.LevelAssets;
 using RatchetPs2.Core.Moby;
+using RatchetPs2.Core.Textures;
+using RatchetPs2.Core.Textures.Palettes;
 using RatchetPs2.Core.Textures.Pif;
 using RatchetPs2.Core.Textures.Png;
 using RatchetPs2.Core.Tfrags;
@@ -24,6 +28,58 @@ using RatchetPs2.Games.RC1.Level;
 using RatchetPs2.Games.RC1.Ties;
 using RatchetPs2.Games.UYA.Gameplay;
 using RatchetPs2.Games.UYA.Level;
+using RatchetPs2.Sdk;
+
+if (args is ["--qualify-uya-iso", var isoPath, var reportPath])
+{
+    var report = UyaArchiveQualification.Run(isoPath);
+    UyaArchiveQualification.Write(report, reportPath);
+    Console.WriteLine($"Qualified {report.PassedLevelCount}/{report.LevelCount} UYA levels: {reportPath}");
+    Environment.ExitCode = report.PassedLevelCount == report.LevelCount ? 0 : 1;
+    return;
+}
+
+if (args.Contains("--uya-sdk-archive", StringComparer.Ordinal))
+{
+    ValidateUyaLevelArchiveBuilder();
+    ValidateUyaLevelAssetComposer();
+    ValidateIsoPatchPlanning();
+    ValidateUyaArchiveQualificationCorpus();
+    Console.WriteLine("UYA SDK archive workflow tests passed.");
+    return;
+}
+
+if (args.Contains("--uya-texture-inventory", StringComparer.Ordinal))
+{
+    ValidateTextureInventory();
+    ValidatePaletteOptimization();
+    ValidateUyaStaticAssetComposition();
+    Console.WriteLine("UYA texture inventory and palette optimizer tests passed.");
+    return;
+}
+
+if (args.Contains("--uya-static-instances", StringComparer.Ordinal))
+{
+    ValidateUyaGameplayTypedParsing();
+    ValidateUyaStaticInstanceParsing();
+    Console.WriteLine("UYA instance writer round-trip tests passed.");
+    return;
+}
+
+if (args.Contains("--wad-compression", StringComparer.Ordinal))
+{
+    ValidateWadCompression();
+    Console.WriteLine("WAD compression tests passed.");
+    return;
+}
+
+if (args.Contains("--uya-inventory", StringComparer.Ordinal))
+{
+    ValidateUyaLevelWadInventory();
+    ValidateUyaLevelWadInventoryWhenAvailable();
+    Console.WriteLine("UYA level WAD inventory tests passed.");
+    return;
+}
 
 ValidateLevelInfoLookup();
 ValidateLevelWadParsing();
@@ -43,6 +99,15 @@ ValidateGcLevelInfoLookup();
 ValidateGcSkyRotationParsing();
 ValidateUyaLevelInfoLookup();
 ValidateUyaLevelWadParsing();
+ValidateUyaLevelWadInventory();
+ValidateUyaLevelWadInventoryWhenAvailable();
+ValidateUyaLevelArchiveBuilder();
+ValidateUyaLevelAssetComposer();
+ValidateIsoPatchPlanning();
+ValidateTextureInventory();
+ValidatePaletteOptimization();
+ValidateUyaStaticAssetComposition();
+ValidateUyaArchiveQualificationCorpus();
 ValidateUyaLooseLevelWadExtraction();
 ValidateUyaDetachedWadExtraction();
 ValidateUyaLooseLevelWadUnpacking();
@@ -61,6 +126,7 @@ ValidateLooseLevelWadFailures();
 ValidateMissionPlaceholderDetection();
 ValidateMissionMobyBankParsing();
 ValidateLevelSceneWadEmptyDetection();
+ValidateWadCompression();
 ValidateCoreLevelSegments();
 ValidateGameplayLevelSettingsParsing();
 ValidateGameplayMobyInstancesParsing();
@@ -744,6 +810,827 @@ static void ValidateUyaLevelWadParsing()
     Expect(code.SequenceEqual(new byte[] { 0x11, 0x12, 0x13, 0x14 }), "UYA byte fileblock should read exact byte length");
 }
 
+static void ValidateUyaLevelWadInventory()
+{
+    var bytes = CreateSyntheticUyaLooseLevelWad(payloadBaseSector: 0x1234);
+    bytes[0x100] = 0xE1;
+    bytes[(3 * UyaLevelConstants.SectorSize) + 0x60] = 0xE2;
+    var inventory = UyaLevelWadInventoryReader.Read(bytes);
+    var root = inventory.Containers.Single(container => container.Path == "level_wad");
+    var levelData = inventory.Containers.Single(container => container.Path == "level_wad/level_data.wad");
+    var gameplay = inventory.Containers.Single(container => container.Path == "gameplay/gameplay_core.bin");
+    var assets = inventory.Containers.Single(container => container.Path == "assets/asset_wad.bin");
+
+    Expect(root.Slots.Count == 10, "UYA inventory should retain every declared outer slot");
+    Expect(root.Slots.Single(slot => slot.LogicalPaths.Contains("level_wad/chunks/chunk1.wad")).Length == 0,
+        "UYA inventory should retain empty chunk slots");
+    Expect(levelData.Slots.Count == 11, "UYA inventory should retain every level-data slot");
+    Expect(MemoryMarshal.TryGetArray(levelData.Slots.Single(slot => slot.Path == "code/code.bin").Bytes, out var codeSegment)
+        && ReferenceEquals(codeSegment.Array, bytes),
+        "UYA inventory should expose nested payloads as slices of the source buffer");
+    Expect(gameplay.Slots.Any(slot => slot.LogicalPaths.Contains("gameplay/core/cameras.bin") && slot.Length == 0),
+        "UYA inventory should retain empty gameplay slots");
+    Expect(assets.Regions.Single().Kind == UyaContainerRegionKind.Payload,
+        "UYA inventory should retain undecoded asset data as an owned payload");
+    Expect(root.Regions.Any(region => region.Kind == UyaContainerRegionKind.Padding),
+        "UYA inventory should identify the sector-aligned outer header padding");
+    Expect(root.Regions.Any(region => region.Kind == UyaContainerRegionKind.Opaque),
+        "UYA inventory should retain unclaimed outer bytes as opaque regions");
+    foreach (var container in inventory.Containers) ExpectCompleteCoverage(container);
+    Expect(UyaLevelWadWriter.Write(inventory).SequenceEqual(bytes),
+        "unchanged UYA level WAD writes should be byte-identical");
+    foreach (var container in inventory.Containers)
+        Expect(UyaLevelWadWriter.WriteContainer(container).AsSpan().SequenceEqual(container.Bytes.Span),
+            $"unchanged {container.Path} writes should be byte-identical");
+
+    var sourceSnapshot = bytes.ToArray();
+    var replacementCode = Enumerable.Range(0, 64).Select(value => (byte)value).ToArray();
+    var rewritten = UyaLevelWadWriter.Write(inventory, new Dictionary<string, ReadOnlyMemory<byte>>
+    {
+        ["code/code.bin"] = replacementCode,
+    });
+    var rewrittenInventory = UyaLevelWadInventoryReader.Read(rewritten);
+    var rewrittenRoot = rewrittenInventory.Containers.Single(container => container.Path == "level_wad");
+    var rewrittenLevelData = rewrittenInventory.Containers.Single(container => container.Path == "level_wad/level_data.wad");
+    Expect(rewrittenLevelData.Slots.Single(slot => slot.Path == "code/code.bin").Bytes.Span.SequenceEqual(replacementCode),
+        "UYA nested replacement bytes should survive a writer/readback cycle");
+    Expect(rewrittenLevelData.Slots.Single(slot => slot.Path == "assets/asset_header.bin").Offset > 0x90,
+        "UYA nested slots after a growing replacement should be relocated");
+    Expect(rewrittenRoot.Slots.Single(slot => slot.Path == "level_wad/level_data.wad").Length == 3 * UyaLevelConstants.SectorSize,
+        "UYA outer fileblock lengths should be recalculated in sectors");
+    Expect(rewrittenRoot.Slots.Single(slot => slot.Path == "gameplay/gameplay.bin").Offset == 6 * UyaLevelConstants.SectorSize,
+        "UYA outer fileblocks after a growing replacement should be relocated");
+    Expect(rewrittenRoot.Regions.Single(region => region.Kind == UyaContainerRegionKind.Padding).Bytes.Span.Contains((byte)0xE1)
+        && rewrittenLevelData.Regions.Any(region => region.Kind == UyaContainerRegionKind.Opaque
+            && region.Bytes.Span.Contains((byte)0xE2)),
+        "UYA writes should preserve padding and opaque gap bytes while relocating payloads");
+    Expect(bytes.SequenceEqual(sourceSnapshot), "UYA writes should not mutate source memory");
+
+    var replacementMobyInstances = Enumerable.Repeat((byte)0xAC, 32).ToArray();
+    var gameplayRewrite = UyaLevelWadWriter.Write(inventory, new Dictionary<string, ReadOnlyMemory<byte>>
+    {
+        ["gameplay/core/moby_instances.bin"] = replacementMobyInstances,
+    });
+    var gameplayRewriteInventory = UyaLevelWadInventoryReader.Read(gameplayRewrite);
+    var rewrittenMobyInstances = gameplayRewriteInventory.Containers
+        .Single(container => container.Path == "gameplay/gameplay_core.bin").Slots
+        .Single(slot => slot.LogicalPaths.Contains("gameplay/core/moby_instances.bin"));
+    Expect(rewrittenMobyInstances.Bytes.Span.SequenceEqual(replacementMobyInstances),
+        "UYA gameplay pointer tables should be recalculated after replacement");
+    ExpectThrows<ArgumentException>(() => UyaLevelWadWriter.Write(inventory,
+        new Dictionary<string, ReadOnlyMemory<byte>> { ["unknown.bin"] = ReadOnlyMemory<byte>.Empty }));
+    ExpectThrows<ArgumentException>(() => UyaLevelWadWriter.Write(inventory,
+        new Dictionary<string, ReadOnlyMemory<byte>>
+        {
+            ["level_wad/level_data.wad"] = ReadOnlyMemory<byte>.Empty,
+            ["code/code.bin"] = ReadOnlyMemory<byte>.Empty,
+        }));
+    ExpectThrows<InvalidDataException>(() => UyaLevelWadWriter.WriteContainer(
+        root with { Regions = root.Regions.Skip(1).ToArray() }));
+    var tamperedSource = CreateSyntheticUyaLooseLevelWad(payloadBaseSector: 0x1234);
+    var tamperedInventory = UyaLevelWadInventoryReader.Read(tamperedSource);
+    tamperedSource[UyaLevelConstants.SectorSize] ^= 0xFF;
+    ExpectThrows<InvalidDataException>(() => UyaLevelWadWriter.Write(tamperedInventory));
+
+    var compressedBytes = CreateSyntheticUyaLooseLevelWad(payloadBaseSector: 0x1234);
+    var uncompressedGameplay = CreateSyntheticUyaGameplay();
+    Array.Resize(ref uncompressedGameplay, uncompressedGameplay.Length + 16);
+    var compressedGameplay = WadCompression.Compress(uncompressedGameplay);
+    Expect(compressedGameplay.Length <= UyaLevelConstants.SectorSize,
+        "synthetic compressed gameplay should fit its declared sector");
+    compressedBytes.AsSpan(5 * UyaLevelConstants.SectorSize, UyaLevelConstants.SectorSize).Clear();
+    compressedGameplay.CopyTo(compressedBytes.AsSpan(5 * UyaLevelConstants.SectorSize));
+    var compressedInventory = UyaLevelWadInventoryReader.Read(compressedBytes);
+    var decodedGameplay = compressedInventory.Containers.Single(container => container.Path == "gameplay/gameplay_core.bin");
+    Expect(decodedGameplay.SourceCompression == UyaContainerCompression.Wad,
+        "UYA inventory should retain compressed gameplay provenance");
+    Expect(decodedGameplay.Bytes.Span.SequenceEqual(uncompressedGameplay),
+        "UYA inventory should expose the exact decompressed gameplay image");
+    Expect(UyaLevelWadWriter.Write(compressedInventory).SequenceEqual(compressedBytes),
+        "unchanged UYA writes should retain original compressed child payloads");
+    Expect(UyaLevelWadWriter.WriteContainer(decodedGameplay).AsSpan().SequenceEqual(uncompressedGameplay),
+        "unchanged decoded UYA container writes should reproduce decompressed source bytes");
+
+    var overlap = CreateSyntheticUyaLooseLevelWad(payloadBaseSector: 0x1234);
+    WriteUyaFileBlock(overlap, 0x20, new UyaFileBlock(5, 2));
+    ExpectThrows<InvalidDataException>(() => UyaLevelWadInventoryReader.Read(overlap));
+
+    var nestedOverlap = CreateSyntheticUyaLooseLevelWad(payloadBaseSector: 0x1234);
+    WriteByteBlock(nestedOverlap, (3 * UyaLevelConstants.SectorSize) + 0x08, new UyaByteBlock(0x82, 4));
+    ExpectThrows<InvalidDataException>(() => UyaLevelWadInventoryReader.Read(nestedOverlap));
+
+    var emptySentinel = CreateSyntheticUyaLooseLevelWad(payloadBaseSector: 0x1234);
+    WriteByteBlock(emptySentinel, (3 * UyaLevelConstants.SectorSize) + 0x50, new UyaByteBlock(-1, 0));
+    var transitionTextures = UyaLevelWadInventoryReader.Read(emptySentinel).Containers
+        .Single(container => container.Path == "level_wad/level_data.wad").Slots
+        .Single(slot => slot.Path == "transition_textures/transition_textures.bin");
+    Expect(transitionTextures is { DeclaredOffset: -1, DeclaredLength: 0, Offset: 0, Length: 0 },
+        "UYA inventory should preserve empty negative sentinels without treating them as byte ranges");
+
+    var overflow = CreateSyntheticUyaLooseLevelWad(payloadBaseSector: 0x1234);
+    WriteUyaFileBlock(overflow, 0x10, new UyaFileBlock(int.MaxValue, 1));
+    ExpectThrows<InvalidDataException>(() => UyaLevelWadInventoryReader.Read(overflow));
+}
+
+static void ExpectCompleteCoverage(UyaContainerInventory container)
+{
+    var cursor = 0;
+    foreach (var region in container.Regions)
+    {
+        Expect(region.Offset == cursor, $"{container.Path} inventory should not contain gaps or overlaps");
+        cursor = checked(cursor + region.Length);
+    }
+    Expect(cursor == container.Bytes.Length, $"{container.Path} inventory should own every byte");
+}
+
+static void ValidateUyaLevelWadInventoryWhenAvailable()
+{
+    var directory = Path.Combine("test-assets", "extractions_uya");
+    if (!Directory.Exists(directory)) return;
+    foreach (var path in Directory.EnumerateFiles(directory, "level*.wad", SearchOption.TopDirectoryOnly)
+        .Order(StringComparer.Ordinal))
+    {
+        var inventory = UyaLevelWadInventoryReader.Read(File.ReadAllBytes(path));
+        foreach (var container in inventory.Containers) ExpectCompleteCoverage(container);
+        Expect(UyaLevelWadWriter.Write(inventory).AsSpan().SequenceEqual(inventory.Containers[0].Bytes.Span),
+            $"{Path.GetFileName(path)} should round-trip byte-for-byte");
+        foreach (var container in inventory.Containers)
+            Expect(UyaLevelWadWriter.WriteContainer(container).AsSpan().SequenceEqual(container.Bytes.Span),
+                $"{Path.GetFileName(path)} {container.Path} should round-trip byte-for-byte");
+    }
+}
+
+static void ValidateUyaLevelArchiveBuilder()
+{
+    var capability = LevelArchiveBuilder.GetCapability(GameId.UYA);
+    Expect(LevelArchiveBuilder.SupportsTarget(
+            capability.Game, capability.Region, capability.Revisions.Single(), capability.BakeProfile),
+        "UYA SDK archive capability should recognize its declared target");
+    Expect(!LevelArchiveBuilder.SupportsTarget("UYA", "PAL", "1.00", "uya-ntsc-u"),
+        "UYA SDK archive capability should reject undeclared targets");
+
+    var source = CreateSyntheticUyaLooseLevelWad(payloadBaseSector: 0x1234);
+    var gameplay = CreateSyntheticUyaGameplay();
+    var compressedGameplay = WadCompression.CompressVerified(gameplay).CompressedBytes;
+    Expect(compressedGameplay.Length <= UyaLevelConstants.SectorSize,
+        "synthetic gameplay should fit its outer sector slot");
+    source.AsSpan(5 * UyaLevelConstants.SectorSize, UyaLevelConstants.SectorSize).Clear();
+    compressedGameplay.CopyTo(source.AsSpan(5 * UyaLevelConstants.SectorSize));
+
+    var phases = new List<LevelArchivePhase>();
+    var progress = new InlineProgress<LevelArchiveProgress>(value => phases.Add(value.Phase));
+    var memoryResult = LevelArchiveBuilder.Build(GameId.UYA,
+        source,
+        options: new() { RequireSourceEquality = true },
+        progress: progress);
+    Expect(memoryResult.Succeeded && memoryResult.OutputBytes is not null,
+        "UYA SDK archive memory workflow should succeed");
+    Expect(memoryResult.OutputBytes.SequenceEqual(source),
+        "unchanged deterministic UYA SDK archive output should match its synthetic source");
+    Expect(memoryResult.SourceSha256 == memoryResult.UncompressedSha256
+        && memoryResult.SourceSha256 == memoryResult.CompressedSha256,
+        "unchanged UYA SDK archive hashes should agree");
+    Expect(memoryResult.Compressions.Any(item => item.Path == "gameplay/gameplay_core.bin"),
+        "UYA SDK archive workflow should report nested gameplay compression");
+    Expect(phases.SequenceEqual([
+        LevelArchivePhase.Inventory,
+        LevelArchivePhase.Rebuild,
+        LevelArchivePhase.Validate,
+        LevelArchivePhase.Compress,
+        LevelArchivePhase.Complete]),
+        "UYA SDK archive memory progress should report ordered phases");
+
+    using var stream = new MemoryStream(source, writable: false);
+    var streamPhases = new List<LevelArchivePhase>();
+    var streamResult = LevelArchiveBuilder.Build(GameId.UYA,
+        stream,
+        options: new() { RequireSourceEquality = true },
+        progress: new InlineProgress<LevelArchiveProgress>(value => streamPhases.Add(value.Phase)));
+    Expect(streamResult.Succeeded && streamResult.OutputBytes!.SequenceEqual(memoryResult.OutputBytes),
+        "UYA SDK archive stream and memory entry points should agree");
+    Expect(streamPhases[0] == LevelArchivePhase.Reading
+        && streamPhases.Skip(1).SequenceEqual(phases),
+        "UYA SDK archive stream progress should add only the reading phase");
+
+    var replacementMobyInstances = Enumerable.Repeat((byte)0xBC, 40).ToArray();
+    var changed = LevelArchiveBuilder.Build(GameId.UYA, source, new Dictionary<string, ReadOnlyMemory<byte>>
+    {
+        ["gameplay/core/moby_instances.bin"] = replacementMobyInstances,
+    });
+    Expect(changed.Succeeded && changed.OutputBytes is not null,
+        "UYA SDK archive workflow should accept nested replacements");
+    var changedInventory = UyaLevelWadInventoryReader.Read(changed.OutputBytes);
+    var changedGameplay = changedInventory.Containers.Single(container => container.Path == "gameplay/gameplay_core.bin");
+    Expect(changedGameplay.Slots.Single(slot =>
+            slot.LogicalPaths.Contains("gameplay/core/moby_instances.bin")).Bytes.Span.SequenceEqual(replacementMobyInstances),
+        "UYA SDK archive replacements should survive final compression and reader re-entry");
+    Expect(changedInventory.Containers.Single(container => container.Path == "level_wad").Slots
+            .Single(slot => slot.Path == "gameplay/gameplay.bin").Compression == UyaContainerCompression.Wad,
+        "UYA SDK archive workflow should publish gameplay as a verified compressed WAD");
+    Expect(changed.ChangedRegions.Any(change => change.Path == "gameplay/core/moby_instances.bin")
+        && changed.SourceSha256 != changed.UncompressedSha256
+        && changed.UncompressedSha256 != changed.CompressedSha256,
+        "UYA SDK archive results should report changed regions and distinct build-stage hashes");
+
+    var sourceWithUntouchedWad = source.ToArray();
+    var soundSlot = sourceWithUntouchedWad.AsSpan(UyaLevelConstants.SectorSize, UyaLevelConstants.SectorSize);
+    soundSlot.Clear();
+    CreateLiteralWad([0x51, 0x52, 0x53, 0x54]).CopyTo(soundSlot);
+    var changedWithUntouchedWad = LevelArchiveBuilder.Build(GameId.UYA,
+        sourceWithUntouchedWad,
+        new Dictionary<string, ReadOnlyMemory<byte>>
+        {
+            ["gameplay/core/moby_instances.bin"] = replacementMobyInstances,
+        });
+    var untouchedSound = UyaLevelWadInventoryReader.Read(changedWithUntouchedWad.OutputBytes!).Containers
+        .Single(container => container.Path == "level_wad").Slots
+        .Single(slot => slot.Path == "level_wad/sound.bnk");
+    Expect(untouchedSound.Bytes.Span.SequenceEqual(soundSlot),
+        "UYA SDK archive builds should preserve unrelated compressed payloads byte-for-byte");
+
+    var equalityFailure = LevelArchiveBuilder.Build(GameId.UYA,
+        source,
+        new Dictionary<string, ReadOnlyMemory<byte>>
+        {
+            ["gameplay/core/moby_instances.bin"] = replacementMobyInstances,
+        },
+        new() { RequireSourceEquality = true });
+    Expect(!equalityFailure.Succeeded && equalityFailure.OutputBytes is null
+        && equalityFailure.Diagnostics.Any(diagnostic => diagnostic.Blocking),
+        "UYA SDK archive equality failures should return no partial output and a blocking diagnostic");
+    var parentReplacementFailure = LevelArchiveBuilder.Build(GameId.UYA,
+        source,
+        new Dictionary<string, ReadOnlyMemory<byte>> { ["gameplay/gameplay.bin"] = gameplay });
+    Expect(!parentReplacementFailure.Succeeded && parentReplacementFailure.OutputBytes is null,
+        "UYA SDK archive workflow should reject ambiguous encoded parent replacements");
+    var malformed = LevelArchiveBuilder.Build(GameId.UYA, new byte[8]);
+    Expect(!malformed.Succeeded && malformed.OutputBytes is null
+        && malformed.Diagnostics.Single().Code == "UYA_ARCHIVE_BUILD_FAILED",
+        "malformed UYA SDK archive input should return a blocking diagnostic without output");
+
+    foreach (var phase in new[]
+        {
+            LevelArchivePhase.Inventory,
+            LevelArchivePhase.Rebuild,
+            LevelArchivePhase.Validate,
+            LevelArchivePhase.Compress,
+            LevelArchivePhase.Complete,
+        })
+    {
+        using var cancellation = new CancellationTokenSource();
+        var cancelingProgress = new InlineProgress<LevelArchiveProgress>(value =>
+        {
+            if (value.Phase == phase) cancellation.Cancel();
+        });
+        ExpectThrows<OperationCanceledException>(() => LevelArchiveBuilder.Build(GameId.UYA,
+            source, progress: cancelingProgress, cancellationToken: cancellation.Token));
+    }
+    using (var cancellation = new CancellationTokenSource())
+    using (var cancellationStream = new MemoryStream(source, writable: false))
+    {
+        var cancelingProgress = new InlineProgress<LevelArchiveProgress>(value =>
+        {
+            if (value.Phase == LevelArchivePhase.Reading) cancellation.Cancel();
+        });
+        ExpectThrows<OperationCanceledException>(() => LevelArchiveBuilder.Build(GameId.UYA,
+            cancellationStream, progress: cancelingProgress, cancellationToken: cancellation.Token));
+    }
+}
+
+static void ValidateUyaLevelAssetComposer()
+{
+    var header = new byte[0x120];
+    WriteInt32(header, 0x08, 0x20);
+    WriteInt32(header, 0x10, 0x40);
+    WriteInt32(header, 0x14, 0x60);
+    WriteInt32(header, 0x18, 1);
+    WriteInt32(header, 0x1c, 0xc0);
+    WriteInt32(header, 0xc0, 0x80);
+    var assets = new byte[0xa0];
+    assets.AsSpan(0x20, 0x20).Fill(0x11);
+    assets.AsSpan(0x40, 0x20).Fill(0x22);
+    assets.AsSpan(0x60, 0x20).Fill(0x33);
+    assets.AsSpan(0x80, 0x20).Fill(0x44);
+    var terrain = Enumerable.Repeat((byte)0xaa, 0x31).ToArray();
+    var collision = Enumerable.Repeat((byte)0xcc, 0x11).ToArray();
+
+    var composed = LevelAssetComposer.ComposeAssetWad(
+        GameId.UYA, header, assets, new(Terrain: terrain, Collision: collision));
+    var composedHeader = DlAssetReader.ReadHeader(composed.HeaderBytes);
+    var moby = DlAssetReader.ReadModelDefinitions(
+        composed.HeaderBytes, composedHeader.MobyModelOffset, composedHeader.MobyModelCount).Single();
+    Expect(composedHeader.TerrainOffset == 0x20
+        && composedHeader.SkyOffset == 0x60
+        && composedHeader.CollisionOffset == 0x80
+        && moby.ModelOffset == 0xa0,
+        "UYA asset composer should relocate every pointer after resized payloads");
+    Expect(composed.AssetWadBytes.AsSpan(composedHeader.TerrainOffset, terrain.Length).SequenceEqual(terrain)
+        && composed.AssetWadBytes.AsSpan(composedHeader.SkyOffset, 0x20)
+            .SequenceEqual(Enumerable.Repeat((byte)0x22, 0x20).ToArray())
+        && composed.AssetWadBytes.AsSpan(composedHeader.CollisionOffset, collision.Length).SequenceEqual(collision)
+        && composed.AssetWadBytes.AsSpan(moby.ModelOffset, 0x20)
+            .SequenceEqual(Enumerable.Repeat((byte)0x44, 0x20).ToArray()),
+        "UYA asset composer should preserve untouched payloads around replacements");
+    var unchanged = LevelAssetComposer.ComposeAssetWad(GameId.UYA, header, assets, new());
+    Expect(unchanged.HeaderBytes.SequenceEqual(header) && unchanged.AssetWadBytes.SequenceEqual(assets),
+        "UYA asset composer no-op should remain byte-identical");
+
+    var sourceTerrain = Enumerable.Repeat((byte)0x5a, 0x180).ToArray();
+    var encodedTerrain = WadCompression.CompressVerified(sourceTerrain).CompressedBytes;
+    var sourceEnd = (0x10 + encodedTerrain.Length + 0x0f) & ~0x0f;
+    var chunk = new byte[sourceEnd + 0x20];
+    WriteInt32(chunk, 0x00, 0x10);
+    WriteInt32(chunk, 0x04, sourceEnd);
+    WriteInt32(chunk, 0x08, sourceEnd + 0x10);
+    encodedTerrain.CopyTo(chunk.AsSpan(0x10));
+    chunk.AsSpan(sourceEnd, 0x20).Fill(0x7b);
+    var replacementTerrain = Enumerable.Repeat((byte)0xa5, 0x281).ToArray();
+    var composedChunk = LevelAssetComposer.ComposeTfragChunk(GameId.UYA, chunk, replacementTerrain);
+    var movedSuffix = BinaryPrimitives.ReadInt32LittleEndian(composedChunk.AsSpan(0x04));
+    Expect(TfragChunkWadReader.ReadTerrainPayload(composedChunk).SequenceEqual(replacementTerrain)
+        && composedChunk.AsSpan(movedSuffix, 0x20).SequenceEqual(chunk.AsSpan(sourceEnd, 0x20)),
+        "UYA chunk composer should replace compressed terrain and preserve its trailing payloads");
+
+    var plainChunk = new byte[0x28];
+    WriteInt32(plainChunk, 0x00, 0x10);
+    WriteInt32(plainChunk, 0x04, 0x20);
+    plainChunk.AsSpan(0x10, 0x10).Fill(0x12);
+    plainChunk.AsSpan(0x20, 8).Fill(0x34);
+    var plainTerrain = Enumerable.Repeat((byte)0x56, 7).ToArray();
+    var composedPlainChunk = LevelAssetComposer.ComposeTfragChunk(GameId.UYA, plainChunk, plainTerrain);
+    Expect(TfragChunkWadReader.ReadTerrainPayload(composedPlainChunk).SequenceEqual(plainTerrain)
+        && BinaryPrimitives.ReadInt32LittleEndian(composedPlainChunk.AsSpan(0x04)) == 0x17
+        && composedPlainChunk.AsSpan(0x17, 8).SequenceEqual(plainChunk.AsSpan(0x20, 8)),
+        "UYA chunk composer should not expose alignment padding as uncompressed terrain");
+}
+
+static void ValidateIsoPatchPlanning()
+{
+    const int levelIndex = 3;
+    const int headerSector = 20;
+    const int payloadBaseSector = 60;
+    var source = CreateSyntheticUyaLooseLevelWad(payloadBaseSector);
+    WriteInt32(source, 0x08, levelIndex);
+    var iso = CreateSyntheticUyaIso(levelIndex, headerSector, payloadBaseSector, source);
+    Array.Resize(ref iso, (iso.Length + UyaLevelConstants.SectorSize - 1)
+        / UyaLevelConstants.SectorSize * UyaLevelConstants.SectorSize);
+    WriteUyaLevelInfoEntry(
+        iso,
+        levelIndex,
+        new(0, 0),
+        new(headerSector, source.Length / UyaLevelConstants.SectorSize),
+        new(0, 0));
+    var output = source.ToArray();
+    output[3 * UyaLevelConstants.SectorSize] ^= 0xff;
+
+    using var stream = new MemoryStream(iso, writable: false);
+    var plan = IsoPatchPlanner.Create(GameId.UYA, stream, levelIndex, output);
+    Expect(plan.SchemaVersion == IsoPatchPlanner.SchemaVersion
+        && plan.FitsInPlace
+        && plan.CapacitySectors == 9
+        && plan.RequiredSectors == 9
+        && plan.Ranges.Count == 2,
+        "UYA ISO patch planning should record the supported in-place layout");
+    Expect(plan.Ranges[0].Offset == headerSector * (long)UyaLevelConstants.SectorSize
+        && plan.Ranges[1].Offset == (payloadBaseSector + 1L) * UyaLevelConstants.SectorSize
+        && plan.Ranges.All(value => value.Alignment == UyaLevelConstants.SectorSize
+            && value.SourceSha256.Length == 64
+            && value.OutputSha256.Length == 64),
+        "UYA ISO patch ranges should retain aligned preimage and result hashes");
+
+    using var patchStream = new MemoryStream(iso.ToArray(), writable: true);
+    IsoPatchApplier.ValidateSource(GameId.UYA, patchStream, plan);
+    for (var index = 0; index < plan.Ranges.Count; index++)
+        IsoPatchApplier.ApplyRange(GameId.UYA, patchStream, plan, index);
+    IsoPatchApplier.VerifyOutput(GameId.UYA, patchStream, plan);
+    var patched = patchStream.ToArray();
+    using var patchedStream = new MemoryStream(patched, writable: false);
+    Expect(UyaLooseLevelWadExtractor.ExtractPrimary(patchedStream, levelIndex).Bytes.SequenceEqual(output),
+        "UYA ISO patch ranges should reconstruct the planned loose level WAD");
+
+    Array.Resize(ref output, output.Length + UyaLevelConstants.SectorSize);
+    WriteUyaFileBlock(output, 0x48, new UyaFileBlock(8, 2));
+    stream.Position = 0;
+    var fallback = IsoPatchPlanner.Create(GameId.UYA, stream, levelIndex, output);
+    Expect(!fallback.FitsInPlace
+        && fallback.Ranges.Count == 0
+        && fallback.RequiredSectors == 10
+        && fallback.Replacement is not null
+        && fallback.Replacement.OutputIsoLength == iso.Length + output.Length,
+        "UYA ISO patch planning should identify full-image fallback capacity");
+    stream.Position = 0;
+    using var replacementStream = new MemoryStream();
+    IsoReplacementBuilder.BuildAsync(GameId.UYA, stream, replacementStream, fallback).GetAwaiter().GetResult();
+    IsoReplacementBuilder.Verify(GameId.UYA, replacementStream, fallback);
+    var replacement = fallback.Replacement!;
+    Expect(replacementStream.Length == replacement.OutputIsoLength,
+        "UYA full-image replacement should publish its final image size");
+    replacementStream.Position = 0;
+    Expect(UyaLooseLevelWadExtractor.ExtractPrimary(replacementStream, levelIndex).Bytes
+            .SequenceEqual(replacement.LevelWadBytes.ToArray()),
+        "UYA full-image replacement should install the relocated level payload");
+
+    using var layoutStream = new MemoryStream(iso, writable: false);
+    var retailLayout = UyaLevelInfoReader.ReadLevelSet(layoutStream, levelIndex);
+    var compactOutput = source.ToArray();
+    compactOutput[3 * UyaLevelConstants.SectorSize] ^= 0x7f;
+    replacementStream.Position = 0;
+    var retailPlan = IsoPatchPlanner.Create(
+        GameId.UYA,
+        replacementStream,
+        new IsoLevelAllocation(retailLayout.RequestedLevelIndex, retailLayout.RequestedLevel.LevelWad.Offset,
+            retailLayout.RequestedLevel.LevelWad.Length),
+        compactOutput);
+    Expect(retailPlan.FitsInPlace
+        && retailPlan.HeaderSector == headerSector
+        && retailPlan.Ranges.Any(value => value.Name == "level-info"),
+        "UYA ISO patch planning should restore the retail layout when compact output fits");
+    using var retailPatchStream = new MemoryStream(replacementStream.ToArray(), writable: true);
+    for (var index = 0; index < retailPlan.Ranges.Count; index++)
+        IsoPatchApplier.ApplyRange(GameId.UYA, retailPatchStream, retailPlan, index);
+    IsoPatchApplier.VerifyInstalledLevel(GameId.UYA, retailPatchStream, retailPlan);
+    Expect(UyaLevelInfoReader.ReadEntry(retailPatchStream, levelIndex).LevelWad == retailLayout.RequestedLevel.LevelWad,
+        "UYA compact patch should restore the original level table entry for savestate compatibility");
+
+    stream.Position = 0;
+    var forced = IsoPatchPlanner.Create(GameId.UYA, stream, levelIndex, source, forceFullImage: true);
+    Expect(!forced.FitsInPlace && forced.Replacement is not null
+        && forced.StrategyReason.Contains("explicitly", StringComparison.Ordinal),
+        "UYA ISO patch planning should explain a forced full-image replacement");
+
+    replacementStream.Position = replacement.HeaderSector * (long)UyaLevelConstants.SectorSize;
+    replacementStream.WriteByte(0xff);
+    ExpectThrows<IOException>(() => IsoReplacementBuilder.Verify(GameId.UYA, replacementStream, fallback));
+
+    var wrongLevel = source.ToArray();
+    WriteInt32(wrongLevel, 0x08, levelIndex + 1);
+    stream.Position = 0;
+    ExpectThrows<InvalidDataException>(() => IsoPatchPlanner.Create(GameId.UYA, stream, levelIndex, wrongLevel));
+
+    using var wrongPreimage = new MemoryStream(iso.ToArray(), writable: true);
+    wrongPreimage.Position = plan.Ranges[0].Offset;
+    wrongPreimage.WriteByte(0xff);
+    ExpectThrows<InvalidDataException>(() => IsoPatchApplier.ValidateSource(GameId.UYA, wrongPreimage, plan));
+    patchStream.Position = plan.Ranges[0].Offset;
+    patchStream.WriteByte(0xff);
+    ExpectThrows<IOException>(() => IsoPatchApplier.VerifyOutput(GameId.UYA, patchStream, plan));
+}
+
+static void ValidateTextureInventory()
+{
+    var palette = new byte[0x400];
+    new byte[] { 1, 2, 3, 4 }.CopyTo(palette, 0 * 4);
+    new byte[] { 8, 9, 10, 64 }.CopyTo(palette, 8 * 4);
+    new byte[] { 16, 17, 18, 128 }.CopyTo(palette, 16 * 4);
+    new byte[] { 7, 7, 7, 7 }.CopyTo(palette, 7 * 4);
+    var pif = PifWriter.Write(PifWriter.CreateIndexed8(
+        2, 2, palette, [8, 8, 16, 0], [[16]]));
+    var inputs = new[]
+    {
+        new TextureInventoryInput(
+            "tie-asset", TextureAssetFamily.Tie, 2, 0, TextureRole.Material, pif),
+        new TextureInventoryInput(
+            "moby-asset", TextureAssetFamily.Moby, 3, 1, TextureRole.Material, pif,
+            [3, 1, 3], [7, 0]),
+    };
+    var inventory = TextureInventoryBuilder.Build(inputs.Reverse());
+    Expect(inventory.SchemaVersion == TextureInventoryBuilder.SchemaVersion
+        && inventory.Textures.Select(value => value.Family)
+            .SequenceEqual([TextureAssetFamily.Moby, TextureAssetFamily.Tie])
+        && inventory.TexelCount == 10,
+        "UYA texture inventory should be deterministic and count every base/mip texel");
+    var moby = inventory.Textures[0];
+    var sourceEight = moby.IndexUsages.Single(value => value.SourcePixelIndex == 8);
+    var sourceSixteen = moby.IndexUsages.Single(value => value.SourcePixelIndex == 16);
+    Expect(sourceEight.PaletteIndex == 16
+        && sourceEight.Color == new TextureColor(16, 17, 18, 128)
+        && sourceEight.Frequency == 2
+        && sourceEight.MipFrequencies.SequenceEqual([2, 0])
+        && sourceSixteen.PaletteIndex == 8
+        && sourceSixteen.Frequency == 2
+        && sourceSixteen.MipFrequencies.SequenceEqual([1, 1]),
+        "UYA texture inventory should retain raw indexes, CLUT-remapped indexes, exact colors, and mip frequencies");
+    Expect(moby.MaterialSlots.SequenceEqual([1, 3])
+        && moby.PaletteEntries[0] is { Referenced: true, Reserved: true }
+        && moby.PaletteEntries[7] is { Referenced: false, Reserved: true }
+        && moby.PaletteEntries[2] is { Referenced: false, Reserved: false },
+        "UYA texture inventory should distinguish material use, referenced, reserved, and unused entries");
+    var repeat = TextureInventoryBuilder.Build(inputs);
+    Expect(JsonSerializer.SerializeToUtf8Bytes(inventory).SequenceEqual(JsonSerializer.SerializeToUtf8Bytes(repeat)),
+        "equivalent UYA texture inputs should serialize identically regardless of input order");
+
+    var indexed4 = new byte[PifHeader.SizeInBytes + 0x40 + 1];
+    WriteInt32(indexed4, 0x00, PifHeader.ExpectedMagic);
+    WriteInt32(indexed4, 0x04, indexed4.Length);
+    WriteInt32(indexed4, 0x08, 1);
+    WriteInt32(indexed4, 0x0c, 1);
+    WriteInt32(indexed4, 0x10, (int)PifTextureEncoding.Indexed4);
+    WriteInt32(indexed4, 0x1c, 1);
+    indexed4[^1] = 0x0b;
+    var indexed4Inventory = TextureInventoryBuilder.Build([
+        new("shrub-asset", TextureAssetFamily.Shrub, 4, 0, TextureRole.Billboard, indexed4),
+    ]).Textures.Single();
+    Expect(indexed4Inventory.TexelCount == 1
+        && indexed4Inventory.IndexUsages.Single() is { SourcePixelIndex: 11, PaletteIndex: 11, Frequency: 1 },
+        "UYA texture inventory should retain the final odd indexed4 texel");
+
+    var halfPalette = new byte[0x200];
+    var invalidIndex = PifWriter.Write(PifWriter.CreateIndexed8(1, 1, halfPalette, [255]));
+    ExpectThrows<InvalidDataException>(() => TextureInventoryBuilder.Build([
+        new("bad-index", TextureAssetFamily.Tie, 1, 0, TextureRole.Material, invalidIndex),
+    ]));
+    ExpectThrows<InvalidDataException>(() => TextureInventoryBuilder.Build([
+        new("bad-size", TextureAssetFamily.Tie, 1, 0, TextureRole.Material, pif.Concat(new byte[] { 0 }).ToArray()),
+    ]));
+    ExpectThrows<ArgumentException>(() => TextureInventoryBuilder.Build([inputs[0], inputs[0]]));
+    using var cancellation = new CancellationTokenSource();
+    cancellation.Cancel();
+    ExpectThrows<OperationCanceledException>(() => TextureInventoryBuilder.Build(inputs, cancellation.Token));
+}
+
+static void ValidatePaletteOptimization()
+{
+    var sizes = new[] { 10, 8, 5, 3, 3, 3 };
+    var offset = 0;
+    var textures = sizes.Select((size, index) =>
+    {
+        var colors = Enumerable.Range(offset, size).Select(SyntheticColor).ToArray();
+        offset += size;
+        return SyntheticInventoryTexture($"texture-{index}", colors, capacity: 16);
+    }).ToArray();
+    var inventory = new TextureInventory(1, textures, sizes.Sum());
+    var optimized = PaletteOptimizer.Optimize(inventory);
+    Expect(optimized.IsProvenOptimal
+        && optimized.Method == PaletteOptimizer.ExactMethod
+        && optimized.Palettes.Count == 2
+        && optimized.Assignments.Count == textures.Length
+        && optimized.Violations.Count == 0,
+        "UYA palette optimizer should beat best-fit and prove the known two-palette optimum");
+    foreach (var assignment in optimized.Assignments)
+    {
+        var palette = optimized.Palettes.Single(value => value.PaletteIndex == assignment.PaletteIndex);
+        foreach (var remap in assignment.IndexRemaps)
+            Expect(palette.Entries.Single(value => value.PaletteIndex == remap.TargetPaletteIndex).Color == remap.Color,
+                "UYA palette optimization must preserve every imported color exactly");
+    }
+    var repeat = PaletteOptimizer.Optimize(new(1, textures.Reverse().ToArray(), sizes.Sum()));
+    Expect(JsonSerializer.SerializeToUtf8Bytes(optimized).SequenceEqual(JsonSerializer.SerializeToUtf8Bytes(repeat)),
+        "UYA palette optimization should be independent of inventory order");
+
+    var red = new TextureColor(255, 0, 0, 128);
+    var blue = new TextureColor(0, 0, 255, 128);
+    var reserved = new TextureInventory(1, [
+        SyntheticInventoryTexture("reserved-red", [red], 16, (7, red)),
+        SyntheticInventoryTexture("reserved-blue", [blue], 16, (7, blue)),
+    ], 2);
+    var reservedResult = PaletteOptimizer.Optimize(reserved);
+    Expect(reservedResult.Palettes.Count == 2
+        && reservedResult.Palettes.All(value => value.Entries.Single() is { PaletteIndex: 7, Reserved: true })
+        && reservedResult.Assignments.All(value => value.IndexRemaps.Single().TargetPaletteIndex == 7),
+        "conflicting reserved indexes should prevent otherwise compatible palette sharing");
+
+    var formatZero = SyntheticInventoryTexture("format-zero", [red], 16);
+    var formatOne = SyntheticInventoryTexture("format-one", [red], 16) with
+    {
+        Constraint = formatZero.Constraint with { PaletteFormat = 1 },
+    };
+    var formatResult = PaletteOptimizer.Optimize(new(1, [formatZero, formatOne], 2));
+    Expect(formatResult.Palettes.Count == 2,
+        "textures with incompatible palette formats should not share a palette");
+
+    var largeTextures = textures.Concat(Enumerable.Range(0, 7)
+        .Select(index => SyntheticInventoryTexture($"large-{index:D2}", [SyntheticColor(0)], 16)))
+        .ToArray();
+    var large = new TextureInventory(1, largeTextures, largeTextures.Sum(value => value.TexelCount));
+    var largeResult = PaletteOptimizer.Optimize(large);
+    Expect(!largeResult.IsProvenOptimal
+        && largeResult.Method == PaletteOptimizer.HeuristicMethod
+        && largeResult.Palettes.Count == 3,
+        "large groups above the exact-search limit should be labeled heuristic");
+
+    var infeasible = new TextureInventory(1, [
+        SyntheticInventoryTexture("too-many", [SyntheticColor(0), SyntheticColor(1), SyntheticColor(2)], 2),
+    ], 3);
+    var failed = PaletteOptimizer.Optimize(infeasible);
+    Expect(failed.Palettes.Count == 0
+        && failed.Assignments.Count == 0
+        && failed.Violations.Single().Code == "palette-capacity-exceeded",
+        "infeasible palette inputs should return a violation without partial output");
+
+    using var cancellation = new CancellationTokenSource();
+    cancellation.Cancel();
+    ExpectThrows<OperationCanceledException>(() => PaletteOptimizer.Optimize(inventory, cancellation.Token));
+}
+
+static TextureInventoryEntry SyntheticInventoryTexture(
+    string key,
+    IReadOnlyList<TextureColor> colors,
+    int capacity,
+    params (int Index, TextureColor Color)[] reserved)
+{
+    var palette = colors.Concat(reserved.Select(value => value.Color)).Distinct().ToArray();
+    var entries = palette.Select(color =>
+    {
+        var reservedIndex = Array.FindIndex(reserved, value => value.Color == color);
+        return new TexturePaletteEntry(
+            reservedIndex >= 0 ? reserved[reservedIndex].Index : -1,
+            color,
+            colors.Contains(color),
+            reservedIndex >= 0);
+    }).ToList();
+    var occupied = entries.Where(value => value.Reserved).Select(value => value.PaletteIndex).ToHashSet();
+    var next = 0;
+    for (var index = 0; index < entries.Count; index++)
+    {
+        if (entries[index].Reserved) continue;
+        while (occupied.Contains(next)) next++;
+        entries[index] = entries[index] with { PaletteIndex = next };
+        occupied.Add(next++);
+    }
+    var byColor = entries.ToDictionary(value => value.Color, value => value.PaletteIndex);
+    return new(
+        key,
+        key,
+        TextureAssetFamily.Tie,
+        1,
+        0,
+        TextureRole.Material,
+        colors.Count,
+        1,
+        1,
+        colors.Count,
+        new string('0', 64),
+        new(PifTextureEncoding.Indexed4, entries.Count, 0, 0, capacity),
+        [0],
+        entries.OrderBy(value => value.PaletteIndex).ToArray(),
+        colors.Select((color, index) => new TextureIndexUsage(index, byColor[color], color, 1, [1])).ToArray());
+}
+
+static TextureColor SyntheticColor(int value) => new(
+    (byte)value,
+    (byte)(value >> 8),
+    (byte)(value >> 16),
+    128);
+
+static void ValidateUyaStaticAssetComposition()
+{
+    var palette = new byte[0x400];
+    new byte[] { 10, 20, 30, 128 }.CopyTo(palette, 8 * 4);
+    new byte[] { 40, 50, 60, 64 }.CopyTo(palette, 16 * 4);
+    var pixels = Enumerable.Range(0, 16).Select(index => (byte)(index % 2 == 0 ? 8 : 16)).ToArray();
+    var sourcePif = PifWriter.Write(PifWriter.CreateIndexed8(
+        4, 4, palette, pixels, [[8, 16, 8, 16], [16]]));
+
+    var sourceInventory = TextureInventoryBuilder.Build([
+        new("writer", TextureAssetFamily.Tie, 1, 0, TextureRole.Material, sourcePif),
+    ]);
+    var sourceOptimization = PaletteOptimizer.Optimize(sourceInventory);
+    var rewrittenPif = PaletteTextureWriter.RewritePif(
+        sourcePif,
+        sourceOptimization.Assignments.Single(),
+        sourceOptimization.Palettes.Single());
+    Expect(DecodedPifColors(sourcePif).SequenceEqual(DecodedPifColors(rewrittenPif)),
+        "UYA optimized PIF writing should preserve every base and mip texel exactly");
+
+    var inputs = new[]
+    {
+        new StaticAssetInput(
+            "moby", TextureAssetFamily.Moby, 0x100, StaticDefinition(TextureAssetFamily.Moby, 0x11),
+            new byte[] { 0x11, 0x12 }, [new(TextureRole.Material, sourcePif)]),
+        new StaticAssetInput(
+            "moby-shared", TextureAssetFamily.Moby, 0x101, StaticDefinition(TextureAssetFamily.Moby, 0x12),
+            new byte[] { 0x13 }, [new(TextureRole.Material, sourcePif)]),
+        new StaticAssetInput(
+            "tie", TextureAssetFamily.Tie, 0x200, StaticDefinition(TextureAssetFamily.Tie, 0x22),
+            new byte[] { 0x21, 0x22, 0x23 }, [new(TextureRole.Material, sourcePif)]),
+        new StaticAssetInput(
+            "shrub", TextureAssetFamily.Shrub, 0x300, StaticDefinition(TextureAssetFamily.Shrub, 0x33),
+            new byte[] { 0x31 },
+            [new(TextureRole.Material, sourcePif), new(TextureRole.Billboard, sourcePif)]),
+    };
+    var composed = StaticAssetComposer.Compose(GameId.UYA, new byte[0xc0], new byte[0x10], [], inputs);
+    var header = DlAssetReader.ReadHeader(composed.HeaderBytes);
+    Expect(header is { MobyModelCount: 2, TieModelCount: 1, ShrubModelCount: 1 }
+        && header is { MobyTextureCount: 1, TieTextureCount: 1, ShrubTextureCount: 1 }
+        && composed.Optimization.Palettes.Count == 1,
+        "UYA static composition should install all selected classes and share their exact palette");
+    var mobys = DlAssetReader.ReadModelDefinitions(composed.HeaderBytes, header.MobyModelOffset, 2);
+    var moby = mobys[0];
+    var tie = DlAssetReader.ReadModelDefinitions(composed.HeaderBytes, header.TieModelOffset, 1).Single();
+    var shrub = DlAssetReader.ReadShrubDefinitions(composed.HeaderBytes, header.ShrubModelOffset, 1).Single();
+    Expect(moby is { ModelId: 0x100, Unknown8: 0x11 }
+        && tie is { ModelId: 0x200, Unknown8: 0x22 }
+        && shrub is { ModelId: 0x300, Unknown8: 0x33 }
+        && moby.TextureIds[0] == 0 && mobys[1].TextureIds[0] == 0
+        && tie.TextureIds[0] == 0 && shrub.TextureIds[0] == 0,
+        "UYA static composition should preserve definition metadata and remap family texture IDs");
+    Expect(composed.AssetWadBytes.AsSpan(moby.ModelOffset, 2).SequenceEqual(inputs[0].ModelBytes.Span)
+        && composed.AssetWadBytes.AsSpan(mobys[1].ModelOffset, 1).SequenceEqual(inputs[1].ModelBytes.Span)
+        && composed.AssetWadBytes.AsSpan(tie.ModelOffset, 3).SequenceEqual(inputs[2].ModelBytes.Span)
+        && composed.AssetWadBytes.AsSpan(shrub.ModelOffset, 1).SequenceEqual(inputs[3].ModelBytes.Span),
+        "UYA static composition should install exact selected model bytes");
+
+    var mobyTexture = DlAssetReader.ReadTextureDefinitions(
+        composed.HeaderBytes, header.MobyTextureOffset, 1).Single();
+    var tieTexture = DlAssetReader.ReadTextureDefinitions(
+        composed.HeaderBytes, header.TieTextureOffset, 1).Single();
+    var shrubTexture = DlAssetReader.ReadTextureDefinitions(
+        composed.HeaderBytes, header.ShrubTextureOffset, 1).Single();
+    Expect(mobyTexture.PaletteId == tieTexture.PaletteId
+        && tieTexture.PaletteId == shrubTexture.PaletteId
+        && shrubTexture.PaletteId == shrub.PaletteId,
+        "moby, tie, shrub, and billboard definitions should reference the shared palette");
+    foreach (var (name, definition) in new[]
+        {
+            ("moby", mobyTexture),
+            ("tie", tieTexture),
+            ("shrub", shrubTexture),
+        })
+    {
+        var outputPif = DlAssetReader.BuildAssetTexture(
+            name, 0, definition, composed.PaletteBytes, composed.AssetWadBytes,
+            header.TextureDataOffset, isSwizzled: false).PifBytes;
+        Expect(DecodedPifColors(sourcePif).SequenceEqual(DecodedPifColors(outputPif)),
+            $"composed {name} texture should preserve every source texel");
+    }
+    var billboardPif = DlAssetReader.BuildShrubBillboardTexture(shrub, composed.PaletteBytes).PifBytes;
+    Expect(DecodedPifColors(sourcePif).SequenceEqual(DecodedPifColors(billboardPif)),
+        "composed shrub billboard should preserve every source texel");
+}
+
+static byte[] StaticDefinition(TextureAssetFamily family, int marker)
+{
+    var bytes = new byte[family == TextureAssetFamily.Shrub ? 0x30 : 0x20];
+    WriteInt32(bytes, 0x08, marker);
+    bytes.AsSpan(0x10, 0x10).Fill(byte.MaxValue);
+    return bytes;
+}
+
+static IReadOnlyList<TextureColor> DecodedPifColors(byte[] bytes)
+{
+    var texture = PifReader.Read(bytes);
+    var colors = new List<TextureColor>();
+    var width = texture.Header.USize;
+    var height = texture.Header.VSize;
+    foreach (var (pixels, level) in new[] { texture.PixelData }.Concat(texture.MipPixelData).Select((value, index) => (value, index)))
+    {
+        if (level > 0)
+        {
+            width = Math.Max(1, width / 2);
+            height = Math.Max(1, height / 2);
+        }
+        for (var texel = 0; texel < width * height; texel++)
+        {
+            var sourceIndex = texture.Encoding == PifTextureEncoding.Indexed8
+                ? pixels[texel]
+                : pixels[texel / 2] >> (texel % 2 * 4) & 0x0f;
+            var paletteIndex = texture.Encoding == PifTextureEncoding.Indexed8
+                ? TextureConverter.DecodePaletteIndex((byte)sourceIndex)
+                : sourceIndex;
+            var offset = paletteIndex * 4;
+            colors.Add(new(
+                texture.PaletteData[offset],
+                texture.PaletteData[offset + 1],
+                texture.PaletteData[offset + 2],
+                texture.PaletteData[offset + 3]));
+        }
+    }
+    return colors;
+}
+
+static void ValidateUyaArchiveQualificationCorpus()
+{
+    var smallest = new byte[UyaLevelConstants.SectorSize];
+    WriteInt32(smallest, 0, UyaLevelConstants.LevelWadHeaderSize);
+
+    var sparse = new byte[UyaLevelConstants.SectorSize * 32];
+    WriteInt32(sparse, 0, UyaLevelConstants.LevelWadHeaderSize);
+
+    var alignmentHeavy = CreateSyntheticUyaLooseLevelWad(payloadBaseSector: 0x1234);
+
+    var largestShape = CreateSyntheticUyaLooseLevelWad(payloadBaseSector: 0x1234);
+    Array.Resize(ref largestShape, UyaLevelConstants.SectorSize * 128);
+    WriteUyaFileBlock(largestShape, 0x48, new UyaFileBlock(8, 120));
+
+    foreach (var (name, bytes) in new[]
+        {
+            ("smallest", smallest),
+            ("sparse", sparse),
+            ("alignment-heavy", alignmentHeavy),
+            ("largest-shape", largestShape),
+        })
+    {
+        var result = UyaArchiveQualification.Measure(0, bytes);
+        Expect(result.Succeeded && result.HashChecks.All(check => check.Matched)
+            && result.BulkBufferCopyCount == result.ContainerCount + 1,
+            $"UYA archive qualification {name} layout should pass every hash check");
+    }
+
+    var malformed = UyaArchiveQualification.Measure(0, new byte[8]);
+    Expect(!malformed.Succeeded && malformed.Diagnostics.Count > 0,
+        "UYA archive qualification malformed layout should retain diagnostics without output");
+}
+
 static void ValidateUyaLooseLevelWadExtraction()
 {
     const int levelIndex = 3;
@@ -975,6 +1862,23 @@ static void ValidateUyaGameplayTypedParsing()
     Expect(moby.Unknown84 == -1, "UYA moby instance 0x84 field should be parsed");
     Expect(gameplay.Blocks.Single(block => block.SemanticName == "pvar_data").PayloadBytes.SequenceEqual(new byte[] { 0xde, 0xad, 0xbe, 0xef }), "UYA pvar data payload should be exposed");
 
+    var editedMoby = new UyaMobyInstanceEdit(
+        0x1234,
+        new(100, 200, 300),
+        new(0, 0, MathF.Sin(MathF.PI / 4), MathF.Cos(MathF.PI / 4)),
+        2,
+        mobyBytes.AsSpan(UyaMobyInstancesReader.HeaderSize, UyaMobyInstancesReader.RecordSize).ToArray());
+    var rebuiltMobys = UyaMobyInstancesReader.Read(UyaMobyInstancesWriter.Write(mobyInstances, [editedMoby]));
+    var rebuiltMoby = rebuiltMobys.Instances.Single();
+    Expect(rebuiltMoby.ClassId == editedMoby.ClassId
+        && rebuiltMoby.Position == editedMoby.Position
+        && rebuiltMoby.Scale == editedMoby.Scale,
+        "UYA moby writer should update class, position, and scale");
+    Expect(MathF.Abs(rebuiltMoby.Rotation.Z - MathF.PI / 2) < 0.0001f,
+        "UYA moby writer should encode quaternion rotation as native ZYX Euler angles");
+    Expect(rebuiltMoby.PvarIndex == moby.PvarIndex && rebuiltMoby.Uid == moby.Uid,
+        "UYA moby writer should preserve pvar and unsupported record fields");
+
     var gcLevelSettingsBytes = new byte[0x80];
     WriteInt32(gcLevelSettingsBytes, 0x00, 57);
     WriteInt32(gcLevelSettingsBytes, 0x04, 65);
@@ -1029,6 +1933,30 @@ static void ValidateUyaStaticInstanceParsing()
     Expect(parsedShrubs.Instances[0].DrawDistance == 256, "UYA shrub draw distance should be parsed");
     Expect(parsedShrubs.Instances[0].Transform.Position.X == -5, "UYA shrub position should be parsed");
     ExpectThrows<InvalidDataException>(() => UyaTieInstancesReader.Read(ties.AsSpan(0, ties.Length - 3)));
+
+    var edited = new UyaStaticInstanceEdit(
+        0x3456,
+        new(100, 200, 300),
+        new(0, 0, MathF.Sin(MathF.PI / 4), MathF.Cos(MathF.PI / 4)),
+        new(2, 3, 4),
+        parsedTies.Instances[0].RawBytes);
+    var rebuiltTies = UyaTieInstancesReader.Read(UyaTieInstancesWriter.Write(parsedTies, [edited]));
+    var rebuiltTie = rebuiltTies.Instances.Single();
+    Expect(rebuiltTies.HeaderWords.SequenceEqual(parsedTies.HeaderWords)
+        && rebuiltTies.TrailingBytes.SequenceEqual(parsedTies.TrailingBytes),
+        "UYA tie writer should preserve header and trailing bytes");
+    Expect(rebuiltTie.ClassId == edited.ClassId
+        && rebuiltTie.Transform.Position == new UyaVector4(100, 200, 300, parsedTies.Instances[0].Transform.Position.W),
+        "UYA tie writer should update class and position while preserving the fourth component");
+    Expect(MathF.Abs(rebuiltTie.Transform.BasisX.Y - 2) < 0.0001f
+        && MathF.Abs(rebuiltTie.Transform.BasisY.X + 3) < 0.0001f
+        && MathF.Abs(rebuiltTie.Transform.BasisZ.Z - 4) < 0.0001f,
+        "UYA tie writer should encode quaternion rotation and non-uniform scale");
+    var rebuiltShrubs = UyaShrubInstancesReader.Read(UyaShrubInstancesWriter.Write(
+        parsedShrubs,
+        [edited with { TemplateBytes = parsedShrubs.Instances[0].RawBytes }]));
+    Expect(rebuiltShrubs.Instances.Single().DrawDistance == parsedShrubs.Instances[0].DrawDistance,
+        "UYA shrub writer should preserve unsupported record fields");
 }
 
 static void ValidateGameplayGeometryParsing()
@@ -1510,6 +2438,96 @@ static void ValidateCoreLevelSegments()
     Expect(palette.RawBytes.SequenceEqual(compressed), "compressed segment raw bytes should be preserved");
     Expect(palette.PayloadBytes.SequenceEqual(decompressed), "compressed segment payload should be decompressed");
     Expect(palette.WasCompressedWad, "compressed segment should be marked as compressed WAD");
+}
+
+static void ValidateWadCompression()
+{
+    var empty = WadCompression.CompressVerified([]);
+    Expect(empty.CompressedBytes.SequenceEqual(new byte[]
+    {
+        0x57, 0x41, 0x44, 0x10, 0, 0, 0, 0x52, 0x41, 0x43, 0x43, 0x4c, 0x49, 0x30, 0x30, 0x31,
+    }), "empty WAD compression should match the stable golden vector");
+    var oneByte = WadCompression.CompressVerified([1]);
+    Expect(oneByte.CompressedBytes.SequenceEqual(new byte[]
+    {
+        0x57, 0x41, 0x44, 0x14, 0, 0, 0, 0x52, 0x41, 0x43, 0x43, 0x4c, 0x49, 0x30, 0x30, 0x31,
+        0x11, 0x01, 0x00, 0x01,
+    }), "single-byte WAD compression should match the stable golden vector");
+
+    var random = new Random(0x524143);
+    foreach (var length in new[] { 0, 1, 2, 3, 17, 18, 19, 263, 264, 265, 272, 273, 274, 0x1fef, 0x1ff0, 0x1ff1 })
+    {
+        var bytes = new byte[length];
+        random.NextBytes(bytes);
+        ExpectVerifiedWadRoundTrip(bytes);
+    }
+    for (var index = 0; index < 40; index++)
+    {
+        var bytes = new byte[random.Next(0, 4097)];
+        random.NextBytes(bytes);
+        ExpectVerifiedWadRoundTrip(bytes);
+    }
+
+    var repetitive = Enumerable.Repeat((byte)0xA5, 0x10000).ToArray();
+    var repetitiveResult = ExpectVerifiedWadRoundTrip(repetitive);
+    Expect(repetitiveResult.CompressedSize < repetitiveResult.UncompressedSize,
+        "repetitive WAD input should exercise match compression");
+    ExpectThrows<InvalidDataException>(() => WadCompression.Decompress(
+        repetitiveResult.CompressedBytes,
+        new WadDecompressionOptions(MaxOutputBytes: 0x1000, MaxExpansionRatio: 1024)));
+    ExpectThrows<InvalidDataException>(() => WadCompression.Decompress(
+        repetitiveResult.CompressedBytes,
+        new WadDecompressionOptions(MaxOutputBytes: repetitive.Length, MaxExpansionRatio: 1)));
+
+    ExpectThrows<InvalidDataException>(() => WadCompression.Decompress(new byte[15]));
+    ExpectThrows<InvalidDataException>(() => WadCompression.Decompress(CreateRawCompressedWad([0x40, 0x00])));
+    ExpectThrows<InvalidDataException>(() => WadCompression.Decompress(CreateRawCompressedWad([0x01, 1, 2, 3, 4, 0x01])));
+    ExpectThrows<InvalidDataException>(() => WadCompression.Decompress(CreateRawCompressedWad([0x12, 0x00, 0x00])));
+    ExpectThrows<ArgumentOutOfRangeException>(() => WadCompression.Decompress(
+        empty.CompressedBytes, new WadDecompressionOptions(MaxExpansionRatio: 0)));
+
+    var invalidSize = CreateRawCompressedWad([]);
+    WriteInt32(invalidSize, 3, 15);
+    ExpectThrows<InvalidDataException>(() => WadCompression.Decompress(invalidSize));
+    var invalidMagic = CreateRawCompressedWad([]);
+    invalidMagic[0] = 0;
+    ExpectThrows<InvalidDataException>(() => WadCompression.Decompress(invalidMagic));
+    var oversizedDeclaration = CreateRawCompressedWad([]);
+    WriteInt32(oversizedDeclaration, 3, oversizedDeclaration.Length + 1);
+    ExpectThrows<InvalidDataException>(() => WadCompression.Decompress(oversizedDeclaration));
+    var truncated = oneByte.CompressedBytes[..^1];
+    WriteInt32(truncated, 3, truncated.Length);
+    ExpectThrows<InvalidDataException>(() => WadCompression.Decompress(truncated));
+
+    using var cancellation = new CancellationTokenSource();
+    cancellation.Cancel();
+    ExpectThrows<OperationCanceledException>(() => WadCompression.CompressVerified(repetitive, cancellationToken: cancellation.Token));
+    ExpectThrows<OperationCanceledException>(() => WadCompression.Decompress(
+        repetitiveResult.CompressedBytes, new WadDecompressionOptions(), cancellation.Token));
+}
+
+static WadCompressionResult ExpectVerifiedWadRoundTrip(byte[] bytes)
+{
+    var first = WadCompression.CompressVerified(bytes);
+    var second = WadCompression.CompressVerified(bytes);
+    Expect(first.CompressedBytes.SequenceEqual(second.CompressedBytes),
+        "equal WAD inputs should produce deterministic compressed bytes");
+    Expect(first.UncompressedSize == bytes.Length && first.CompressedSize == first.CompressedBytes.Length,
+        "verified WAD compression should report exact sizes");
+    Expect(first.UncompressedSha256.Length == 64 && first.CompressedSha256.Length == 64,
+        "verified WAD compression should report SHA-256 values");
+    Expect(WadCompression.Decompress(first.CompressedBytes).SequenceEqual(bytes),
+        "verified WAD compression should decompress byte-for-byte");
+    return first;
+}
+
+static byte[] CreateRawCompressedWad(byte[] packets)
+{
+    var bytes = new byte[0x10 + packets.Length];
+    "WAD"u8.CopyTo(bytes);
+    WriteInt32(bytes, 3, bytes.Length);
+    packets.CopyTo(bytes.AsSpan(0x10));
+    return bytes;
 }
 
 static void ValidateGameplayLevelSettingsParsing()
@@ -2905,4 +3923,9 @@ static void ExpectThrows<TException>(Action action)
     }
 
     throw new InvalidOperationException($"Expected {typeof(TException).Name}.");
+}
+
+sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
+{
+    public void Report(T value) => report(value);
 }

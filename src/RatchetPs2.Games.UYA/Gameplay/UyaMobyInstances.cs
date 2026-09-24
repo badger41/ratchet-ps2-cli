@@ -35,7 +35,7 @@ public static class UyaMobyInstancesReader
         var instances = new List<UyaMobyInstance>(staticCount);
         for (var i = 0; i < staticCount; i++)
         {
-            instances.Add(ReadInstance(data, HeaderSize + (i * RecordSize)));
+            instances.Add(ReadInstanceAt(data, HeaderSize + (i * RecordSize)));
         }
 
         var tailOffset = HeaderSize + recordsLength;
@@ -48,7 +48,13 @@ public static class UyaMobyInstancesReader
             data[tailOffset..].ToArray());
     }
 
-    private static UyaMobyInstance ReadInstance(ReadOnlySpan<byte> data, int offset)
+    public static UyaMobyInstance ReadInstance(ReadOnlySpan<byte> data)
+    {
+        EnsureRange(data, 0, RecordSize, "UYA moby instance");
+        return ReadInstanceAt(data, 0);
+    }
+
+    private static UyaMobyInstance ReadInstanceAt(ReadOnlySpan<byte> data, int offset)
     {
         return new UyaMobyInstance(
             ReadInt32LittleEndian(data, offset),
