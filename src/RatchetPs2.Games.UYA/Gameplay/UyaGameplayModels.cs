@@ -8,7 +8,8 @@ public sealed record UyaGameplayBlocks(
     byte[] HeaderBytes,
     GameplayPvarTables? PvarTables,
     IReadOnlyList<UyaGameplayBlock> Blocks,
-    GameplayGeometry Geometry);
+    GameplayGeometry Geometry,
+    UyaGameplayLighting Lighting);
 
 public sealed record UyaGameplayBlock(
     int Index,
@@ -19,4 +20,7 @@ public sealed record UyaGameplayBlock(
     UyaLevelSettings? LevelSettings = null,
     UyaMobyInstances? MobyInstances = null,
     UyaTieInstances? TieInstances = null,
-    UyaShrubInstances? ShrubInstances = null);
+    UyaShrubInstances? ShrubInstances = null,
+    UyaCameraInstances? CameraInstances = null,
+    UyaSoundInstances? SoundInstances = null,
+    UyaCameraCollisionGrid? CameraCollisionGrid = null);

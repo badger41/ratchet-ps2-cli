@@ -4,7 +4,11 @@ namespace RatchetPs2.Core.Gameplay;
 
 public sealed record GameplayGeometry(
     GameplayCuboid[] Cuboids,
+    GameplayShape[] Spheres,
+    GameplayShape[] Cylinders,
+    GameplayShape[] Pills,
     GameplaySpline[] Splines,
+    GameplayGrindPath[] GrindPaths,
     GameplayArea[] Areas);
 
 public sealed record GameplayCuboid(
@@ -15,6 +19,20 @@ public sealed record GameplayCuboid(
 
 public sealed record GameplaySpline(
     int Index,
+    GameplayVector4[] Points);
+
+public sealed record GameplayShape(
+    int Index,
+    float[] Matrix,
+    float[] InverseRotationMatrix,
+    GameplayVector3 Rotation);
+
+public sealed record GameplayGrindPath(
+    int Index,
+    GameplayVector4 BoundingSphere,
+    int Unknown4,
+    int Wrap,
+    int Inactive,
     GameplayVector4[] Points);
 
 public sealed record GameplayArea(
@@ -36,11 +54,19 @@ public static class GameplayGeometryReader
     public static GameplayGeometry Read(IReadOnlyList<GameplayRawBlock> blocks)
     {
         var cuboidBytes = FindPayload(blocks, "cuboids");
+        var sphereBytes = FindPayload(blocks, "spheres");
+        var cylinderBytes = FindPayload(blocks, "cylinders");
+        var pillBytes = FindPayload(blocks, "pills");
         var splineBytes = FindPayload(blocks, "splines");
+        var grindPathBytes = FindPayload(blocks, "grind_splines");
         var areaBytes = FindPayload(blocks, "areas");
         return new GameplayGeometry(
             cuboidBytes.Length >= 0x10 ? ReadCuboids(cuboidBytes) : [],
+            sphereBytes.Length >= 0x10 ? ReadShapes(sphereBytes, "sphere") : [],
+            cylinderBytes.Length >= 0x10 ? ReadShapes(cylinderBytes, "cylinder") : [],
+            pillBytes.Length >= 0x10 ? ReadShapes(pillBytes, "pill") : [],
             splineBytes.Length >= 0x10 ? ReadSplines(splineBytes) : [],
+            grindPathBytes.Length >= 0x10 ? ReadGrindPaths(grindPathBytes) : [],
             areaBytes.Length >= 0x24 ? ReadAreas(areaBytes) : []);
     }
 
@@ -112,6 +138,83 @@ public static class GameplayGeometryReader
         }
 
         return splines;
+    }
+
+    public static GameplayShape[] ReadShapes(ReadOnlySpan<byte> data, string shapeName)
+    {
+        if (data.IsEmpty)
+        {
+            return [];
+        }
+
+        EnsureRange(data, 0, 0x10, $"gameplay {shapeName} header");
+        var count = ReadNonNegativeInt32(data, 0, $"gameplay {shapeName} count");
+        EnsureRange(data, 0x10, checked(count * 0x80), $"gameplay {shapeName} records");
+
+        var shapes = new GameplayShape[count];
+        for (var index = 0; index < count; index++)
+        {
+            var offset = 0x10 + (index * 0x80);
+            shapes[index] = new GameplayShape(
+                index,
+                ReadFloats(data, offset, 16),
+                ReadFloats(data, offset + 0x40, 12),
+                ReadVector3(data, offset + 0x70));
+        }
+        return shapes;
+    }
+
+    public static GameplayGrindPath[] ReadGrindPaths(ReadOnlySpan<byte> data)
+    {
+        if (data.IsEmpty)
+        {
+            return [];
+        }
+
+        EnsureRange(data, 0, 0x10, "gameplay grind path header");
+        var count = ReadNonNegativeInt32(data, 0, "gameplay grind path count");
+        var dataOffset = ReadNonNegativeInt32(data, 4, "gameplay grind path data offset");
+        var dataSize = ReadNonNegativeInt32(data, 8, "gameplay grind path data size");
+        EnsureRange(data, 0x10, checked(count * 0x20), "gameplay grind path records");
+        var offsetsOffset = checked(0x10 + (count * 0x20));
+        EnsureRange(data, offsetsOffset, checked(count * 4), "gameplay grind path offset table");
+        EnsureRange(data, dataOffset, dataSize, "gameplay grind path data");
+        if (offsetsOffset + (count * 4) > dataOffset)
+        {
+            throw new InvalidDataException("Gameplay grind path offset table overlaps spline data.");
+        }
+
+        var dataEnd = checked(dataOffset + dataSize);
+        var paths = new GameplayGrindPath[count];
+        for (var index = 0; index < count; index++)
+        {
+            var metadataOffset = 0x10 + (index * 0x20);
+            var relativeOffset = ReadNonNegativeInt32(
+                data, offsetsOffset + (index * 4), $"gameplay grind path {index} offset");
+            var offset = checked(dataOffset + relativeOffset);
+            EnsureRange(data, offset, 0x10, $"gameplay grind path {index} spline header");
+            var pointCount = ReadNonNegativeInt32(data, offset, $"gameplay grind path {index} point count");
+            var pointBytes = checked(pointCount * 0x10);
+            EnsureRange(data, offset + 0x10, pointBytes, $"gameplay grind path {index} points");
+            if (offset + 0x10 + pointBytes > dataEnd)
+            {
+                throw new InvalidDataException($"Gameplay grind path {index} points extend beyond spline data.");
+            }
+
+            var points = new GameplayVector4[pointCount];
+            for (var pointIndex = 0; pointIndex < pointCount; pointIndex++)
+            {
+                points[pointIndex] = ReadVector4(data, offset + 0x10 + (pointIndex * 0x10));
+            }
+            paths[index] = new GameplayGrindPath(
+                index,
+                ReadVector4(data, metadataOffset),
+                ReadInt32LittleEndian(data, metadataOffset + 0x10),
+                ReadInt32LittleEndian(data, metadataOffset + 0x14),
+                ReadInt32LittleEndian(data, metadataOffset + 0x18),
+                points);
+        }
+        return paths;
     }
 
     public static GameplayArea[] ReadAreas(ReadOnlySpan<byte> data)

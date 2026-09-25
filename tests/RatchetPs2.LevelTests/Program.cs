@@ -4,6 +4,7 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using RatchetPs2.Core.Games;
+using RatchetPs2.Core.Gameplay;
 using RatchetPs2.Core.Hud;
 using RatchetPs2.Core.LevelAssets;
 using RatchetPs2.Core.Moby;
@@ -117,6 +118,7 @@ ValidateUyaCustomMapZipUnpacking();
 ValidateUyaGameplayTypedParsing();
 ValidateUyaStaticInstanceParsing();
 ValidateGameplayGeometryParsing();
+ValidateUyaGameplayLightingParsing();
 ValidateUyaAssetRenderPackageBuild();
 ValidateChunkTfragAssetRenderPackageWhenAvailable();
 ValidateChunkTfragWadReaderWhenAvailable();
@@ -1684,7 +1686,7 @@ static void ValidateUyaLooseLevelWadUnpacking()
     Expect(files["gameplay/core/directional_lights.bin"].Bytes.SequenceEqual(new byte[] { 0xB1, 0xB2 }), "UYA loose WAD unpack should split gameplay directional lights");
     Expect(files["gameplay/core/us_english_strings.bin"].Bytes.SequenceEqual(new byte[] { 0xD1, 0xD2 }), "UYA loose WAD unpack should name language blocks as strings");
     Expect(files["gameplay/core/splines.bin"].Bytes.SequenceEqual(new byte[] { 0xE1, 0xE2 }), "UYA loose WAD unpack should name path blocks as splines");
-    Expect(files["gameplay/core/grind_splines.bin"].Bytes[..2].SequenceEqual(new byte[] { 0xF1, 0xF2 }), "UYA loose WAD unpack should name grind path blocks as grind splines");
+    Expect(files["gameplay/core/grind_splines.bin"].Bytes[0x10..0x12].SequenceEqual(new byte[] { 0xF1, 0xF2 }), "UYA loose WAD unpack should name grind path blocks as grind splines");
     Expect(files["gameplay/core/moby_instances.bin"].Bytes[..2].SequenceEqual(new byte[] { 0xC1, 0xC2 }), "UYA loose WAD unpack should split gameplay moby instances");
     Expect(files["occlusion/occlusion.bin"].Bytes[0] == 0x61, "UYA loose WAD unpack should include occlusion bytes");
     Expect(files["level_wad/chunks/chunk0.wad"].Bytes[0] == 0x71, "UYA loose WAD unpack should include chunk bytes");
@@ -1777,6 +1779,19 @@ static void ValidateUyaGameplayTypedParsing()
     levelSettingsBytes[^2] = 0xaa;
     levelSettingsBytes[^1] = 0xbb;
 
+    var cameraCollisionBytes = new byte[0x4050];
+    WriteInt32(cameraCollisionBytes, 0x10, 0x4000);
+    WriteInt32(cameraCollisionBytes, 0x4010, 1);
+    WriteSingle(cameraCollisionBytes, 0x4020, 10);
+    WriteSingle(cameraCollisionBytes, 0x4024, 20);
+    WriteSingle(cameraCollisionBytes, 0x4028, 0);
+    WriteSingle(cameraCollisionBytes, 0x402c, 8);
+    WriteInt32(cameraCollisionBytes, 0x4030, 3);
+    WriteInt32(cameraCollisionBytes, 0x4034, 2);
+    WriteInt32(cameraCollisionBytes, 0x4038, 0x40);
+    WriteInt32(cameraCollisionBytes, 0x403c, 7);
+    WriteSingle(cameraCollisionBytes, 0x4040, 1.5f);
+
     var mobyBytes = new byte[UyaMobyInstancesReader.HeaderSize + UyaMobyInstancesReader.RecordSize];
     WriteInt32(mobyBytes, 0x00, 1);
     WriteInt32(mobyBytes, 0x04, 400);
@@ -1826,7 +1841,8 @@ static void ValidateUyaGameplayTypedParsing()
         (0x58, [0x01, 0x02]),
         (0x5c, [0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00]),
         (0x60, [0xde, 0xad, 0xbe, 0xef]),
-        (0x64, [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff])));
+        (0x64, [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]),
+        (0x88, cameraCollisionBytes)));
     var settings = gameplay.Blocks.Single(block => block.SemanticName == "level_settings").LevelSettings;
     var mobyInstances = gameplay.Blocks.Single(block => block.SemanticName == "moby_instances").MobyInstances;
 
@@ -1861,6 +1877,33 @@ static void ValidateUyaGameplayTypedParsing()
     Expect(moby.Color == new UyaRgb96(86, 77, 2), "UYA moby instance color should be parsed");
     Expect(moby.Unknown84 == -1, "UYA moby instance 0x84 field should be parsed");
     Expect(gameplay.Blocks.Single(block => block.SemanticName == "pvar_data").PayloadBytes.SequenceEqual(new byte[] { 0xde, 0xad, 0xbe, 0xef }), "UYA pvar data payload should be exposed");
+    var cameraCollision = gameplay.Blocks.Single(block => block.SemanticName == "camera_collision_grid").CameraCollisionGrid;
+    Expect(cameraCollision?.OccupiedCellCount == 1, "UYA camera collision occupied cell count should be parsed");
+    Expect(cameraCollision?.Primitives.Single() is { Type: 3, Index: 2, Flags: 0x40, IntValue: 7, FloatValue: 1.5f },
+        "UYA camera collision primitive metadata should be parsed");
+
+    var occlusionBytes = new byte[0xb0];
+    WriteInt32(occlusionBytes, 0, 0x30);
+    WriteUInt16(occlusionBytes, 4, 1);
+    WriteUInt16(occlusionBytes, 6, 1);
+    WriteUInt16(occlusionBytes, 8, 3);
+    WriteUInt16(occlusionBytes, 12, 2);
+    WriteUInt16(occlusionBytes, 14, 1);
+    WriteUInt16(occlusionBytes, 16, 5);
+    WriteUInt16(occlusionBytes, 20, 3);
+    WriteUInt16(occlusionBytes, 22, 1);
+    WriteUInt16(occlusionBytes, 24, 0);
+    var occlusion = UyaOcclusionGridReader.Read(occlusionBytes);
+    Expect(occlusion.Octants.Single() == new UyaOcclusionOctant(3, 2, 1, 0),
+        "UYA occlusion octant coordinates should be parsed");
+    var assetHeader = new byte[0xc4];
+    WriteInt32(assetHeader, 0x0c, 0x100);
+    WriteInt32(assetHeader, 0x14, 0x1b0);
+    var assetWad = new byte[0x1b0];
+    occlusionBytes.CopyTo(assetWad, 0x100);
+    var routedOcclusion = UyaOcclusionGridReader.ReadLevelAsset(assetHeader, assetWad);
+    Expect(routedOcclusion.Octants.Single() == new UyaOcclusionOctant(3, 2, 1, 0),
+        "UYA occlusion grid should be located through the level asset header");
 
     var editedMoby = new UyaMobyInstanceEdit(
         0x1234,
@@ -1892,6 +1935,35 @@ static void ValidateUyaGameplayTypedParsing()
 
 static void ValidateUyaStaticInstanceParsing()
 {
+    var cameras = new byte[UyaCameraInstancesReader.HeaderSize + UyaCameraInstancesReader.RecordSize];
+    WriteInt32(cameras, 0, 1);
+    WriteInt32(cameras, 0x10, 7);
+    WriteSingle(cameras, 0x14, 10);
+    WriteSingle(cameras, 0x18, 20);
+    WriteSingle(cameras, 0x1c, 30);
+    WriteSingle(cameras, 0x20, 0.1f);
+    WriteSingle(cameras, 0x24, 0.2f);
+    WriteSingle(cameras, 0x28, 0.3f);
+    WriteInt32(cameras, 0x2c, 4);
+
+    var sounds = new byte[UyaSoundInstancesReader.HeaderSize + UyaSoundInstancesReader.RecordSize];
+    WriteInt32(sounds, 0, 1);
+    WriteInt16(sounds, 0x10, 8);
+    WriteInt16(sounds, 0x12, 9);
+    WriteInt32(sounds, 0x14, 0x12345678);
+    WriteInt32(sounds, 0x18, 5);
+    WriteSingle(sounds, 0x1c, 64);
+    WriteSingle(sounds, 0x20, 2);
+    WriteSingle(sounds, 0x34, 3);
+    WriteSingle(sounds, 0x48, 4);
+    WriteSingle(sounds, 0x50, 100);
+    WriteSingle(sounds, 0x54, 200);
+    WriteSingle(sounds, 0x58, 300);
+    WriteSingle(sounds, 0x60, 0.5f);
+    WriteSingle(sounds, 0x90, 0.1f);
+    WriteSingle(sounds, 0x94, 0.2f);
+    WriteSingle(sounds, 0x98, 0.3f);
+
     var ties = new byte[UyaTieInstancesReader.HeaderSize + UyaTieInstancesReader.RecordSize + 2];
     WriteInt32(ties, 0, 1);
     WriteInt32(ties, 4, 2);
@@ -1918,8 +1990,12 @@ static void ValidateUyaStaticInstanceParsing()
 
     var gameplay = UyaGameplayBlockReader.ReadCore(BuildGameplayData(
         UyaGameplayBlockReader.CoreHeaderSize,
+        (0x08, cameras),
+        (0x0c, sounds),
         (0x34, ties),
         (0x40, shrubs)));
+    var parsedCameras = gameplay.Blocks.Single(block => block.SemanticName == "cameras").CameraInstances!;
+    var parsedSounds = gameplay.Blocks.Single(block => block.SemanticName == "sound_instances").SoundInstances!;
     var parsedTies = gameplay.Blocks.Single(block => block.SemanticName == "tie_instances").TieInstances!;
     var parsedShrubs = gameplay.Blocks.Single(block => block.SemanticName == "shrub_instances").ShrubInstances!;
 
@@ -1932,7 +2008,15 @@ static void ValidateUyaStaticInstanceParsing()
     Expect(parsedShrubs.Count == 1 && parsedShrubs.Instances[0].ClassId == 0x20f0, "UYA shrub class should be parsed");
     Expect(parsedShrubs.Instances[0].DrawDistance == 256, "UYA shrub draw distance should be parsed");
     Expect(parsedShrubs.Instances[0].Transform.Position.X == -5, "UYA shrub position should be parsed");
+    Expect(parsedCameras.Instances.Single() is { Type: 7, PvarIndex: 4 }
+        && parsedCameras.Instances.Single().Position == new GameplayVector3(10, 20, 30),
+        "UYA camera instance should be parsed");
+    Expect(parsedSounds.Instances.Single() is { ClassId: 8, MissionClass: 9, PvarIndex: 5, Range: 64 }
+        && parsedSounds.Instances.Single().Matrix[15] == 0
+        && parsedSounds.Instances.Single().Rotation.Z == 0.3f,
+        "UYA sound instance should be parsed");
     ExpectThrows<InvalidDataException>(() => UyaTieInstancesReader.Read(ties.AsSpan(0, ties.Length - 3)));
+    ExpectThrows<InvalidDataException>(() => UyaSoundInstancesReader.Read(sounds.AsSpan(0, sounds.Length - 1)));
 
     var edited = new UyaStaticInstanceEdit(
         0x3456,
@@ -1985,6 +2069,22 @@ static void ValidateGameplayGeometryParsing()
     WriteSingle(splineBytes, 0x48, 7);
     WriteSingle(splineBytes, 0x4c, 8);
 
+    var grindPathBytes = new byte[0x70];
+    WriteInt32(grindPathBytes, 0, 1);
+    WriteInt32(grindPathBytes, 4, 0x40);
+    WriteInt32(grindPathBytes, 8, 0x30);
+    WriteSingle(grindPathBytes, 0x10, 10);
+    WriteSingle(grindPathBytes, 0x1c, 40);
+    WriteInt32(grindPathBytes, 0x20, 11);
+    WriteInt32(grindPathBytes, 0x24, 1);
+    WriteInt32(grindPathBytes, 0x28, 2);
+    WriteInt32(grindPathBytes, 0x30, 0);
+    WriteInt32(grindPathBytes, 0x40, 2);
+    WriteSingle(grindPathBytes, 0x50, 1);
+    WriteSingle(grindPathBytes, 0x5c, 4);
+    WriteSingle(grindPathBytes, 0x60, 5);
+    WriteSingle(grindPathBytes, 0x6c, 8);
+
     var areaBytes = new byte[0x5c];
     WriteInt32(areaBytes, 0, areaBytes.Length - 4);
     WriteInt32(areaBytes, 4, 1);
@@ -2005,17 +2105,29 @@ static void ValidateGameplayGeometryParsing()
         (Game: "DL", Value: DlGameplayBlockReader.ReadCore(BuildGameplayData(
             DlGameplayLayout.CoreHeaderSize,
             (0x4c, cuboidBytes),
+            (0x50, cuboidBytes),
+            (0x54, cuboidBytes),
+            (0x58, cuboidBytes),
             (0x5c, splineBytes),
+            (0x60, grindPathBytes),
             (0x74, areaBytes))).Geometry),
         (Game: "UYA", Value: UyaGameplayBlockReader.ReadCore(BuildGameplayData(
             UyaGameplayLayout.CoreHeaderSize,
             (0x68, cuboidBytes),
+            (0x6c, cuboidBytes),
+            (0x70, cuboidBytes),
+            (0x74, cuboidBytes),
             (0x78, splineBytes),
+            (0x7c, grindPathBytes),
             (0x98, areaBytes))).Geometry),
         (Game: "GC", Value: UyaGameplayBlockReader.ReadCore(BuildGameplayData(
             GcGameplayLayout.CoreHeaderSize,
             (0x68, cuboidBytes),
+            (0x6c, cuboidBytes),
+            (0x70, cuboidBytes),
+            (0x74, cuboidBytes),
             (0x78, splineBytes),
+            (0x7c, grindPathBytes),
             (0x98, areaBytes)), GcGameplayLayout.Core).Geometry)
     };
 
@@ -2023,10 +2135,111 @@ static void ValidateGameplayGeometryParsing()
     {
         var cuboid = geometry.Value.Cuboids.Single();
         Expect(cuboid.Matrix[15] == 4 && cuboid.InverseRotationMatrix[0] == 5 && cuboid.Rotation.Z == 0.75f, $"{geometry.Game} cuboid should be parsed");
+        Expect(geometry.Value.Spheres.Single().Matrix[15] == 4, $"{geometry.Game} sphere should be parsed");
+        Expect(geometry.Value.Cylinders.Single().InverseRotationMatrix[0] == 5, $"{geometry.Game} cylinder should be parsed");
+        Expect(geometry.Value.Pills.Single().Rotation.Z == 0.75f, $"{geometry.Game} pill should be parsed");
         Expect(geometry.Value.Splines.Single().Points[1].W == 8, $"{geometry.Game} spline points should be parsed");
+        var grindPath = geometry.Value.GrindPaths.Single();
+        Expect(grindPath.BoundingSphere.W == 40 && grindPath.Unknown4 == 11
+            && grindPath.Wrap == 1 && grindPath.Inactive == 2 && grindPath.Points[1].W == 8,
+            $"{geometry.Game} grind path should be parsed");
         Expect(geometry.Value.Areas.Single().SplineIndices.SequenceEqual([7]), $"{geometry.Game} area spline links should be parsed");
         Expect(geometry.Value.Areas.Single().CuboidIndices.SequenceEqual([9]), $"{geometry.Game} area cuboid links should be parsed");
     }
+}
+
+static void ValidateUyaGameplayLightingParsing()
+{
+    var directional = new byte[0x50];
+    WriteInt32(directional, 0, 1);
+    WriteSingle(directional, 0x10, 0.25f);
+    WriteSingle(directional, 0x2c, -1);
+    WriteSingle(directional, 0x40, 0.75f);
+
+    var point = new byte[0x820];
+    WriteInt32(point, 0, 1);
+    point[0x10 + 16] = 1;
+    point[0x10 + 32] = 1;
+    point[0x410] = 1;
+    point[0x410 + 16] = 1;
+    WriteUInt16(point, 0x810, 32 * 64);
+    WriteUInt16(point, 0x812, 16 * 64);
+    WriteUInt16(point, 0x814, 8 * 64);
+    WriteUInt16(point, 0x816, 8 * 64);
+    WriteUInt16(point, 0x818, 0xffff);
+    WriteUInt16(point, 0x81a, 0x8000);
+    WriteUInt16(point, 0x81c, 0x4000);
+
+    var sample = new byte[0x30];
+    WriteInt32(sample, 0, 1);
+    WriteInt32(sample, 0x10, 3);
+    WriteInt16(sample, 0x14, 40);
+    WriteInt16(sample, 0x16, 80);
+    WriteInt16(sample, 0x18, 120);
+    WriteInt16(sample, 0x1a, 7);
+    WriteInt16(sample, 0x1c, 9);
+    sample[0x20] = 10;
+    sample[0x21] = 20;
+    sample[0x22] = 30;
+    sample[0x23] = 4;
+    sample[0x27] = 40;
+    sample[0x28] = 50;
+    sample[0x29] = 60;
+    WriteInt16(sample, 0x2a, 100);
+    WriteInt16(sample, 0x2c, 200);
+
+    var transition = new byte[0xa0];
+    WriteInt32(transition, 0, 1);
+    WriteSingle(transition, 0x10, 1);
+    WriteSingle(transition, 0x1c, 4);
+    WriteSingle(transition, 0x20, 1);
+    WriteSingle(transition, 0x34, 1);
+    WriteSingle(transition, 0x48, 1);
+    WriteSingle(transition, 0x5c, 1);
+    transition[0x60] = 1;
+    transition[0x64] = 2;
+    WriteInt32(transition, 0x68, 5);
+    WriteInt32(transition, 0x6c, 6);
+    WriteInt32(transition, 0x70, 3);
+    WriteSingle(transition, 0x7c, 10);
+    WriteSingle(transition, 0x98, 80);
+
+    var ties = new byte[0x70];
+    WriteInt32(ties, 0, 1);
+    WriteInt32(ties, 0x60, 12);
+    var ambient = new byte[10];
+    WriteInt16(ambient, 0, 0);
+    WriteInt16(ambient, 2, 2);
+    ambient[4] = 0x11;
+    ambient[5] = 0x22;
+    ambient[6] = 0x33;
+    ambient[7] = 0x44;
+    WriteInt16(ambient, 8, -1);
+
+    var gameplay = UyaGameplayBlockReader.ReadCore(BuildGameplayData(
+        UyaGameplayLayout.CoreHeaderSize,
+        (0x04, directional), (0x34, ties), (0x80, point),
+        (0x84, transition), (0x8c, sample), (0x94, ambient)));
+    var lighting = gameplay.Lighting;
+    Expect(lighting.DirectionalLights.Single().TopColor.X == 0.25f
+        && lighting.DirectionalLights.Single().InverseDirection.X == 0.75f,
+        "UYA directional lights should be parsed");
+    Expect(lighting.PointLights.MasksMatchDerived
+        && lighting.PointLights.Lights.Single().Position == new GameplayVector3(32, 16, 8)
+        && lighting.PointLights.Lights.Single().ColorR == 0xffff,
+        "UYA point lights and masks should be parsed");
+    Expect(lighting.EnvironmentSamplePoints.Single().Position == new GameplayVector3(10, 20, 30)
+        && lighting.EnvironmentSamplePoints.Single().FogColor == new UyaRgb24(40, 50, 60),
+        "UYA environment sample points should be parsed");
+    Expect(lighting.EnvironmentTransitions.Single().BoundingSphere.W == 4
+        && lighting.EnvironmentTransitions.Single().Flags == 3
+        && lighting.EnvironmentTransitions.Single().FogFarIntensity2 == 80,
+        "UYA environment transitions should be parsed");
+    Expect(gameplay.Blocks.Single(block => block.TieInstances is not null)
+        .TieInstances!.Instances.Single().DirectionalLights == 12,
+        "UYA tie directional-light selector should be parsed");
+    Expect(lighting.TieAmbientRgbas.Single().SequenceEqual(new byte[] { 0x11, 0x22, 0x33, 0x44 }),
+        "UYA tie ambient words should be associated by source index");
 }
 
 static void ValidateUyaAssetRenderPackageBuild()
@@ -3739,7 +3952,7 @@ static byte[] CreateSyntheticUyaGameplay()
         (0x10, [0xD1, 0xD2]),
         (0x4c, [0xC1, 0xC2]),
         (0x78, [0xE1, 0xE2]),
-        (0x7c, [0xF1, 0xF2]));
+        (0x7c, [0, 0, 0, 0, 0x10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xF1, 0xF2]));
 }
 
 static byte[] CreateSyntheticUyaLevelData()

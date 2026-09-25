@@ -27,7 +27,8 @@ public static class UyaTieInstancesReader
     private static UyaTieInstance ReadInstance(byte[] bytes) => new(
         ReadInt32LittleEndian(bytes, 0),
         UyaStaticInstanceReader.ReadTransform(bytes),
-        bytes);
+        bytes,
+        ReadInt32LittleEndian(bytes, 0x50));
 }
 
 public static class UyaShrubInstancesReader
@@ -109,7 +110,11 @@ public sealed record UyaShrubInstances(
     IReadOnlyList<UyaShrubInstance> Instances,
     byte[] TrailingBytes);
 
-public sealed record UyaTieInstance(int ClassId, UyaInstanceTransform Transform, byte[] RawBytes);
+public sealed record UyaTieInstance(
+    int ClassId,
+    UyaInstanceTransform Transform,
+    byte[] RawBytes,
+    int DirectionalLights = 0);
 
 public sealed record UyaShrubInstance(int ClassId, float DrawDistance, UyaInstanceTransform Transform, byte[] RawBytes);
 
