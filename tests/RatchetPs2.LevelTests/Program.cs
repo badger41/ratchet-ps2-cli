@@ -1859,6 +1859,18 @@ static void ValidateUyaGameplayTypedParsing()
     Expect(settings.Rac3ThirdPart == 1234, "UYA level settings R&C3 tail field should be parsed");
     Expect(settings.TrailingBytes.SequenceEqual(new byte[] { 0xaa, 0xbb }), "UYA level settings trailing bytes should be preserved");
 
+    var editedSettingsBytes = UyaLevelSettingsWriter.Write(levelSettingsBytes, new(
+        new(1, 2, 3), new(4, 5, 6), 1024, 2048, 127.5f, 32));
+    var editedSettings = UyaLevelSettingsReader.Read(editedSettingsBytes);
+    Expect(editedSettings.BackgroundColor == new UyaRgb96(1, 2, 3), "UYA level settings background color should serialize");
+    Expect(editedSettings.FogColor == new UyaRgb96(4, 5, 6), "UYA level settings fog color should serialize");
+    Expect(editedSettings.FogNearDistance == 1024 && editedSettings.FogFarDistance == 2048,
+        "UYA level settings fog distances should serialize");
+    Expect(editedSettings.FogNearIntensity == 127.5f && editedSettings.FogFarIntensity == 32,
+        "UYA level settings fog intensities should serialize");
+    Expect(editedSettingsBytes.AsSpan(0x28).SequenceEqual(levelSettingsBytes.AsSpan(0x28)),
+        "UYA level settings writer should preserve unsupported bytes");
+
     Expect(mobyInstances is not null, "UYA core moby_instances block should be parsed into a typed model");
     Expect(mobyInstances!.StaticCount == 1, "UYA moby instance static count should be parsed");
     Expect(mobyInstances.SpawnableMobyCount == 400, "UYA moby instance spawnable count should be parsed");
@@ -2041,6 +2053,21 @@ static void ValidateUyaStaticInstanceParsing()
         [edited with { TemplateBytes = parsedShrubs.Instances[0].RawBytes }]));
     Expect(rebuiltShrubs.Instances.Single().DrawDistance == parsedShrubs.Instances[0].DrawDistance,
         "UYA shrub writer should preserve unsupported record fields");
+
+    var quarterTurn = new UyaQuaternion(0, 0, MathF.Sin(MathF.PI / 4), MathF.Cos(MathF.PI / 4));
+    var rebuiltCameras = UyaCameraInstancesReader.Read(UyaCameraInstancesWriter.Write(cameras,
+        [new(0, new(100, 200, 300), quarterTurn)]));
+    Expect(rebuiltCameras.Instances.Single() is { Type: 7, PvarIndex: 4 }
+        && rebuiltCameras.Instances.Single().Position == new GameplayVector3(100, 200, 300)
+        && MathF.Abs(rebuiltCameras.Instances.Single().Rotation.Z - MathF.PI / 2) < 0.0001f,
+        "UYA camera writer should update transforms and preserve other fields");
+    var rebuiltSounds = UyaSoundInstancesReader.Read(UyaSoundInstancesWriter.Write(sounds,
+        [new(0, new(400, 500, 600), quarterTurn, new(2, 3, 4))]));
+    var rebuiltSound = rebuiltSounds.Instances.Single();
+    Expect(rebuiltSound is { ClassId: 8, MissionClass: 9, PvarIndex: 5, Range: 64 }
+        && rebuiltSound.Matrix[12] == 400 && rebuiltSound.Matrix[13] == 500 && rebuiltSound.Matrix[14] == 600
+        && MathF.Abs(rebuiltSound.Rotation.Z - MathF.PI / 2) < 0.0001f,
+        "UYA sound writer should update transforms and preserve other fields");
 }
 
 static void ValidateGameplayGeometryParsing()
@@ -2146,6 +2173,33 @@ static void ValidateGameplayGeometryParsing()
         Expect(geometry.Value.Areas.Single().SplineIndices.SequenceEqual([7]), $"{geometry.Game} area spline links should be parsed");
         Expect(geometry.Value.Areas.Single().CuboidIndices.SequenceEqual([9]), $"{geometry.Game} area cuboid links should be parsed");
     }
+
+    cuboidBytes[0x8c] = 0x7f;
+    var rebuiltCuboids = GameplayGeometryReader.ReadCuboids(UyaShapeInstancesWriter.WriteCuboids(
+        cuboidBytes,
+        [new(0, new(100, 200, 300), new(0, 0, 0, 1), new(2, 3, 4))]));
+    var rebuiltCuboid = rebuiltCuboids.Single();
+    Expect(rebuiltCuboid.Matrix[0] == 2 && rebuiltCuboid.Matrix[5] == 3 && rebuiltCuboid.Matrix[10] == 4
+        && rebuiltCuboid.Matrix[12] == 100 && rebuiltCuboid.Matrix[13] == 200 && rebuiltCuboid.Matrix[14] == 300,
+        "UYA shape writer should update the native matrix");
+    Expect(MathF.Abs(rebuiltCuboid.InverseRotationMatrix[0] - 0.5f) < 0.0001f
+        && MathF.Abs(rebuiltCuboid.InverseRotationMatrix[5] - (1f / 3f)) < 0.0001f
+        && MathF.Abs(rebuiltCuboid.InverseRotationMatrix[10] - 0.25f) < 0.0001f
+        && UyaShapeInstancesWriter.WriteCuboids(cuboidBytes,
+            [new(0, new(100, 200, 300), new(0, 0, 0, 1), new(2, 3, 4))])[0x8c] == 0x7f,
+        "UYA shape writer should update inverse rotation and preserve unknown bytes");
+
+    splineBytes[0x2c] = 0x7f;
+    var rebuiltSplineBytes = UyaSplineInstancesWriter.Write(splineBytes,
+        [new(0,
+            [new(1, 2, 3, 9), new(5, 6, 7, 10), new(9, 10, 11, 12)],
+            new(10, 20, 30), new(0, 0, 0, 1), new(2, 3, 4))]);
+    var rebuiltSpline = GameplayGeometryReader.ReadSplines(rebuiltSplineBytes).Single();
+    Expect(rebuiltSpline.Points[0] == new GameplayVector4(12, 26, 42, 9)
+        && rebuiltSpline.Points[1] == new GameplayVector4(20, 38, 58, 10)
+        && rebuiltSpline.Points[2] == new GameplayVector4(28, 50, 74, 12)
+        && rebuiltSplineBytes[0x2c] == 0x7f,
+        "UYA spline writer should rebuild editable points while preserving record padding");
 }
 
 static void ValidateUyaGameplayLightingParsing()
