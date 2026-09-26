@@ -868,7 +868,7 @@ static void ValidateUyaLevelWadInventory()
         "UYA writes should preserve padding and opaque gap bytes while relocating payloads");
     Expect(bytes.SequenceEqual(sourceSnapshot), "UYA writes should not mutate source memory");
 
-    var replacementMobyInstances = Enumerable.Repeat((byte)0xAC, 32).ToArray();
+    var replacementMobyInstances = Enumerable.Repeat((byte)0xAC, 17).ToArray();
     var gameplayRewrite = UyaLevelWadWriter.Write(inventory, new Dictionary<string, ReadOnlyMemory<byte>>
     {
         ["gameplay/core/moby_instances.bin"] = replacementMobyInstances,
@@ -877,8 +877,13 @@ static void ValidateUyaLevelWadInventory()
     var rewrittenMobyInstances = gameplayRewriteInventory.Containers
         .Single(container => container.Path == "gameplay/gameplay_core.bin").Slots
         .Single(slot => slot.LogicalPaths.Contains("gameplay/core/moby_instances.bin"));
-    Expect(rewrittenMobyInstances.Bytes.Span.SequenceEqual(replacementMobyInstances),
+    Expect(rewrittenMobyInstances.Bytes.Length >= replacementMobyInstances.Length
+        && rewrittenMobyInstances.Bytes.Span[..replacementMobyInstances.Length].SequenceEqual(replacementMobyInstances)
+        && rewrittenMobyInstances.Bytes.Span[replacementMobyInstances.Length..].ContainsAnyExcept((byte)0) == false,
         "UYA gameplay pointer tables should be recalculated after replacement");
+    Expect(gameplayRewriteInventory.Containers.Single(container => container.Path == "gameplay/gameplay_core.bin")
+        .Slots.Where(slot => slot.Length > 0).All(slot => slot.Offset % slot.Alignment == 0),
+        "UYA gameplay replacements should preserve native pointer alignment");
     ExpectThrows<ArgumentException>(() => UyaLevelWadWriter.Write(inventory,
         new Dictionary<string, ReadOnlyMemory<byte>> { ["unknown.bin"] = ReadOnlyMemory<byte>.Empty }));
     ExpectThrows<ArgumentException>(() => UyaLevelWadWriter.Write(inventory,
@@ -2294,6 +2299,41 @@ static void ValidateUyaGameplayLightingParsing()
         "UYA tie directional-light selector should be parsed");
     Expect(lighting.TieAmbientRgbas.Single().SequenceEqual(new byte[] { 0x11, 0x22, 0x33, 0x44 }),
         "UYA tie ambient words should be associated by source index");
+    var rebuiltAmbient = UyaTieAmbientRgbasWriter.Write([[], [0x11, 0x22], [], [0x33, 0x44, 0x55, 0x66]]);
+    var rebuiltAmbientValues = UyaGameplayLightingReader.ReadTieAmbientRgbas(rebuiltAmbient, 4);
+    Expect(rebuiltAmbientValues[0].Length == 0
+        && rebuiltAmbientValues[1].SequenceEqual(new byte[] { 0x11, 0x22 })
+        && rebuiltAmbientValues[2].Length == 0
+        && rebuiltAmbientValues[3].SequenceEqual(new byte[] { 0x33, 0x44, 0x55, 0x66 }),
+        "UYA tie ambient writer should preserve sparse entries and target indices");
+
+    var groups = new byte[0x30];
+    WriteInt32(groups, 0, 1);
+    WriteInt32(groups, 4, 0x10);
+    WriteInt32(groups, 0x10, 0);
+    WriteUInt16(groups, 0x20, 0);
+    WriteUInt16(groups, 0x22, 1);
+    WriteUInt16(groups, 0x24, 0x8002);
+    var rebuiltGroups = UyaTieGroupsReader.Read(UyaTieGroupsWriter.Remap(groups, [0, 0, 2]));
+    Expect(rebuiltGroups.Groups.Single().SequenceEqual(new[] { 0, 1, 2 }),
+        "UYA tie group writer should duplicate and renumber tie references");
+
+    var occlusion = new byte[0x30];
+    WriteInt32(occlusion, 0, 1);
+    WriteInt32(occlusion, 4, 3);
+    WriteInt32(occlusion, 0x10, 10);
+    WriteInt32(occlusion, 0x14, 20);
+    var occlusionIds = new[] { 42, 40, 41 };
+    for (var index = 0; index < 3; index++)
+    {
+        WriteInt32(occlusion, 0x18 + index * 8, 30 + index);
+        WriteInt32(occlusion, 0x1c + index * 8, occlusionIds[index]);
+    }
+    var rebuiltOcclusion = UyaOcclusionMappingsReader.Read(
+        UyaOcclusionMappingsWriter.RemapTies(occlusion, [40, 40, 42]));
+    Expect(rebuiltOcclusion.Ties.Select(value => (value.BitIndex, value.OcclusionId))
+            .SequenceEqual(new[] { (30, 42), (31, 40), (31, 40) }),
+        "UYA occlusion writer should preserve source ordering while duplicating tie IDs");
 }
 
 static void ValidateUyaAssetRenderPackageBuild()
@@ -3999,7 +4039,7 @@ static byte[] CreateSyntheticUyaLooseLevelWad(int payloadBaseSector)
 
 static byte[] CreateSyntheticUyaGameplay()
 {
-    return BuildGameplayData(
+    return BuildAlignedGameplayData(
         UyaGameplayBlockReader.CoreHeaderSize,
         (0x00, [0xA1, 0xA2]),
         (0x04, [0xB1, 0xB2]),
@@ -4008,6 +4048,23 @@ static byte[] CreateSyntheticUyaGameplay()
         (0x78, [0xE1, 0xE2]),
         (0x7c, [0, 0, 0, 0, 0x10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xF1, 0xF2]));
 }
+
+static byte[] BuildAlignedGameplayData(int headerSize, params (int HeaderOffset, byte[] Payload)[] blocks)
+{
+    var length = blocks.Aggregate(Align16(headerSize),
+        (offset, block) => Align16(checked(offset + block.Payload.Length)));
+    var data = new byte[length];
+    var offset = Align16(headerSize);
+    foreach (var block in blocks)
+    {
+        WriteInt32(data, block.HeaderOffset, offset);
+        block.Payload.CopyTo(data.AsSpan(offset));
+        offset = Align16(checked(offset + block.Payload.Length));
+    }
+    return data;
+}
+
+static int Align16(int value) => checked((value + 0xf) & ~0xf);
 
 static byte[] CreateSyntheticUyaLevelData()
 {

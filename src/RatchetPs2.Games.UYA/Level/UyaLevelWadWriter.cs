@@ -113,7 +113,9 @@ public static class UyaLevelWadWriter
         var offset = Align(containerPath, cursor, slot.Alignment);
         parts.Add((offset, bytes));
         var end = AddLength(containerPath, offset, bytes.Length);
-        cursor = Align(containerPath, end, slot.Alignment);
+        cursor = containerPath == "gameplay/gameplay_core.bin"
+            ? end
+            : Align(containerPath, end, slot.Alignment);
         placements.Add(slot.Path, new(slot, replacement.HasValue, true, offset, cursor - offset));
     }
 

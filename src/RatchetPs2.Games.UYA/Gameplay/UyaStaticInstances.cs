@@ -6,6 +6,7 @@ public static class UyaTieInstancesReader
 {
     public const int HeaderSize = 0x10;
     public const int RecordSize = 0x60;
+    public const int OcclusionIdOffset = 0x0c;
 
     public static bool TryRead(ReadOnlySpan<byte> data, out UyaTieInstances? instances)
     {

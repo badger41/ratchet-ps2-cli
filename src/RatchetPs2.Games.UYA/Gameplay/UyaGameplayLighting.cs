@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using static RatchetPs2.Core.IO.BinarySpanReader;
 using RatchetPs2.Core.Gameplay;
 
@@ -260,4 +261,36 @@ public static class UyaGameplayLightingReader
 
     private static byte[] FindPayload(IReadOnlyList<GameplayRawBlock> blocks, string name) =>
         blocks.FirstOrDefault(block => block.SemanticName == name)?.PayloadBytes ?? [];
+}
+
+public static class UyaTieAmbientRgbasWriter
+{
+    public static byte[] Write(IReadOnlyList<byte[]> values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        if (values.Count > short.MaxValue)
+            throw new InvalidDataException("UYA tie ambient table exceeds the signed 16-bit index limit.");
+        var size = sizeof(short);
+        foreach (var value in values)
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            if (value.Length % 2 != 0 || value.Length / 2 > short.MaxValue)
+                throw new InvalidDataException("UYA tie ambient data must contain a signed 16-bit count of words.");
+            if (value.Length > 0) size = checked(size + sizeof(short) * 2 + value.Length);
+        }
+
+        var output = new byte[size];
+        var offset = 0;
+        for (var index = 0; index < values.Count; index++)
+        {
+            var value = values[index];
+            if (value.Length == 0) continue;
+            BinaryPrimitives.WriteInt16LittleEndian(output.AsSpan(offset), (short)index);
+            BinaryPrimitives.WriteInt16LittleEndian(output.AsSpan(offset + 2), (short)(value.Length / 2));
+            value.CopyTo(output, offset + 4);
+            offset += sizeof(short) * 2 + value.Length;
+        }
+        BinaryPrimitives.WriteInt16LittleEndian(output.AsSpan(offset), -1);
+        return output;
+    }
 }

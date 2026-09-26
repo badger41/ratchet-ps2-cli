@@ -121,15 +121,17 @@ public static class UyaLevelWadInventoryReader
         foreach (var pointer in pointers)
         {
             var path = $"gameplay/core/{pointer.SemanticName}.bin";
+            var alignment = pointer.SemanticName == "occlusion" ? 0x40 : 0x10;
             if (pointer.Pointer == 0)
             {
-                slots.Add(new(path, [path], 0, 0, 0, 0, 1));
+                slots.Add(new(path, [path], 0, 0, 0, 0, alignment));
                 continue;
             }
             if (!emittedPointers.Add(pointer.Pointer)) continue;
             var paths = pathsByPointer[pointer.Pointer];
+            alignment = paths.Contains("gameplay/core/occlusion.bin", StringComparer.Ordinal) ? 0x40 : 0x10;
             slots.Add(new(path, paths, pointer.Pointer, endsByStart[pointer.Pointer] - pointer.Pointer,
-                pointer.Pointer, endsByStart[pointer.Pointer] - pointer.Pointer, 1));
+                pointer.Pointer, endsByStart[pointer.Pointer] - pointer.Pointer, alignment));
         }
         return slots;
     }
