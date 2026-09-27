@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Numerics;
 using static RatchetPs2.Core.IO.BinarySpanReader;
 using RatchetPs2.Core.Gameplay;
 
@@ -18,6 +19,8 @@ public sealed record UyaDirectionalLight(
     GameplayVector4 InverseColor,
     GameplayVector4 InverseDirection);
 
+public sealed record UyaDirectionalLightEdit(int SourceIndex, UyaQuaternion Rotation);
+
 public sealed record UyaPointLightTable(
     UyaPointLight[] Lights,
     byte[] XMasks,
@@ -36,6 +39,8 @@ public sealed record UyaPointLight(
     ushort ColorG,
     ushort ColorB,
     ushort UnknownE);
+
+public sealed record UyaPointLightEdit(int SourceIndex, GameplayVector3 Position, float Radius);
 
 public readonly record struct UyaRgb24(byte R, byte G, byte B);
 public readonly record struct UyaRgba32(byte R, byte G, byte B, byte A);
@@ -61,6 +66,8 @@ public sealed record UyaEnvironmentSamplePoint(
     short FogFarDistance,
     ushort Unknown1E);
 
+public sealed record UyaEnvironmentSamplePointEdit(int SourceIndex, GameplayVector3 Position);
+
 public sealed record UyaEnvironmentTransition(
     int Index,
     GameplayVector4 BoundingSphere,
@@ -84,7 +91,7 @@ public sealed record UyaEnvironmentTransition(
 
 public static class UyaGameplayLightingReader
 {
-    private const int PointMaskSize = 64 * 16;
+    internal const int PointMaskSize = 64 * 16;
 
     public static UyaGameplayLighting Read(IReadOnlyList<GameplayRawBlock> blocks, int tieCount)
     {
@@ -235,7 +242,7 @@ public static class UyaGameplayLightingReader
         return expectedX.SequenceEqual(xMasks) && expectedY.SequenceEqual(yMasks);
     }
 
-    private static void AddMask(byte[] masks, int lightIndex, float position, float radius)
+    internal static void AddMask(Span<byte> masks, int lightIndex, float position, float radius)
     {
         for (var cell = 0; cell < 64; cell++)
             if (position - radius < (cell + 1) * 16f && position + radius > cell * 16f)
@@ -261,6 +268,139 @@ public static class UyaGameplayLightingReader
 
     private static byte[] FindPayload(IReadOnlyList<GameplayRawBlock> blocks, string name) =>
         blocks.FirstOrDefault(block => block.SemanticName == name)?.PayloadBytes ?? [];
+}
+
+public static class UyaPointLightsWriter
+{
+    public static byte[] Write(ReadOnlySpan<byte> source, IReadOnlyList<UyaPointLightEdit> edits)
+    {
+        ArgumentNullException.ThrowIfNull(edits);
+        if (edits.Count == 0) return source.ToArray();
+        var table = UyaGameplayLightingReader.ReadPointLights(source);
+        if (!table.MasksMatchDerived)
+            throw new InvalidDataException("UYA point-light masks do not match the source lights.");
+        var output = source.ToArray();
+        var seen = new HashSet<int>();
+        foreach (var edit in edits)
+        {
+            if (edit.SourceIndex < 0 || edit.SourceIndex >= table.Lights.Length || !seen.Add(edit.SourceIndex))
+                throw new InvalidDataException("UYA point-light edit index is invalid or duplicated.");
+            var offset = checked(0x10 + UyaGameplayLightingReader.PointMaskSize * 2 + edit.SourceIndex * 0x10);
+            BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(offset), Quantize(edit.Position.X, "X position"));
+            BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(offset + 2), Quantize(edit.Position.Y, "Y position"));
+            BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(offset + 4), Quantize(edit.Position.Z, "Z position"));
+            BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(offset + 6), Quantize(edit.Radius, "radius"));
+        }
+
+        output.AsSpan(0x10, UyaGameplayLightingReader.PointMaskSize * 2).Clear();
+        foreach (var light in UyaGameplayLightingReader.ReadPointLights(output).Lights)
+        {
+            UyaGameplayLightingReader.AddMask(
+                output.AsSpan(0x10, UyaGameplayLightingReader.PointMaskSize),
+                light.Index, light.Position.X, light.Radius);
+            UyaGameplayLightingReader.AddMask(
+                output.AsSpan(0x10 + UyaGameplayLightingReader.PointMaskSize, UyaGameplayLightingReader.PointMaskSize),
+                light.Index, light.Position.Y, light.Radius);
+        }
+        return output;
+    }
+
+    private static ushort Quantize(float value, string field)
+    {
+        if (!float.IsFinite(value) || value < 0 || value > ushort.MaxValue / 64f)
+            throw new InvalidDataException($"UYA point-light {field} is outside the unsigned 1/64-unit range.");
+        return checked((ushort)MathF.Round(value * 64, MidpointRounding.AwayFromZero));
+    }
+}
+
+public static class UyaDirectionalLightsWriter
+{
+    public static byte[] Write(ReadOnlySpan<byte> source, IReadOnlyList<UyaDirectionalLightEdit> edits)
+    {
+        ArgumentNullException.ThrowIfNull(edits);
+        if (edits.Count == 0) return source.ToArray();
+        var lights = UyaGameplayLightingReader.ReadDirectionalLights(source);
+        var output = source.ToArray();
+        var seen = new HashSet<int>();
+        foreach (var edit in edits)
+        {
+            if (edit.SourceIndex < 0 || edit.SourceIndex >= lights.Length || !seen.Add(edit.SourceIndex))
+                throw new InvalidDataException("UYA directional-light edit index is invalid or duplicated.");
+            UyaInstanceTransformWriter.Validate(new(0, 0, 0), edit.Rotation, new(1, 1, 1), "directional light");
+            var rotation = Quaternion.Normalize(new(
+                edit.Rotation.X, edit.Rotation.Y, edit.Rotation.Z, edit.Rotation.W));
+            var light = lights[edit.SourceIndex];
+            WriteDirection(output.AsSpan(0x10 + edit.SourceIndex * 0x40), 0x10, light.TopDirection, rotation);
+            WriteDirection(output.AsSpan(0x10 + edit.SourceIndex * 0x40), 0x30, light.InverseDirection, rotation);
+        }
+        return output;
+    }
+
+    private static void WriteDirection(Span<byte> record, int offset, GameplayVector4 value, Quaternion rotation)
+    {
+        var direction = Vector3.Transform(new(value.X, value.Y, value.Z), rotation);
+        UyaInstanceTransformWriter.WriteVector4(record, offset, direction.X, direction.Y, direction.Z, value.W);
+    }
+}
+
+public static class UyaEnvironmentSamplePointsWriter
+{
+    public static byte[] Write(ReadOnlySpan<byte> source, IReadOnlyList<UyaEnvironmentSamplePointEdit> edits)
+    {
+        ArgumentNullException.ThrowIfNull(edits);
+        if (edits.Count == 0) return source.ToArray();
+        var points = UyaGameplayLightingReader.ReadEnvironmentSamplePoints(source);
+        var output = source.ToArray();
+        var seen = new HashSet<int>();
+        foreach (var edit in edits)
+        {
+            if (edit.SourceIndex < 0 || edit.SourceIndex >= points.Length || !seen.Add(edit.SourceIndex))
+                throw new InvalidDataException("UYA environment-sample edit index is invalid or duplicated.");
+            var offset = checked(0x10 + edit.SourceIndex * 0x20);
+            BinaryPrimitives.WriteInt16LittleEndian(output.AsSpan(offset + 4), Quantize(edit.Position.X));
+            BinaryPrimitives.WriteInt16LittleEndian(output.AsSpan(offset + 6), Quantize(edit.Position.Y));
+            BinaryPrimitives.WriteInt16LittleEndian(output.AsSpan(offset + 8), Quantize(edit.Position.Z));
+        }
+        return output;
+    }
+
+    private static short Quantize(float value)
+    {
+        if (!float.IsFinite(value) || value < short.MinValue / 4f || value > short.MaxValue / 4f)
+            throw new InvalidDataException("UYA environment-sample position is outside the signed 1/4-unit range.");
+        return checked((short)MathF.Round(value * 4, MidpointRounding.AwayFromZero));
+    }
+}
+
+public static class UyaEnvironmentTransitionsWriter
+{
+    public static byte[] Write(ReadOnlySpan<byte> source, IReadOnlyList<UyaInstanceTransformEdit> edits)
+    {
+        ArgumentNullException.ThrowIfNull(edits);
+        if (edits.Count == 0) return source.ToArray();
+        var transitions = UyaGameplayLightingReader.ReadEnvironmentTransitions(source);
+        var output = source.ToArray();
+        var recordsOffset = checked(0x10 + transitions.Length * 0x10);
+        var seen = new HashSet<int>();
+        foreach (var edit in edits)
+        {
+            if (edit.SourceIndex < 0 || edit.SourceIndex >= transitions.Length || !seen.Add(edit.SourceIndex))
+                throw new InvalidDataException("UYA environment-transition edit index is invalid or duplicated.");
+            var matrix = UyaInstanceTransformWriter.CreateMatrix(edit, "environment transition");
+            if (!System.Numerics.Matrix4x4.Invert(matrix, out var inverse))
+                throw new InvalidDataException("UYA environment-transition transform is not invertible.");
+            var radius = MathF.Sqrt(edit.Scale.X * edit.Scale.X
+                + edit.Scale.Y * edit.Scale.Y + edit.Scale.Z * edit.Scale.Z);
+            UyaInstanceTransformWriter.WriteVector4(output.AsSpan(0x10 + edit.SourceIndex * 0x10), 0,
+                edit.Position.X, edit.Position.Y, edit.Position.Z, radius);
+            var record = output.AsSpan(recordsOffset + edit.SourceIndex * 0x80, 0x80);
+            UyaInstanceTransformWriter.WriteVector4(record, 0, inverse.M11, inverse.M12, inverse.M13, inverse.M14);
+            UyaInstanceTransformWriter.WriteVector4(record, 0x10, inverse.M21, inverse.M22, inverse.M23, inverse.M24);
+            UyaInstanceTransformWriter.WriteVector4(record, 0x20, inverse.M31, inverse.M32, inverse.M33, inverse.M34);
+            UyaInstanceTransformWriter.WriteVector4(record, 0x30, inverse.M41, inverse.M42, inverse.M43, inverse.M44);
+        }
+        return output;
+    }
 }
 
 public static class UyaTieAmbientRgbasWriter

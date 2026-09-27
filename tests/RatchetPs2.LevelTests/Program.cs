@@ -1898,6 +1898,16 @@ static void ValidateUyaGameplayTypedParsing()
     Expect(cameraCollision?.OccupiedCellCount == 1, "UYA camera collision occupied cell count should be parsed");
     Expect(cameraCollision?.Primitives.Single() is { Type: 3, Index: 2, Flags: 0x40, IntValue: 7, FloatValue: 1.5f },
         "UYA camera collision primitive metadata should be parsed");
+    var rebuiltCameraCollision = UyaCameraCollisionGridReader.Read(UyaCameraCollisionGridWriter.Write([
+        new(3, 0, 7, 8, 9, new(32, 32, 10), new(0, 0, 0, 1), new(8, 8, 8)),
+    ]));
+    Expect(rebuiltCameraCollision.OccupiedCellCount == 4,
+        "UYA camera collision writer should populate intersecting grid cells");
+    Expect(rebuiltCameraCollision.Primitives.Single() is
+        { Type: 3, Index: 0, Flags: 7, IntValue: 8, FloatValue: 9, BoundingSphere: { X: 32, Y: 32, Z: 0 } },
+        "UYA camera collision writer should preserve metadata and regenerate bounds");
+    Expect(MathF.Abs(rebuiltCameraCollision.Primitives.Single().BoundingSphere.W - MathF.Sqrt(192)) < 0.0001f,
+        "UYA camera collision writer should derive the transformed radius");
 
     var occlusionBytes = new byte[0xb0];
     WriteInt32(occlusionBytes, 0, 0x30);
@@ -2205,6 +2215,17 @@ static void ValidateGameplayGeometryParsing()
         && rebuiltSpline.Points[2] == new GameplayVector4(28, 50, 74, 12)
         && rebuiltSplineBytes[0x2c] == 0x7f,
         "UYA spline writer should rebuild editable points while preserving record padding");
+    grindPathBytes[0x2c] = 0x7f;
+    var rebuiltGrindPath = GameplayGeometryReader.ReadGrindPaths(UyaGrindPathInstancesWriter.Write(
+        grindPathBytes,
+        [new(0,
+            [new(1, 2, 3, 9), new(5, 6, 7, 10), new(9, 10, 11, 12)],
+            new(10, 20, 30), new(0, 0, 0, 1), new(2, 3, 4))])).Single();
+    Expect(rebuiltGrindPath.Points[2] == new GameplayVector4(28, 50, 74, 12)
+        && rebuiltGrindPath.BoundingSphere.X == 20 && rebuiltGrindPath.BoundingSphere.Y == 38
+        && rebuiltGrindPath.BoundingSphere.Z == 58
+        && rebuiltGrindPath.Unknown4 == 11 && rebuiltGrindPath.Wrap == 1 && rebuiltGrindPath.Inactive == 2,
+        "UYA grind-path writer should rebuild points and bounds while preserving metadata");
 }
 
 static void ValidateUyaGameplayLightingParsing()
@@ -2283,17 +2304,41 @@ static void ValidateUyaGameplayLightingParsing()
     Expect(lighting.DirectionalLights.Single().TopColor.X == 0.25f
         && lighting.DirectionalLights.Single().InverseDirection.X == 0.75f,
         "UYA directional lights should be parsed");
+    var editedDirectional = UyaGameplayLightingReader.ReadDirectionalLights(
+        UyaDirectionalLightsWriter.Write(directional, [new(0, new(0, 0, 1, 0))])).Single();
+    Expect(editedDirectional.InverseDirection.X == -0.75f
+        && editedDirectional.TopDirection.W == -1 && editedDirectional.TopColor.X == 0.25f,
+        "UYA directional-light writer should rotate directions and preserve other fields");
     Expect(lighting.PointLights.MasksMatchDerived
         && lighting.PointLights.Lights.Single().Position == new GameplayVector3(32, 16, 8)
         && lighting.PointLights.Lights.Single().ColorR == 0xffff,
         "UYA point lights and masks should be parsed");
+    var editedPointLights = UyaGameplayLightingReader.ReadPointLights(UyaPointLightsWriter.Write(
+        point, [new(0, new(48, 24, 12), 10)]));
+    Expect(editedPointLights.MasksMatchDerived
+        && editedPointLights.Lights.Single().Position == new GameplayVector3(48, 24, 12)
+        && editedPointLights.Lights.Single().Radius == 10
+        && editedPointLights.Lights.Single().ColorR == 0xffff,
+        "UYA point-light writer should patch transforms and rebuild masks");
     Expect(lighting.EnvironmentSamplePoints.Single().Position == new GameplayVector3(10, 20, 30)
         && lighting.EnvironmentSamplePoints.Single().FogColor == new UyaRgb24(40, 50, 60),
         "UYA environment sample points should be parsed");
+    var editedSample = UyaGameplayLightingReader.ReadEnvironmentSamplePoints(
+        UyaEnvironmentSamplePointsWriter.Write(sample, [new(0, new(-1.25f, 2.5f, 3.75f))])).Single();
+    Expect(editedSample.Position == new GameplayVector3(-1.25f, 2.5f, 3.75f)
+        && editedSample.HeroLight == 3 && editedSample.FogColor == new UyaRgb24(40, 50, 60),
+        "UYA environment-sample writer should patch only position");
     Expect(lighting.EnvironmentTransitions.Single().BoundingSphere.W == 4
         && lighting.EnvironmentTransitions.Single().Flags == 3
         && lighting.EnvironmentTransitions.Single().FogFarIntensity2 == 80,
         "UYA environment transitions should be parsed");
+    var editedTransition = UyaGameplayLightingReader.ReadEnvironmentTransitions(
+        UyaEnvironmentTransitionsWriter.Write(transition,
+            [new(0, new(4, 5, 6), new(0, 0, 0, 1), new(2, 3, 4))])).Single();
+    Expect(editedTransition.BoundingSphere == new GameplayVector4(4, 5, 6, MathF.Sqrt(29))
+        && editedTransition.InverseMatrix[0] == 0.5f
+        && editedTransition.Flags == 3 && editedTransition.FogFarIntensity2 == 80,
+        "UYA environment-transition writer should patch transform and derived bounds");
     Expect(gameplay.Blocks.Single(block => block.TieInstances is not null)
         .TieInstances!.Instances.Single().DirectionalLights == 12,
         "UYA tie directional-light selector should be parsed");

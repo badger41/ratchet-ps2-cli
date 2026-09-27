@@ -189,6 +189,97 @@ public static class UyaSplineInstancesWriter
     }
 }
 
+public static class UyaGrindPathInstancesWriter
+{
+    public static byte[] Write(ReadOnlySpan<byte> source, IReadOnlyList<UyaSplineInstanceEdit> edits)
+    {
+        ArgumentNullException.ThrowIfNull(edits);
+        var paths = GameplayGeometryReader.ReadGrindPaths(source);
+        var dataOffset = BinaryPrimitives.ReadInt32LittleEndian(source[4..]);
+        var dataSize = BinaryPrimitives.ReadInt32LittleEndian(source[8..]);
+        var points = paths.Select(value => value.Points.Select(point =>
+            new UyaVector4(point.X, point.Y, point.Z, point.W)).ToArray()).ToArray();
+        var seen = new HashSet<int>();
+        foreach (var edit in edits)
+        {
+            ArgumentNullException.ThrowIfNull(edit);
+            if (edit.SourceIndex < 0 || edit.SourceIndex >= paths.Length || !seen.Add(edit.SourceIndex))
+                throw new InvalidDataException($"UYA grind-path edit index {edit.SourceIndex} is invalid or duplicated.");
+            ArgumentNullException.ThrowIfNull(edit.Points);
+            var transform = UyaInstanceTransformWriter.CreateMatrix(
+                new(edit.SourceIndex, edit.Position, edit.Rotation, edit.Scale), "grind path");
+            points[edit.SourceIndex] = edit.Points.Select(point =>
+            {
+                var transformed = Vector3.Transform(new(point.X, point.Y, point.Z), transform);
+                if (!float.IsFinite(transformed.X) || !float.IsFinite(transformed.Y)
+                    || !float.IsFinite(transformed.Z) || !float.IsFinite(point.W))
+                    throw new InvalidDataException("UYA grind-path transform produced a non-finite point.");
+                return new UyaVector4(transformed.X, transformed.Y, transformed.Z, point.W);
+            }).ToArray();
+        }
+
+        var output = seen.All(index => points[index].Length == paths[index].Points.Length)
+            ? source.ToArray()
+            : Rebuild(source, points, dataOffset, dataSize);
+        var offsetsOffset = 0x10 + paths.Length * 0x20;
+        foreach (var index in seen)
+        {
+            var pointOffset = checked(dataOffset
+                + BinaryPrimitives.ReadInt32LittleEndian(output.AsSpan(offsetsOffset + index * 4)) + 0x10);
+            foreach (var point in points[index])
+            {
+                UyaInstanceTransformWriter.WriteVector4(output.AsSpan(pointOffset, 0x10), 0,
+                    point.X, point.Y, point.Z, point.W);
+                pointOffset += 0x10;
+            }
+            WriteBounds(output.AsSpan(0x10 + index * 0x20, 0x10), points[index]);
+        }
+        return output;
+    }
+
+    private static byte[] Rebuild(ReadOnlySpan<byte> source, IReadOnlyList<UyaVector4[]> points,
+        int dataOffset, int dataSize)
+    {
+        var rebuiltDataSize = points.Sum(value => checked(0x10 + value.Length * 0x10));
+        var output = new byte[checked(source.Length - dataSize + rebuiltDataSize)];
+        source[..dataOffset].CopyTo(output);
+        BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(8), rebuiltDataSize);
+        var offsetsOffset = 0x10 + points.Count * 0x20;
+        var outputOffset = dataOffset;
+        for (var index = 0; index < points.Count; index++)
+        {
+            var sourceOffset = checked(dataOffset
+                + BinaryPrimitives.ReadInt32LittleEndian(source[(offsetsOffset + index * 4)..]));
+            BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(offsetsOffset + index * 4), outputOffset - dataOffset);
+            BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(outputOffset), points[index].Length);
+            source.Slice(sourceOffset + 4, 0x0c).CopyTo(output.AsSpan(outputOffset + 4));
+            outputOffset += 0x10;
+            foreach (var point in points[index])
+            {
+                UyaInstanceTransformWriter.WriteVector4(output.AsSpan(outputOffset, 0x10), 0,
+                    point.X, point.Y, point.Z, point.W);
+                outputOffset += 0x10;
+            }
+        }
+        source[(dataOffset + dataSize)..].CopyTo(output.AsSpan(outputOffset));
+        return output;
+    }
+
+    private static void WriteBounds(Span<byte> output, IReadOnlyList<UyaVector4> points)
+    {
+        if (points.Count == 0)
+        {
+            output.Clear();
+            return;
+        }
+        var min = new Vector3(points.Min(value => value.X), points.Min(value => value.Y), points.Min(value => value.Z));
+        var max = new Vector3(points.Max(value => value.X), points.Max(value => value.Y), points.Max(value => value.Z));
+        var center = (min + max) / 2;
+        var radius = points.Max(value => Vector3.Distance(center, new(value.X, value.Y, value.Z)));
+        UyaInstanceTransformWriter.WriteVector4(output, 0, center.X, center.Y, center.Z, radius);
+    }
+}
+
 internal static class UyaInstanceTransformWriter
 {
     public static void WriteMatrixInverseRotation(
