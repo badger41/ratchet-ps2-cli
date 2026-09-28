@@ -77,6 +77,27 @@ public static class UyaOcclusionGridReader
     }
 }
 
+public static class UyaOcclusionGridWriter
+{
+    private const int MaskSize = 128;
+
+    public static byte[] SetAlwaysVisibleBit(ReadOnlySpan<byte> data, int bitIndex)
+    {
+        if (bitIndex is < 0 or >= MaskSize * 8)
+            throw new ArgumentOutOfRangeException(nameof(bitIndex));
+        var grid = UyaOcclusionGridReader.Read(data);
+        if (grid.Octants.Count == 0)
+            throw new InvalidDataException("UYA occlusion grid has no visibility masks.");
+        var output = data.ToArray();
+        foreach (var maskIndex in grid.Octants.Select(value => value.MaskIndex).Distinct())
+        {
+            var offset = checked(grid.MasksOffset + maskIndex * MaskSize + bitIndex / 8);
+            output[offset] |= (byte)(1 << (bitIndex & 7));
+        }
+        return output;
+    }
+}
+
 public sealed record UyaOcclusionGrid(int MasksOffset, IReadOnlyList<UyaOcclusionOctant> Octants);
 
 public readonly record struct UyaOcclusionOctant(int X, int Y, int Z, int MaskIndex);

@@ -7,6 +7,18 @@ namespace RatchetPs2.Sdk;
 
 public static class LevelAssetComposer
 {
+    public static LevelAssetWadComposition SetAlwaysVisibleOcclusionBit(
+        GameId gameId,
+        ReadOnlySpan<byte> headerBytes,
+        ReadOnlySpan<byte> assetWadBytes,
+        int bitIndex,
+        CancellationToken cancellationToken = default) => gameId switch
+        {
+            GameId.UYA => UyaLevelAssetComposer.SetAlwaysVisibleOcclusionBit(
+                headerBytes, assetWadBytes, bitIndex, cancellationToken),
+            _ => throw new NotSupportedException($"Occlusion composition is not supported for {gameId}."),
+        };
+
     public static LevelAssetWadComposition ComposeAssetWad(
         GameId gameId,
         ReadOnlySpan<byte> headerBytes,

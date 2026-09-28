@@ -76,6 +76,10 @@ public static class UyaLevelWadWriter
         {
             if (region.Kind != UyaContainerRegionKind.Payload)
             {
+                if (container.Path == "level_wad/level_data.wad"
+                    && region.Kind == UyaContainerRegionKind.Padding
+                    && !region.Bytes.Span.ContainsAnyExcept((byte)0))
+                    continue;
                 parts.Add((cursor, region.Bytes));
                 cursor = AddLength(container.Path, cursor, region.Length);
                 continue;
@@ -113,9 +117,9 @@ public static class UyaLevelWadWriter
         var offset = Align(containerPath, cursor, slot.Alignment);
         parts.Add((offset, bytes));
         var end = AddLength(containerPath, offset, bytes.Length);
-        cursor = containerPath == "gameplay/gameplay_core.bin"
-            ? end
-            : Align(containerPath, end, slot.Alignment);
+        cursor = containerPath == "level_wad"
+            ? Align(containerPath, end, slot.Alignment)
+            : end;
         placements.Add(slot.Path, new(slot, replacement.HasValue, true, offset, cursor - offset));
     }
 

@@ -3,6 +3,22 @@ using System.Numerics;
 
 namespace RatchetPs2.Games.UYA.Gameplay;
 
+public static class UyaClassIdListWriter
+{
+    public static byte[] Write(IEnumerable<int> classIds)
+    {
+        ArgumentNullException.ThrowIfNull(classIds);
+        var values = classIds.Distinct().Order().ToArray();
+        if (values.Any(value => value < 0))
+            throw new InvalidDataException("UYA class IDs cannot be negative.");
+        var output = new byte[checked((sizeof(int) + values.Length * sizeof(int) + 0xf) & ~0xf)];
+        BinaryPrimitives.WriteInt32LittleEndian(output, values.Length);
+        for (var index = 0; index < values.Length; index++)
+            BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(sizeof(int) + index * sizeof(int)), values[index]);
+        return output;
+    }
+}
+
 public static class UyaTieInstancesWriter
 {
     public static byte[] Write(

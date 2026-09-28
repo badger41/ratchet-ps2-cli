@@ -6,6 +6,7 @@ using RatchetPs2.Core.Tfrags;
 using RatchetPs2.Core.Wad;
 using RatchetPs2.Core.Wad.Models;
 using RatchetPs2.Games.DL.Level;
+using RatchetPs2.Games.UYA.Level;
 
 namespace RatchetPs2.Games.UYA.Builders;
 
@@ -13,6 +14,35 @@ internal static class UyaLevelAssetComposer
 {
     private const int AssetAlignment = 0x10;
     private const int ChunkHeaderSize = 0x10;
+
+    public static LevelAssetWadComposition SetAlwaysVisibleOcclusionBit(
+        ReadOnlySpan<byte> headerBytes,
+        ReadOnlySpan<byte> assetWadBytes,
+        int bitIndex,
+        CancellationToken cancellationToken = default)
+    {
+        var grid = UyaOcclusionGridReader.ReadLevelAsset(headerBytes, assetWadBytes);
+        if (grid.Octants.Count == 0)
+            return new(headerBytes.ToArray(), assetWadBytes.ToArray());
+        var header = DlAssetReader.ReadHeader(headerBytes);
+        var mobys = DlAssetReader.ReadModelDefinitions(
+            headerBytes, header.MobyModelOffset, header.MobyModelCount);
+        var ties = DlAssetReader.ReadModelDefinitions(
+            headerBytes, header.TieModelOffset, header.TieModelCount);
+        var shrubs = DlAssetReader.ReadShrubDefinitions(
+            headerBytes, header.ShrubModelOffset, header.ShrubModelCount);
+        var offsets = DlAssetReader.CollectKnownAssetOffsets(
+            GameId.UYA, header, assetWadBytes.Length, mobys, ties, shrubs);
+        var source = DlAssetReader.ReadAssetSlice(
+            assetWadBytes, header.OcclusionOffset, offsets);
+        var replacement = UyaOcclusionGridWriter.SetAlwaysVisibleBit(source, bitIndex);
+        var composed = ComposeAssetWad(
+            headerBytes, assetWadBytes, new(Occlusion: replacement), cancellationToken);
+        var verified = UyaOcclusionGridReader.ReadLevelAsset(composed.HeaderBytes, composed.AssetWadBytes);
+        if (verified.Octants.Count != grid.Octants.Count)
+            throw new InvalidDataException("Composed UYA occlusion grid changed its octant inventory.");
+        return composed;
+    }
 
     public static LevelAssetWadComposition ComposeAssetWad(
         ReadOnlySpan<byte> headerBytes,
@@ -36,6 +66,7 @@ internal static class UyaLevelAssetComposer
 
         var replacementByOffset = new Dictionary<int, ReadOnlyMemory<byte>>();
         AddReplacement(replacementByOffset, "terrain", header.TerrainOffset, replacements.Terrain, assetWadBytes.Length);
+        AddReplacement(replacementByOffset, "occlusion", header.OcclusionOffset, replacements.Occlusion, assetWadBytes.Length);
         AddReplacement(replacementByOffset, "sky", header.SkyOffset, replacements.Sky, assetWadBytes.Length);
         AddReplacement(replacementByOffset, "collision", header.CollisionOffset, replacements.Collision, assetWadBytes.Length);
         if (replacementByOffset.Count == 0)
@@ -177,6 +208,7 @@ internal static class UyaLevelAssetComposer
         var shrubs = DlAssetReader.ReadShrubDefinitions(headerBytes, header.ShrubModelOffset, header.ShrubModelCount);
         var offsets = DlAssetReader.CollectKnownAssetOffsets(GameId.UYA, header, assetBytes.Length, mobys, ties, shrubs);
         Verify("terrain", replacements.Terrain, header.TerrainOffset, assetBytes, offsets);
+        Verify("occlusion", replacements.Occlusion, header.OcclusionOffset, assetBytes, offsets);
         Verify("sky", replacements.Sky, header.SkyOffset, assetBytes, offsets);
         Verify("collision", replacements.Collision, header.CollisionOffset, assetBytes, offsets);
     }

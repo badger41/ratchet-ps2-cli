@@ -22,17 +22,7 @@ public static class PaletteTextureWriter
         if (palette.Capacity != expectedCapacity)
             throw new InvalidDataException("Optimized palette capacity is not valid for the PIF encoding.");
 
-        var paletteBytes = new byte[checked(palette.Capacity * 4)];
-        foreach (var entry in palette.Entries)
-        {
-            if (entry.PaletteIndex < 0 || entry.PaletteIndex >= palette.Capacity)
-                throw new InvalidDataException("Optimized palette entry is outside its capacity.");
-            var offset = entry.PaletteIndex * 4;
-            paletteBytes[offset] = entry.Color.Red;
-            paletteBytes[offset + 1] = entry.Color.Green;
-            paletteBytes[offset + 2] = entry.Color.Blue;
-            paletteBytes[offset + 3] = entry.Color.Alpha;
-        }
+        var paletteBytes = BuildPalette(palette);
 
         var remaps = assignment.IndexRemaps.ToDictionary(value => value.SourcePixelIndex);
         var basePixels = RewritePixels(
@@ -53,6 +43,52 @@ public static class PaletteTextureWriter
         var rewritten = new PifTextureData(header, source.Encoding, paletteBytes, basePixels, mipPixels);
         Verify(source, rewritten, remaps, palette);
         return PifWriter.Write(rewritten);
+    }
+
+    public static byte[] RewritePalette(
+        ReadOnlySpan<byte> sourcePalette,
+        TexturePaletteAssignment assignment,
+        OptimizedPalette palette)
+    {
+        ArgumentNullException.ThrowIfNull(assignment);
+        ArgumentNullException.ThrowIfNull(palette);
+        if (assignment.PaletteIndex != palette.PaletteIndex)
+            throw new ArgumentException("Texture assignment references a different optimized palette.");
+        if (sourcePalette.Length != checked(palette.Capacity * 4))
+            throw new InvalidDataException("Source palette size does not match its optimized palette.");
+
+        var output = BuildPalette(palette);
+        var targets = new Dictionary<int, int>();
+        foreach (var remap in assignment.IndexRemaps)
+        {
+            if (remap.SourcePaletteIndex < 0 || remap.SourcePaletteIndex >= palette.Capacity
+                || remap.TargetPaletteIndex < 0 || remap.TargetPaletteIndex >= palette.Capacity)
+                throw new InvalidDataException("Texture palette remap is outside its capacity.");
+            if (targets.TryGetValue(remap.TargetPaletteIndex, out var sourceIndex)
+                && !sourcePalette.Slice(sourceIndex * 4, 4)
+                    .SequenceEqual(sourcePalette.Slice(remap.SourcePaletteIndex * 4, 4)))
+                throw new InvalidDataException("Optimized palette merged distinct variant colors.");
+            targets[remap.TargetPaletteIndex] = remap.SourcePaletteIndex;
+            sourcePalette.Slice(remap.SourcePaletteIndex * 4, 4)
+                .CopyTo(output.AsSpan(remap.TargetPaletteIndex * 4, 4));
+        }
+        return output;
+    }
+
+    private static byte[] BuildPalette(OptimizedPalette palette)
+    {
+        var output = new byte[checked(palette.Capacity * 4)];
+        foreach (var entry in palette.Entries)
+        {
+            if (entry.PaletteIndex < 0 || entry.PaletteIndex >= palette.Capacity)
+                throw new InvalidDataException("Optimized palette entry is outside its capacity.");
+            var offset = entry.PaletteIndex * 4;
+            output[offset] = entry.Color.Red;
+            output[offset + 1] = entry.Color.Green;
+            output[offset + 2] = entry.Color.Blue;
+            output[offset + 3] = entry.Color.Alpha;
+        }
+        return output;
     }
 
     private static byte[] RewritePixels(

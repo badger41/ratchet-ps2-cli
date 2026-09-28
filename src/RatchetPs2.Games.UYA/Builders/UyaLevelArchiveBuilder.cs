@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Security.Cryptography;
 using RatchetPs2.Core.IO;
 using RatchetPs2.Core.Wad;
@@ -169,6 +170,9 @@ internal static class UyaLevelArchiveBuilder
             encoded = compression.CompressedBytes;
         }
 
+        if (childPath == "assets/asset_wad.bin")
+            UpdateAssetHeaderSizes(parent, replacements, encoded.Length, uncompressed.Length);
+
         var parentSlot = FindSlot(parent, parentSlotPath);
         SetReplacement(replacements, parentSlot, encoded);
     }
@@ -244,6 +248,21 @@ internal static class UyaLevelArchiveBuilder
     {
         foreach (var path in slot.LogicalPaths) replacements.Remove(path);
         replacements.Add(slot.Path, bytes);
+    }
+
+    private static void UpdateAssetHeaderSizes(
+        UyaContainerInventory levelData,
+        Dictionary<string, ReadOnlyMemory<byte>> replacements,
+        int compressedSize,
+        int decompressedSize)
+    {
+        var slot = FindSlot(levelData, "assets/asset_header.bin");
+        var replacement = ResolveReplacement(levelData.Path, slot, replacements);
+        var bytes = replacement.HasValue ? replacement.Bytes.ToArray() : slot.Bytes.ToArray();
+        if (bytes.Length < 0x90) return;
+        BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(0x88, sizeof(int)), compressedSize);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(0x8c, sizeof(int)), decompressedSize);
+        SetReplacement(replacements, slot, bytes);
     }
 
     private static UyaContainerSlot FindSlot(UyaContainerInventory container, string logicalPath) =>

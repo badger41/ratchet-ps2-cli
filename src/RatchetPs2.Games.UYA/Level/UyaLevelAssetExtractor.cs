@@ -121,7 +121,7 @@ internal static class UyaLevelAssetExtractor
         byte[] modelBytes,
         IReadOnlyList<ExtractedLevelAssetTexture> textures)
     {
-        if (modelBytes.Length > 0) assets.Add(new(kind, classId, sourceIndex, definitionBytes, modelBytes, textures));
+        assets.Add(new(kind, classId, sourceIndex, definitionBytes, modelBytes, textures));
     }
 
     private static bool IsUnsupportedAsset(Exception exception) => exception is

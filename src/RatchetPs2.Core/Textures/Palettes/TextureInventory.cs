@@ -25,7 +25,8 @@ public sealed record TextureInventoryInput(
     TextureRole Role,
     ReadOnlyMemory<byte> PifBytes,
     IReadOnlyList<int>? MaterialSlots = null,
-    IReadOnlyList<int>? ReservedPaletteIndexes = null);
+    IReadOnlyList<int>? ReservedPaletteIndexes = null,
+    bool PreserveReferencedPaletteIndexes = false);
 
 public sealed record TextureColor(byte Red, byte Green, byte Blue, byte Alpha);
 
@@ -186,6 +187,8 @@ public static class TextureInventoryBuilder
         }
 
         var reservedSet = reserved.ToHashSet();
+        if (input.PreserveReferencedPaletteIndexes)
+            reservedSet.UnionWith(referencedPaletteIndexes);
         var palette = Enumerable.Range(0, paletteCount).Select(index => new TexturePaletteEntry(
             index,
             ReadColor(texture.PaletteData, index),

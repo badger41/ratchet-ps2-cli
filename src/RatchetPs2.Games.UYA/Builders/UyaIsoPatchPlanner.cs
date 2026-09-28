@@ -14,19 +14,22 @@ internal static class UyaIsoPatchPlanner
         int levelIndex,
         ReadOnlySpan<byte> outputLevelWad,
         bool forceFullImage = false,
-        CancellationToken cancellationToken = default) => Create(
+        CancellationToken cancellationToken = default,
+        bool forceInPlace = false) => Create(
             iso,
             UyaLevelInfoReader.ReadLevelSet(iso, levelIndex),
             outputLevelWad,
             forceFullImage,
-            cancellationToken);
+            cancellationToken,
+            forceInPlace);
 
     public static IsoPatchPlan Create(
         Stream iso,
         UyaLevelInfoSet layout,
         ReadOnlySpan<byte> outputLevelWad,
         bool forceFullImage = false,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool forceInPlace = false)
     {
         ArgumentNullException.ThrowIfNull(iso);
         ArgumentNullException.ThrowIfNull(layout);
@@ -37,6 +40,8 @@ internal static class UyaIsoPatchPlanner
         if (outputLevelWad.Length < UyaLevelConstants.SectorSize
             || outputLevelWad.Length % UyaLevelConstants.SectorSize != 0)
             throw new InvalidDataException("The packed UYA level WAD must contain whole sectors.");
+        if (forceFullImage && forceInPlace)
+            throw new ArgumentException("Full-image replacement and forced in-place patching are mutually exclusive.");
 
         var levelIndex = layout.RequestedLevelIndex;
         var currentLevelInfo = UyaLevelInfoReader.ReadLevelSet(iso, levelIndex);
@@ -55,9 +60,13 @@ internal static class UyaIsoPatchPlanner
 
         var capacity = layout.RequestedLevel.LevelWad.Length;
         var required = normalizedOutput.Length / UyaLevelConstants.SectorSize;
-        var fits = !forceFullImage && capacity > 0 && required <= capacity;
+        var forcedOversize = forceInPlace && required > capacity;
+        var fits = !forceFullImage && capacity > 0 && (required <= capacity || forceInPlace);
+        var targetLevelWad = forcedOversize
+            ? new UyaFileBlock(source.HeaderSector, required)
+            : source.LevelInfo.RequestedLevel.LevelWad;
         var ranges = fits
-            ? BuildRanges(iso, source, currentLevelInfo, normalizedOutput, cancellationToken)
+            ? BuildRanges(iso, source, currentLevelInfo, targetLevelWad, normalizedOutput, cancellationToken)
             : [];
         var replacement = fits ? null : BuildReplacement(iso, normalizedOutput);
         var outputHash = replacement is null
@@ -76,7 +85,9 @@ internal static class UyaIsoPatchPlanner
             outputHash,
             ranges,
             fits
-                ? currentLevelInfo.RequestedLevel.LevelWad == layout.RequestedLevel.LevelWad
+                ? forcedOversize
+                    ? $"Forced in-place patching will overwrite {required - capacity} sectors beyond the level's original allocation."
+                    : currentLevelInfo.RequestedLevel.LevelWad == layout.RequestedLevel.LevelWad
                     ? "The level fits its existing ISO allocation; journaled in-place patching is available."
                     : "The level fits its supplied ISO allocation; journaled in-place patching will restore that layout."
                 : forceFullImage
@@ -90,14 +101,16 @@ internal static class UyaIsoPatchPlanner
         IsoLevelAllocation allocation,
         ReadOnlySpan<byte> outputLevelWad,
         bool forceFullImage = false,
-        CancellationToken cancellationToken = default) => Create(
+        CancellationToken cancellationToken = default,
+        bool forceInPlace = false) => Create(
             iso,
             new UyaLevelInfoSet(
                 allocation.LevelIndex,
                 new(allocation.LevelIndex, default, new(allocation.HeaderSector, allocation.CapacitySectors), default)),
             outputLevelWad,
             forceFullImage,
-            cancellationToken);
+            cancellationToken,
+            forceInPlace);
 
     private static IsoReplacementPlan BuildReplacement(Stream iso, ReadOnlySpan<byte> output)
     {
@@ -116,6 +129,7 @@ internal static class UyaIsoPatchPlanner
         Stream iso,
         UyaLooseLevelWad source,
         UyaLevelInfoSet currentLevelInfo,
+        UyaFileBlock targetLevelWad,
         ReadOnlySpan<byte> output,
         CancellationToken cancellationToken)
     {
@@ -127,12 +141,11 @@ internal static class UyaIsoPatchPlanner
             Range("level-header", checked((long)source.HeaderSector * sectorSize), header, iso, cancellationToken),
             Range("level-payload", checked(((long)source.PayloadBaseSector + 1) * sectorSize), payload, iso, cancellationToken),
         };
-        if (currentLevelInfo.RequestedLevel.LevelWad != source.LevelInfo.RequestedLevel.LevelWad)
+        if (currentLevelInfo.RequestedLevel.LevelWad != targetLevelWad)
         {
             var levelInfo = new byte[sizeof(int) * 2];
-            BinaryPrimitives.WriteInt32LittleEndian(levelInfo, source.LevelInfo.RequestedLevel.LevelWad.Offset);
-            BinaryPrimitives.WriteInt32LittleEndian(
-                levelInfo.AsSpan(sizeof(int)), source.LevelInfo.RequestedLevel.LevelWad.Length);
+            BinaryPrimitives.WriteInt32LittleEndian(levelInfo, targetLevelWad.Offset);
+            BinaryPrimitives.WriteInt32LittleEndian(levelInfo.AsSpan(sizeof(int)), targetLevelWad.Length);
             ranges.Add(Range(
                 "level-info",
                 checked(UyaLevelConstants.RetailLevelInfoTableOffset

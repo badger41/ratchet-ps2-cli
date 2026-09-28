@@ -14,10 +14,11 @@ public static class IsoPatchPlanner
         int levelIndex,
         ReadOnlySpan<byte> outputLevelWad,
         bool forceFullImage = false,
-        CancellationToken cancellationToken = default) => gameId switch
+        CancellationToken cancellationToken = default,
+        bool forceInPlace = false) => gameId switch
         {
             GameId.UYA => UyaIsoPatchPlanner.Create(
-                iso, levelIndex, outputLevelWad, forceFullImage, cancellationToken),
+                iso, levelIndex, outputLevelWad, forceFullImage, cancellationToken, forceInPlace),
             _ => throw new NotSupportedException($"ISO patch planning is not supported for {gameId}."),
         };
 
@@ -27,10 +28,11 @@ public static class IsoPatchPlanner
         IsoLevelAllocation allocation,
         ReadOnlySpan<byte> outputLevelWad,
         bool forceFullImage = false,
-        CancellationToken cancellationToken = default) => gameId switch
+        CancellationToken cancellationToken = default,
+        bool forceInPlace = false) => gameId switch
         {
             GameId.UYA => UyaIsoPatchPlanner.Create(
-                iso, allocation, outputLevelWad, forceFullImage, cancellationToken),
+                iso, allocation, outputLevelWad, forceFullImage, cancellationToken, forceInPlace),
             _ => throw new NotSupportedException($"ISO patch planning is not supported for {gameId}."),
         };
 }

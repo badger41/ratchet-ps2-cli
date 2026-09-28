@@ -79,18 +79,20 @@ public static class UyaLevelWadInventoryReader
 
     private static IReadOnlyList<SlotDefinition> BuildLevelDataSlots(UyaLevelDataWad value)
     {
-        var slots = new List<SlotDefinition>
+        var blocks = new List<(string Path, UyaByteBlock Block)>
         {
-            ByteSlot("code/code.bin", value.Overlay),
-            ByteSlot("assets/asset_header.bin", value.CoreIndex),
-            ByteSlot("assets/palette.bin", value.GsRam),
-            ByteSlot("hud/header.bin", value.HudHeader),
+            ("code/code.bin", value.Overlay),
+            ("assets/asset_header.bin", value.CoreIndex),
+            ("assets/palette.bin", value.GsRam),
+            ("hud/header.bin", value.HudHeader),
         };
         for (var index = 0; index < value.HudBanks.Count; index++)
-            slots.Add(ByteSlot($"hud/bank{index}.bin", value.HudBanks[index]));
-        slots.Add(ByteSlot("assets/asset_wad.bin", value.CoreData));
-        slots.Add(ByteSlot("transition_textures/transition_textures.bin", value.TransitionTextures));
-        return slots;
+            blocks.Add(($"hud/bank{index}.bin", value.HudBanks[index]));
+        blocks.Add(("assets/asset_wad.bin", value.CoreData));
+        blocks.Add(("transition_textures/transition_textures.bin", value.TransitionTextures));
+        var alignment = blocks.Where(value => !value.Block.IsEmpty)
+            .All(value => value.Block.Offset % 0x40 == 0) ? 0x40 : 1;
+        return blocks.Select(value => ByteSlot(value.Path, value.Block, alignment)).ToArray();
     }
 
     private static IReadOnlyList<SlotDefinition> BuildGameplaySlots(ReadOnlySpan<byte> bytes)
@@ -186,8 +188,15 @@ public static class UyaLevelWadInventoryReader
                 throw new InvalidDataException(
                     $"{path} slot {slot.Path} range 0x{slot.Offset:X}-0x{slot.Offset + slot.Length:X} overlaps another region.");
             if (slot.Offset > cursor)
-                regions.Add(Region($"{path}/opaque-{cursor:X8}", cursor, slot.Offset - cursor,
-                    UyaContainerRegionKind.Opaque, null, bytes));
+            {
+                var length = slot.Offset - cursor;
+                var isPadding = path == "level_wad/level_data.wad"
+                    && slot.Alignment > 1
+                    && slot.Offset == Align(cursor, slot.Alignment)
+                    && !bytes.Span.Slice(cursor, length).ContainsAnyExcept((byte)0);
+                regions.Add(Region($"{path}/{(isPadding ? "padding" : "opaque")}-{cursor:X8}", cursor, length,
+                    isPadding ? UyaContainerRegionKind.Padding : UyaContainerRegionKind.Opaque, null, bytes));
+            }
             regions.Add(Region(slot.Path, slot.Offset, slot.Length,
                 UyaContainerRegionKind.Payload, slot.Path, bytes));
             cursor = checked(slot.Offset + slot.Length);
@@ -269,11 +278,11 @@ public static class UyaLevelWadInventoryReader
             UyaLevelConstants.SectorSize);
     }
 
-    private static SlotDefinition ByteSlot(string path, UyaByteBlock block)
+    private static SlotDefinition ByteSlot(string path, UyaByteBlock block, int alignment)
     {
         if (block.Length < 0 || block.Offset < -1 || block.Length > 0 && block.Offset < 0)
             throw new InvalidDataException($"{path} has an invalid byte range.");
-        return new(path, [path], block.Offset, block.Length, block.Length == 0 ? 0 : block.Offset, block.Length, 1);
+        return new(path, [path], block.Offset, block.Length, block.Length == 0 ? 0 : block.Offset, block.Length, alignment);
     }
 
     private static int Align(int value, int alignment) =>

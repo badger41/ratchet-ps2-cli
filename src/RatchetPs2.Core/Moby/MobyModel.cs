@@ -47,6 +47,7 @@ public sealed class MobyModel
     public byte[]? CommonTransforms { get; set; }
     public List<MobyGifTag> GifTags { get; } = [];
     public Dictionary<int, List<byte[]>> TeamPaletteData { get; } = [];
+    public int TeamPaletteDataOffset { get; set; }
     public List<MobySound>? Sounds { get; set; }
     public byte[]? ShadowData { get; set; }
     public byte[]? ShadowPrefixData { get; set; }

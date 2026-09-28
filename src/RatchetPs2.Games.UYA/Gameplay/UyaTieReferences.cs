@@ -138,9 +138,12 @@ public static class UyaOcclusionMappingsWriter
 {
     public static byte[] RemapTies(
         ReadOnlySpan<byte> source,
-        IReadOnlyList<int> targetOcclusionIds)
+        IReadOnlyList<int> targetOcclusionIds,
+        int? insertedBitIndex = null)
     {
         ArgumentNullException.ThrowIfNull(targetOcclusionIds);
+        if (insertedBitIndex is < 0 or >= 1024)
+            throw new ArgumentOutOfRangeException(nameof(insertedBitIndex));
         var mappings = UyaOcclusionMappingsReader.Read(source);
         var remaining = targetOcclusionIds.GroupBy(value => value)
             .ToDictionary(group => group.Key, group => group.Count());
@@ -150,8 +153,12 @@ public static class UyaOcclusionMappingsWriter
             if (!remaining.Remove(mapping.OcclusionId, out var count)) continue;
             for (var index = 0; index < count; index++) ties.Add(mapping);
         }
-        if (remaining.Count > 0)
+        if (remaining.Count > 0 && insertedBitIndex is null)
             throw new InvalidDataException("UYA tie instance has no corresponding occlusion ID mapping.");
+        if (insertedBitIndex is not null)
+            foreach (var (occlusionId, count) in remaining.OrderBy(value => value.Key))
+                for (var index = 0; index < count; index++)
+                    ties.Add(new(insertedBitIndex.Value, occlusionId));
         var output = new byte[checked(0x10 + (mappings.Tfrags.Count + ties.Count + mappings.Mobys.Count) * 8
             + mappings.TrailingBytes.Length)];
         BinaryPrimitives.WriteInt32LittleEndian(output, mappings.Tfrags.Count);

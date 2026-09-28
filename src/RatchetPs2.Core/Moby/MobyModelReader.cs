@@ -774,6 +774,7 @@ public static class MobyModelReader
         }
 
         reader.BaseStream.Position += 0x10;
+        model.TeamPaletteDataOffset = checked((int)reader.BaseStream.Position);
 
         var paletteCountPerTexture = model.TeamPalettes & 0x0F;
         var modelTextureCount = (model.TeamPalettes & 0xF0) >> 4;

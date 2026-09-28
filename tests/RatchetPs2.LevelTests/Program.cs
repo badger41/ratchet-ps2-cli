@@ -6,6 +6,7 @@ using System.Text.Json;
 using RatchetPs2.Core.Games;
 using RatchetPs2.Core.Gameplay;
 using RatchetPs2.Core.Hud;
+using RatchetPs2.Core.IO;
 using RatchetPs2.Core.LevelAssets;
 using RatchetPs2.Core.Moby;
 using RatchetPs2.Core.Textures;
@@ -868,6 +869,35 @@ static void ValidateUyaLevelWadInventory()
         "UYA writes should preserve padding and opaque gap bytes while relocating payloads");
     Expect(bytes.SequenceEqual(sourceSnapshot), "UYA writes should not mutate source memory");
 
+    var alignedBytes = CreateSyntheticUyaLooseLevelWad(payloadBaseSector: 0x1234);
+    var levelDataOffset = 3 * UyaLevelConstants.SectorSize;
+    alignedBytes.AsSpan(levelDataOffset, 2 * UyaLevelConstants.SectorSize).Clear();
+    foreach (var (headerOffset, payloadOffset, marker) in new[]
+        {
+            (0x00, 0x080, (byte)0x11),
+            (0x08, 0x0c0, (byte)0x21),
+            (0x10, 0x100, (byte)0x31),
+            (0x18, 0x140, (byte)0x41),
+            (0x20, 0x180, (byte)0x51),
+            (0x48, 0x1c0, (byte)0x61),
+            (0x50, 0x200, (byte)0x71),
+        })
+    {
+        WriteByteBlock(alignedBytes, levelDataOffset + headerOffset, new(payloadOffset, 4));
+        alignedBytes.AsSpan(levelDataOffset + payloadOffset, 4).Fill(marker);
+    }
+    var alignedRewrite = UyaLevelWadWriter.Write(
+        UyaLevelWadInventoryReader.Read(alignedBytes),
+        new Dictionary<string, ReadOnlyMemory<byte>>
+        {
+            ["assets/asset_header.bin"] = new byte[0x52],
+        });
+    var alignedLevelData = UyaLevelWadInventoryReader.Read(alignedRewrite).Containers
+        .Single(container => container.Path == "level_wad/level_data.wad");
+    Expect(alignedLevelData.Slots.Where(slot => slot.Length > 0)
+            .All(slot => slot.Offset % 0x40 == 0),
+        "UYA level-data replacements should realign every following native byte block to 0x40");
+
     var replacementMobyInstances = Enumerable.Repeat((byte)0xAC, 17).ToArray();
     var gameplayRewrite = UyaLevelWadWriter.Write(inventory, new Dictionary<string, ReadOnlyMemory<byte>>
     {
@@ -1038,6 +1068,24 @@ static void ValidateUyaLevelArchiveBuilder()
         && changed.SourceSha256 != changed.UncompressedSha256
         && changed.UncompressedSha256 != changed.CompressedSha256,
         "UYA SDK archive results should report changed regions and distinct build-stage hashes");
+
+    var replacementAssetHeader = new byte[0x90];
+    var replacementAssetWad = Enumerable.Repeat((byte)0x5a, 96).ToArray();
+    var changedAssets = LevelArchiveBuilder.Build(GameId.UYA, source,
+        new Dictionary<string, ReadOnlyMemory<byte>>
+        {
+            ["assets/asset_header.bin"] = replacementAssetHeader,
+            ["assets/asset_wad_payload.bin"] = replacementAssetWad,
+        });
+    Expect(changedAssets.Succeeded && changedAssets.OutputBytes is not null,
+        "UYA SDK archive workflow should accept composed asset replacements");
+    var changedAssetInventory = UyaLevelWadInventoryReader.Read(changedAssets.OutputBytes);
+    var changedLevelData = changedAssetInventory.Containers.Single(value => value.Path == "level_wad/level_data.wad");
+    var packedAssetHeader = changedLevelData.Slots.Single(value => value.Path == "assets/asset_header.bin").Bytes.Span;
+    var packedAssetWad = changedLevelData.Slots.Single(value => value.Path == "assets/asset_wad.bin");
+    Expect(BinaryPrimitives.ReadInt32LittleEndian(packedAssetHeader[0x88..]) == packedAssetWad.Length
+        && BinaryPrimitives.ReadInt32LittleEndian(packedAssetHeader[0x8c..]) == replacementAssetWad.Length,
+        "UYA archive packing should publish the final compressed and decompressed asset WAD sizes");
 
     var sourceWithUntouchedWad = source.ToArray();
     var soundSlot = sourceWithUntouchedWad.AsSpan(UyaLevelConstants.SectorSize, UyaLevelConstants.SectorSize);
@@ -1225,6 +1273,23 @@ static void ValidateIsoPatchPlanning()
         && fallback.Replacement is not null
         && fallback.Replacement.OutputIsoLength == iso.Length + output.Length,
         "UYA ISO patch planning should identify full-image fallback capacity");
+    stream.Position = 0;
+    var forcedInPlace = IsoPatchPlanner.Create(
+        GameId.UYA, stream, levelIndex, output, forceInPlace: true);
+    Expect(forcedInPlace.FitsInPlace
+        && forcedInPlace.Replacement is null
+        && forcedInPlace.Ranges.Any(value => value.Name == "level-info")
+        && forcedInPlace.StrategyReason.Contains("overwrite", StringComparison.Ordinal),
+        "UYA ISO patch planning should explicitly permit a dangerous oversized in-place patch");
+    using var forcedInPlaceStream = new MemoryStream(iso.ToArray(), writable: true);
+    for (var index = 0; index < forcedInPlace.Ranges.Count; index++)
+        IsoPatchApplier.ApplyRange(GameId.UYA, forcedInPlaceStream, forcedInPlace, index);
+    IsoPatchApplier.VerifyInstalledLevel(GameId.UYA, forcedInPlaceStream, forcedInPlace);
+    Expect(UyaLevelInfoReader.ReadEntry(forcedInPlaceStream, levelIndex).LevelWad.Length == 10,
+        "UYA oversized in-place patch should publish the expanded level-table length");
+    stream.Position = 0;
+    ExpectThrows<ArgumentException>(() => IsoPatchPlanner.Create(
+        GameId.UYA, stream, levelIndex, output, forceFullImage: true, forceInPlace: true));
     stream.Position = 0;
     using var replacementStream = new MemoryStream();
     IsoReplacementBuilder.BuildAsync(GameId.UYA, stream, replacementStream, fallback).GetAwaiter().GetResult();
@@ -1537,6 +1602,209 @@ static void ValidateUyaStaticAssetComposition()
         && composed.AssetWadBytes.AsSpan(shrub.ModelOffset, 1).SequenceEqual(inputs[3].ModelBytes.Span),
         "UYA static composition should install exact selected model bytes");
 
+    var soundHeader = new byte[0x180];
+    WriteInt32(soundHeader, 0x18, 3);
+    WriteInt32(soundHeader, 0x1c, 0xc0);
+    WriteInt32(soundHeader, 0x70, 0x120);
+    WriteInt32(soundHeader, 0xc4, 0x100);
+    WriteInt32(soundHeader, 0xe4, 0x200);
+    WriteInt32(soundHeader, 0x104, 0x300);
+    var sourceRemap = new byte[0x60];
+    WriteInt16(sourceRemap, 0x00, 0x10);
+    WriteInt16(sourceRemap, 0x02, 1);
+    WriteInt16(sourceRemap, 0x04, 0x30);
+    WriteInt16(sourceRemap, 0x06, 2);
+    WriteInt16(sourceRemap, 0x08, 0x38);
+    WriteInt16(sourceRemap, 0x0a, 2);
+    WriteInt16(sourceRemap, 0x0c, 0x40);
+    WriteInt16(sourceRemap, 0x0e, 1);
+    sourceRemap.AsSpan(0x10, 0x20).Fill(0x5a);
+    WriteInt32(sourceRemap, 0x30, 0x1111);
+    WriteInt32(sourceRemap, 0x34, 0x2222);
+    WriteInt32(sourceRemap, 0x38, 0xaaaa);
+    WriteInt32(sourceRemap, 0x3c, 0xbbbb);
+    WriteInt32(sourceRemap, 0x40, 0xcccc);
+    sourceRemap.CopyTo(soundHeader, 0x120);
+    var soundInputs = new[]
+    {
+        new StaticAssetInput("existing", TextureAssetFamily.Moby, 0x100,
+            StaticDefinition(TextureAssetFamily.Moby, 0), ReadOnlyMemory<byte>.Empty, []),
+        new StaticAssetInput("previously-added", TextureAssetFamily.Moby, 0x300,
+            StaticDefinition(TextureAssetFamily.Moby, 0), ReadOnlyMemory<byte>.Empty, []),
+        new StaticAssetInput("new", TextureAssetFamily.Moby, 0x400,
+            StaticDefinition(TextureAssetFamily.Moby, 0), ReadOnlyMemory<byte>.Empty, []),
+    };
+    var soundComposition = StaticAssetComposer.Compose(GameId.UYA, soundHeader, [], [], soundInputs);
+    var soundOutputHeader = DlAssetReader.ReadHeader(soundComposition.HeaderBytes);
+    var outputRemap = soundComposition.HeaderBytes.AsSpan(soundOutputHeader.SoundRemapOffset);
+    var existingSoundOffset = BinaryPrimitives.ReadInt16LittleEndian(outputRemap[8..]);
+    Expect(BinaryPrimitives.ReadInt16LittleEndian(outputRemap[10..]) == 2
+        && outputRemap.Slice(existingSoundOffset, 8).SequenceEqual(sourceRemap.AsSpan(0x38, 8))
+        && outputRemap.Slice(12, 8).SequenceEqual(new byte[8])
+        && outputRemap.Slice(0x14, 0x20).SequenceEqual(sourceRemap.AsSpan(0x10, 0x20))
+        && outputRemap.Slice(0x34, 8).SequenceEqual(sourceRemap.AsSpan(0x30, 8)),
+        "UYA static composition should remap retained moby sounds and leave added mobys empty");
+
+    var teamPalette = new byte[0x400];
+    new byte[] { 90, 80, 70, 60 }.CopyTo(teamPalette, 5 * 4);
+    new byte[] { 1, 2, 3, 4 }.CopyTo(teamPalette, 16 * 4);
+    var teamModel = new MobyModel
+    {
+        HighLodMeshCount = 1,
+        TeamPalettes = 0x11,
+        MeshTable = new MobyMeshTable()
+    };
+    teamModel.MeshTable.Entries.Add(new MobyMeshTableEntry
+    {
+        MeshType = MobyMeshType.HighLod,
+        VifData = [],
+        VertexData = []
+    });
+    teamModel.TeamPaletteData.Add(0, [teamPalette]);
+    var teamModelBytes = MobyModelPacker.Build(teamModel);
+    var teamInput = new StaticAssetInput(
+        "team-moby", TextureAssetFamily.Moby, 0x103, StaticDefinition(TextureAssetFamily.Moby, 0x14),
+        teamModelBytes, [new(TextureRole.Material, sourcePif)]);
+    var teamComposition = StaticAssetComposer.Compose(
+        GameId.UYA, new byte[0xc0], new byte[0x10], [], [teamInput]);
+    var teamHeader = DlAssetReader.ReadHeader(teamComposition.HeaderBytes);
+    var teamDefinition = DlAssetReader.ReadModelDefinitions(
+        teamComposition.HeaderBytes, teamHeader.MobyModelOffset, 1).Single();
+    using var teamStream = new MemoryStream(teamComposition.AssetWadBytes[
+        teamDefinition.ModelOffset..teamHeader.SceneViewSize]);
+    var rewrittenTeamModel = MobyModelReader.Read(teamStream, new() { SkipAnimationSequences = true });
+    var rewrittenTeamPalette = rewrittenTeamModel.TeamPaletteData[0].Single();
+    Expect(rewrittenTeamPalette.AsSpan(16 * 4, 4).SequenceEqual(new byte[] { 1, 2, 3, 4 })
+        && rewrittenTeamPalette.AsSpan(5 * 4, 4).SequenceEqual(new byte[4])
+        && teamComposition.Optimization.Assignments.Single().IndexRemaps
+            .Single(value => value.SourcePaletteIndex == 16).TargetPaletteIndex == 16,
+        "UYA static composition should preserve referenced team indexes and rewrite embedded palettes");
+
+    var compactHeader = new byte[0x170];
+    WriteInt32(compactHeader, 0x00, 2);
+    WriteInt32(compactHeader, 0x04, 0x100);
+    WriteInt32(compactHeader, 0x18, 1);
+    WriteInt32(compactHeader, 0x1c, 0xc0);
+    WriteInt32(compactHeader, 0x30, 1);
+    WriteInt32(compactHeader, 0x34, 0xe0);
+    WriteInt32(compactHeader, 0x38, 2);
+    WriteInt32(compactHeader, 0x3c, 0x150);
+    WriteInt32(compactHeader, 0x60, 0x20);
+    WriteInt32(compactHeader, 0x64, 0x40);
+    WriteInt32(compactHeader, 0x68, 0x50);
+    WriteInt32(compactHeader, 0x7c, 0xa0);
+    WriteInt32(compactHeader, 0x84, 1);
+    WriteInt32(compactHeader, 0x88, 0x77);
+    WriteInt32(compactHeader, 0x8c, 0xa0);
+    WriteInt32(compactHeader, 0xa0, 0x60);
+    WriteInt32(compactHeader, 0xac, 0x130);
+    WriteInt32(compactHeader, 0xc0, 0x70);
+    WriteInt32(compactHeader, 0xc4, 0x100);
+    compactHeader.AsSpan(0xd0, 0x10).Fill(byte.MaxValue);
+    compactHeader[0xd0] = 1;
+    WriteInt16(compactHeader, 0xe4, 4);
+    WriteInt16(compactHeader, 0xe6, 4);
+    WriteInt16(compactHeader, 0xe8, 1);
+    WriteInt16(compactHeader, 0xec, -1);
+    WriteInt32(compactHeader, 0x110, 0);
+    WriteInt32(compactHeader, 0x118, 0x800);
+    WriteInt32(compactHeader, 0x11c, 0x800);
+    WriteInt32(compactHeader, 0x120, 0x13);
+    WriteInt16(compactHeader, 0x124, 4);
+    WriteInt16(compactHeader, 0x126, 4);
+    WriteInt32(compactHeader, 0x128, 0xc00);
+    WriteInt16(compactHeader, 0x130, 0x100);
+    WriteInt16(compactHeader, 0x132, -1);
+    WriteInt16(compactHeader, 0x158, 1);
+    WriteInt16(compactHeader, 0x15a, -1);
+    WriteInt16(compactHeader, 0x15c, -1);
+    WriteInt16(compactHeader, 0x16a, 8);
+    WriteInt16(compactHeader, 0x16c, -1);
+    var compactSource = new byte[0xa0];
+    compactSource.AsSpan(0, 0x20).Fill(0xa1);
+    compactSource.AsSpan(0x20, 0x20).Fill(0xa2);
+    for (var index = 0; index < 0x30; index++) compactSource[0x40 + index] = (byte)(0x80 + index);
+    compactSource.AsSpan(0x70).Fill(0xa3);
+    var meshless = new StaticAssetInput(
+        "meshless", TextureAssetFamily.Moby, 0x102, StaticDefinition(TextureAssetFamily.Moby, 0x13),
+        ReadOnlyMemory<byte>.Empty, []);
+    var compactPalette = new byte[0x1000];
+    compactPalette.AsSpan(0, 0x400).Fill(0x5a);
+    compactPalette.AsSpan(0xc00, 0x10).Fill(0x6b);
+    var compacted = StaticAssetComposer.Compose(
+        GameId.UYA, compactHeader, compactSource, compactPalette, [inputs[0], inputs[1], meshless]);
+    var compactedHeader = DlAssetReader.ReadHeader(compacted.HeaderBytes);
+    Expect(compacted.AssetWadBytes.AsSpan(0, 0x30).SequenceEqual(compactSource.AsSpan(0, 0x30)),
+        "UYA static composition should retain terrain pixels while replacing old static textures and models");
+    var compactedTextures = DlAssetReader.ReadTextureDefinitions(
+        compacted.HeaderBytes, compactedHeader.MobyTextureOffset, compactedHeader.MobyTextureCount);
+    var compactedStashedTexture = compactedTextures.Single(value => value.Type == 0);
+    var compactedTexture = compactedTextures.Single(value => value.Type != 0);
+    Expect(compactedTexture.TextureOffset >= 0x10,
+        "UYA static composition should append static pixels after retained terrain pixels");
+    Expect(compactedStashedTexture is { Index: 1, PaletteId: 8, TextureOffset: 0 }
+        && DlAssetReader.ReadModelDefinitions(
+                compacted.HeaderBytes, compactedHeader.MobyModelOffset, compactedHeader.MobyModelCount)
+            .Single(value => value.ModelId == 0x100).TextureIds[0] == compactedStashedTexture.Index,
+        "UYA static composition should retain GS-stashed moby texture definitions and references");
+    Expect(compacted.AssetWadBytes.AsSpan(compactedHeader.ParticleTextureDataOffset, 0x30)
+            .SequenceEqual(compactSource.AsSpan(0x40, 0x30))
+        && compactedHeader.FxTextureDataOffset == compactedHeader.ParticleTextureDataOffset + 0x10
+        && compactedHeader.Unused3 == compactedHeader.ParticleTextureDataOffset + 0x20,
+        "UYA static composition should preserve and relocate particle, FX, and adjacent opaque data");
+    Expect(compactedHeader.SceneViewSize == compacted.AssetWadBytes.Length
+        && compactedHeader.DecompressedSize == compacted.AssetWadBytes.Length
+        && compactedHeader.CompressedSize == 0,
+        "UYA static composition should publish its new decompressed bounds for archive packing");
+    Expect(compactedHeader.GsRamCount == 4 && compactedHeader.ExtraMipmapCount == 1,
+        $"UYA static composition should retain terrain and stashed GS definitions "
+        + $"(got {compactedHeader.GsRamCount} primary and {compactedHeader.ExtraMipmapCount} extra)");
+    var compactedMipmaps = DlAssetReader.ReadMipmapDefinitions(
+        compacted.HeaderBytes, compactedHeader.GsRamOffset,
+        compactedHeader.GsRamCount + compactedHeader.ExtraMipmapCount);
+    var compactedExtra = compactedMipmaps.Last();
+    Expect(compacted.PaletteBytes.AsSpan(0, 0x400).SequenceEqual(compactPalette.AsSpan(0, 0x400))
+        && compacted.PaletteBytes.AsSpan(compactedExtra.Offset1, 0x10)
+            .SequenceEqual(compactPalette.AsSpan(0xc00, 0x10))
+        && compactedMipmaps.Take(compactedHeader.GsRamCount)
+            .All(value => value.Offset1 < compactedExtra.Offset1),
+        "UYA static composition should retain terrain and stashed GS pixels");
+    Expect(compactedTexture.PaletteId == 4,
+        "UYA static composition should pack rebuilt palettes into gaps around fixed GS destinations");
+    Expect(compactedMipmaps.Take(compactedHeader.GsRamCount)
+            .Select(value => value.Offset2).SequenceEqual(
+                compactedMipmaps.Take(compactedHeader.GsRamCount).Select(value => value.Offset2).Order()),
+        "UYA static composition should address-order primary GS RAM records after filling gaps");
+    Expect(DlAssetReader.ReadMobyGsStashClassIds(
+            compacted.HeaderBytes, compactedHeader.MobyGsStashListOffset).SequenceEqual([0x100]),
+        "UYA static composition should retain the moby GS stash class list");
+    Expect(DlAssetReader.ReadModelDefinitions(
+            compacted.HeaderBytes, compactedHeader.MobyModelOffset, compactedHeader.MobyModelCount)
+            .Single(value => value.ModelId == 0x102).ModelOffset == 0,
+        "UYA static composition should retain intentional meshless moby definitions");
+
+    var sequenceHeader = new byte[0x570];
+    compactHeader.CopyTo(sequenceHeader, 0);
+    WriteInt32(sequenceHeader, 0x8c, 0xc0);
+    WriteInt32(sequenceHeader, 0x78, 0x170);
+    WriteInt32(sequenceHeader, 0x170, 0xa0);
+    WriteInt32(sequenceHeader, 0x174, 0xb0);
+    var sequenceSource = new byte[0xc0];
+    compactSource.CopyTo(sequenceSource, 0);
+    for (var index = 0; index < 0x20; index++) sequenceSource[0xa0 + index] = (byte)(0x40 + index);
+    var withSequences = StaticAssetComposer.Compose(
+        GameId.UYA, sequenceHeader, sequenceSource, compactPalette, [inputs[0], meshless]);
+    var sequenceOutputHeader = DlAssetReader.ReadHeader(withSequences.HeaderBytes);
+    var outputSequenceTable = withSequences.HeaderBytes.AsSpan(^0x400);
+    Expect(withSequences.AssetWadBytes.AsSpan(sequenceOutputHeader.SceneViewSize)
+            .SequenceEqual(sequenceSource.AsSpan(0xa0))
+        && sequenceOutputHeader.DecompressedSize == withSequences.AssetWadBytes.Length,
+        "UYA static composition should retain data after the scene-view region");
+    Expect(BinaryPrimitives.ReadInt32LittleEndian(outputSequenceTable) == sequenceOutputHeader.SceneViewSize
+        && BinaryPrimitives.ReadInt32LittleEndian(outputSequenceTable[4..]) == sequenceOutputHeader.SceneViewSize + 0x10
+        && sequenceOutputHeader.LightCuboidsOffset == withSequences.HeaderBytes.Length - 0x400,
+        "UYA static composition should relocate and retain the trailing sequence table");
+
     var mobyTexture = DlAssetReader.ReadTextureDefinitions(
         composed.HeaderBytes, header.MobyTextureOffset, 1).Single();
     var tieTexture = DlAssetReader.ReadTextureDefinitions(
@@ -1547,6 +1815,10 @@ static void ValidateUyaStaticAssetComposition()
         && tieTexture.PaletteId == shrubTexture.PaletteId
         && shrubTexture.PaletteId == shrub.PaletteId,
         "moby, tie, shrub, and billboard definitions should reference the shared palette");
+    Expect(composed.HeaderBytes.Length % 0x10 == 0
+        && compacted.HeaderBytes.Length % 0x10 == 0
+        && withSequences.HeaderBytes.Length % 0x10 == 0,
+        "composed UYA asset headers should retain the runtime's 0x10-byte block alignment");
     foreach (var (name, definition) in new[]
         {
             ("moby", mobyTexture),
@@ -1563,6 +1835,90 @@ static void ValidateUyaStaticAssetComposition()
     var billboardPif = DlAssetReader.BuildShrubBillboardTexture(shrub, composed.PaletteBytes).PifBytes;
     Expect(DecodedPifColors(sourcePif).SequenceEqual(DecodedPifColors(billboardPif)),
         "composed shrub billboard should preserve every source texel");
+    ValidateUyaCampaignStaticAssetCompositionWhenAvailable();
+}
+
+static void ValidateUyaCampaignStaticAssetCompositionWhenAvailable()
+{
+    var root = Path.Combine("test-assets", "extractions_uya", "level08_iso_world01", "assets");
+    var headerPath = Path.Combine(root, "asset_header.bin");
+    var assetPath = Path.Combine(root, "asset_wad.bin");
+    var palettePath = Path.Combine(root, "palette.bin");
+    if (!File.Exists(headerPath) || !File.Exists(assetPath) || !File.Exists(palettePath)) return;
+
+    var sourceHeaderBytes = File.ReadAllBytes(headerPath);
+    var sourceAssetBytes = File.ReadAllBytes(assetPath);
+    var sourcePaletteBytes = File.ReadAllBytes(palettePath);
+    if (BinaryMagic.IsWad(sourceAssetBytes)) sourceAssetBytes = WadCompression.Decompress(sourceAssetBytes);
+    var sourceHeader = DlAssetReader.ReadHeader(sourceHeaderBytes);
+    var composed = StaticAssetComposer.Compose(
+        GameId.UYA, sourceHeaderBytes, sourceAssetBytes, sourcePaletteBytes, []);
+    var header = DlAssetReader.ReadHeader(composed.HeaderBytes);
+    var table = composed.HeaderBytes.AsSpan(header.LightCuboidsOffset, 0x400).ToArray();
+    var pointers = Enumerable.Range(0, table.Length / sizeof(int))
+        .Select(index => BinaryPrimitives.ReadInt32LittleEndian(table[(index * sizeof(int))..]))
+        .Where(value => value != 0)
+        .ToArray();
+    Expect(sourceHeader.LightCuboidsOffset != header.LightCuboidsOffset
+        && header.LightCuboidsOffset == composed.HeaderBytes.Length - table.Length
+        && pointers.All(value => value >= header.SceneViewSize
+            && value < header.DecompressedSize && value % 0x10 == 0),
+        "UYA campaign composition should relocate the Ratchet animation table and every sequence pointer");
+
+    var sourceMipmaps = DlAssetReader.ReadMipmapDefinitions(
+        sourceHeaderBytes, sourceHeader.GsRamOffset,
+        sourceHeader.GsRamCount + sourceHeader.ExtraMipmapCount);
+    var outputMipmaps = DlAssetReader.ReadMipmapDefinitions(
+        composed.HeaderBytes, header.GsRamOffset,
+        header.GsRamCount + header.ExtraMipmapCount);
+    var sourceExtra = sourceMipmaps.Skip(sourceHeader.GsRamCount).ToArray();
+    var outputExtra = outputMipmaps.Skip(header.GsRamCount).ToArray();
+    var gadgetPaletteOffsets = DlAssetReader.ReadTextureDefinitions(
+            sourceHeaderBytes, sourceHeader.MobyTextureOffset, sourceHeader.MobyTextureCount)
+        .Where(value => value.Type == 0 && value.PaletteId >= 0)
+        .Select(value => value.PaletteId * 0x100)
+        .Distinct()
+        .ToArray();
+    Expect(gadgetPaletteOffsets.All(offset =>
+            outputMipmaps.Take(header.GsRamCount)
+                .Any(value => value.TextureFormat == 0 && value.Offset2 == offset)
+            && composed.PaletteBytes.AsSpan(offset, 0x400)
+                .SequenceEqual(sourcePaletteBytes.AsSpan(offset, 0x400))),
+        "UYA campaign composition should preserve gadget-WAD moby palettes and GS destinations");
+    var sourceStashedTextures = DlAssetReader.ReadTextureDefinitions(
+            sourceHeaderBytes, sourceHeader.MobyTextureOffset, sourceHeader.MobyTextureCount)
+        .Where(value => value.Type == 0)
+        .Select(value => (value.Index, value.TextureOffset, value.Width, value.Height, value.Type,
+            value.PaletteId, value.MipmapPaletteId))
+        .ToArray();
+    var outputStashedTextures = DlAssetReader.ReadTextureDefinitions(
+            composed.HeaderBytes, header.MobyTextureOffset, header.MobyTextureCount)
+        .Where(value => value.Type == 0)
+        .Select(value => (value.Index, value.TextureOffset, value.Width, value.Height, value.Type,
+            value.PaletteId, value.MipmapPaletteId))
+        .ToArray();
+    Expect(outputStashedTextures.SequenceEqual(sourceStashedTextures),
+        "UYA campaign composition should preserve gadget-WAD moby texture definitions");
+    Expect(outputMipmaps.Take(header.GsRamCount)
+            .Select(value => value.Offset2).SequenceEqual(
+                outputMipmaps.Take(header.GsRamCount).Select(value => value.Offset2).Order()),
+        "UYA campaign composition should address-order primary GS RAM records");
+    Expect(header.ExtraMipmapCount == sourceHeader.ExtraMipmapCount
+        && outputExtra.Select(value => (value.TextureFormat, value.Width, value.Height, value.Offset2))
+            .SequenceEqual(sourceExtra.Select(value =>
+                (value.TextureFormat, value.Width, value.Height, value.Offset2)))
+        && DlAssetReader.ReadMobyGsStashClassIds(composed.HeaderBytes, header.MobyGsStashListOffset)
+            .SequenceEqual(DlAssetReader.ReadMobyGsStashClassIds(
+                sourceHeaderBytes, sourceHeader.MobyGsStashListOffset))
+        && header.ChromeTextureOffset == sourceHeader.ChromeTextureOffset
+        && header.ChromePaletteOffset == sourceHeader.ChromePaletteOffset
+        && header.GlassTextureOffset == sourceHeader.GlassTextureOffset
+        && header.GlassPaletteOffset == sourceHeader.GlassPaletteOffset
+        && sourceExtra.Zip(outputExtra).All(pair =>
+            composed.PaletteBytes.AsSpan(pair.Second.Offset1, pair.Second.Width * pair.Second.Height)
+                .SequenceEqual(sourcePaletteBytes.AsSpan(
+                    pair.First.Offset1, pair.First.Width * pair.First.Height))),
+        "UYA campaign composition should preserve chrome and weapon GS stash definitions and pixels");
 }
 
 static byte[] StaticDefinition(TextureAssetFamily family, int marker)
@@ -1931,6 +2287,24 @@ static void ValidateUyaGameplayTypedParsing()
     var routedOcclusion = UyaOcclusionGridReader.ReadLevelAsset(assetHeader, assetWad);
     Expect(routedOcclusion.Octants.Single() == new UyaOcclusionOctant(3, 2, 1, 0),
         "UYA occlusion grid should be located through the level asset header");
+    var alwaysVisible = LevelAssetComposer.SetAlwaysVisibleOcclusionBit(
+        GameId.UYA, assetHeader, assetWad, 42);
+    var alwaysVisibleHeader = DlAssetReader.ReadHeader(alwaysVisible.HeaderBytes);
+    var alwaysVisibleGrid = UyaOcclusionGridReader.ReadLevelAsset(
+        alwaysVisible.HeaderBytes, alwaysVisible.AssetWadBytes);
+    Expect((alwaysVisible.AssetWadBytes[alwaysVisibleHeader.OcclusionOffset
+            + alwaysVisibleGrid.MasksOffset + 42 / 8] & (1 << (42 & 7))) != 0,
+        "UYA occlusion composition should make the reserved bit visible in every mask");
+
+    var mappingsBytes = new byte[0x28];
+    WriteInt32(mappingsBytes, 4, 1);
+    WriteInt32(mappingsBytes, 0x10, 5);
+    WriteInt32(mappingsBytes, 0x14, 77);
+    var insertedMappings = UyaOcclusionMappingsReader.Read(
+        UyaOcclusionMappingsWriter.RemapTies(mappingsBytes, [77, 78], 42)).Ties;
+    Expect(insertedMappings.Select(value => (value.BitIndex, value.OcclusionId))
+            .SequenceEqual([(5, 77), (42, 78)]),
+        "UYA tie insertion should preserve native visibility and map new ties to the reserved bit");
 
     var editedMoby = new UyaMobyInstanceEdit(
         0x1234,
@@ -2068,6 +2442,13 @@ static void ValidateUyaStaticInstanceParsing()
         [edited with { TemplateBytes = parsedShrubs.Instances[0].RawBytes }]));
     Expect(rebuiltShrubs.Instances.Single().DrawDistance == parsedShrubs.Instances[0].DrawDistance,
         "UYA shrub writer should preserve unsupported record fields");
+    var classIds = UyaClassIdListWriter.Write([0x300, 0x100, 0x300, 0x200]);
+    Expect(classIds.Length == 0x10
+        && BinaryPrimitives.ReadInt32LittleEndian(classIds) == 3
+        && Enumerable.Range(0, 3).Select(index =>
+                BinaryPrimitives.ReadInt32LittleEndian(classIds.AsSpan(4 + index * 4)))
+            .SequenceEqual(new[] { 0x100, 0x200, 0x300 }),
+        "UYA class list writer should deduplicate, sort, and align class IDs");
 
     var quarterTurn = new UyaQuaternion(0, 0, MathF.Sin(MathF.PI / 4), MathF.Cos(MathF.PI / 4));
     var rebuiltCameras = UyaCameraInstancesReader.Read(UyaCameraInstancesWriter.Write(cameras,
