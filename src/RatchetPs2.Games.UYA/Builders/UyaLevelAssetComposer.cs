@@ -5,7 +5,6 @@ using RatchetPs2.Core.LevelAssets;
 using RatchetPs2.Core.Tfrags;
 using RatchetPs2.Core.Wad;
 using RatchetPs2.Core.Wad.Models;
-using RatchetPs2.Games.DL.Level;
 using RatchetPs2.Games.UYA.Level;
 
 namespace RatchetPs2.Games.UYA.Builders;
@@ -24,16 +23,16 @@ internal static class UyaLevelAssetComposer
         var grid = UyaOcclusionGridReader.ReadLevelAsset(headerBytes, assetWadBytes);
         if (grid.Octants.Count == 0)
             return new(headerBytes.ToArray(), assetWadBytes.ToArray());
-        var header = DlAssetReader.ReadHeader(headerBytes);
-        var mobys = DlAssetReader.ReadModelDefinitions(
+        var header = LevelAssetReader.ReadHeader(headerBytes);
+        var mobys = LevelAssetReader.ReadModelDefinitions(
             headerBytes, header.MobyModelOffset, header.MobyModelCount);
-        var ties = DlAssetReader.ReadModelDefinitions(
+        var ties = LevelAssetReader.ReadModelDefinitions(
             headerBytes, header.TieModelOffset, header.TieModelCount);
-        var shrubs = DlAssetReader.ReadShrubDefinitions(
+        var shrubs = LevelAssetReader.ReadShrubDefinitions(
             headerBytes, header.ShrubModelOffset, header.ShrubModelCount);
-        var offsets = DlAssetReader.CollectKnownAssetOffsets(
-            GameId.UYA, header, assetWadBytes.Length, mobys, ties, shrubs);
-        var source = DlAssetReader.ReadAssetSlice(
+        var offsets = LevelAssetReader.CollectKnownAssetOffsets(
+            header, assetWadBytes.Length, mobys, ties, shrubs, [header.SceneViewSize]);
+        var source = LevelAssetReader.ReadAssetSlice(
             assetWadBytes, header.OcclusionOffset, offsets);
         var replacement = UyaOcclusionGridWriter.SetAlwaysVisibleBit(source, bitIndex);
         var composed = ComposeAssetWad(
@@ -51,12 +50,12 @@ internal static class UyaLevelAssetComposer
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(replacements);
-        var header = DlAssetReader.ReadHeader(headerBytes);
-        var mobys = DlAssetReader.ReadModelDefinitions(
+        var header = LevelAssetReader.ReadHeader(headerBytes);
+        var mobys = LevelAssetReader.ReadModelDefinitions(
             headerBytes, header.MobyModelOffset, header.MobyModelCount);
-        var ties = DlAssetReader.ReadModelDefinitions(
+        var ties = LevelAssetReader.ReadModelDefinitions(
             headerBytes, header.TieModelOffset, header.TieModelCount);
-        var shrubs = DlAssetReader.ReadShrubDefinitions(
+        var shrubs = LevelAssetReader.ReadShrubDefinitions(
             headerBytes, header.ShrubModelOffset, header.ShrubModelCount);
         var references = CollectReferences(header, mobys, ties, shrubs, assetWadBytes.Length);
         var offsets = references.Select(value => value.AssetOffset)
@@ -136,10 +135,10 @@ internal static class UyaLevelAssetComposer
     }
 
     private static IReadOnlyList<OffsetReference> CollectReferences(
-        DlAssetHeader header,
-        IReadOnlyList<DlAssetModelDefinition> mobys,
-        IReadOnlyList<DlAssetModelDefinition> ties,
-        IReadOnlyList<DlAssetShrubDefinition> shrubs,
+        LevelAssetHeader header,
+        IReadOnlyList<LevelAssetModelDefinition> mobys,
+        IReadOnlyList<LevelAssetModelDefinition> ties,
+        IReadOnlyList<LevelAssetShrubDefinition> shrubs,
         int assetLength)
     {
         var references = new List<OffsetReference>();
@@ -202,11 +201,12 @@ internal static class UyaLevelAssetComposer
         byte[] assetBytes,
         LevelAssetWadPayloads replacements)
     {
-        var header = DlAssetReader.ReadHeader(headerBytes);
-        var mobys = DlAssetReader.ReadModelDefinitions(headerBytes, header.MobyModelOffset, header.MobyModelCount);
-        var ties = DlAssetReader.ReadModelDefinitions(headerBytes, header.TieModelOffset, header.TieModelCount);
-        var shrubs = DlAssetReader.ReadShrubDefinitions(headerBytes, header.ShrubModelOffset, header.ShrubModelCount);
-        var offsets = DlAssetReader.CollectKnownAssetOffsets(GameId.UYA, header, assetBytes.Length, mobys, ties, shrubs);
+        var header = LevelAssetReader.ReadHeader(headerBytes);
+        var mobys = LevelAssetReader.ReadModelDefinitions(headerBytes, header.MobyModelOffset, header.MobyModelCount);
+        var ties = LevelAssetReader.ReadModelDefinitions(headerBytes, header.TieModelOffset, header.TieModelCount);
+        var shrubs = LevelAssetReader.ReadShrubDefinitions(headerBytes, header.ShrubModelOffset, header.ShrubModelCount);
+        var offsets = LevelAssetReader.CollectKnownAssetOffsets(
+            header, assetBytes.Length, mobys, ties, shrubs, [header.SceneViewSize]);
         Verify("terrain", replacements.Terrain, header.TerrainOffset, assetBytes, offsets);
         Verify("occlusion", replacements.Occlusion, header.OcclusionOffset, assetBytes, offsets);
         Verify("sky", replacements.Sky, header.SkyOffset, assetBytes, offsets);
@@ -221,7 +221,7 @@ internal static class UyaLevelAssetComposer
         IReadOnlyList<int> offsets)
     {
         if (expected is null) return;
-        var actual = DlAssetReader.ReadAssetSlice(assetBytes, offset, offsets);
+        var actual = LevelAssetReader.ReadAssetSlice(assetBytes, offset, offsets);
         if (actual.Length < expected.Value.Length
             || !actual.AsSpan(0, expected.Value.Length).SequenceEqual(expected.Value.Span)
             || actual.AsSpan(expected.Value.Length).ContainsAnyExcept((byte)0))

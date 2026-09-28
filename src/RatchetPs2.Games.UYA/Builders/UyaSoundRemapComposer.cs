@@ -1,5 +1,5 @@
 using System.Buffers.Binary;
-using RatchetPs2.Games.DL.Level;
+using RatchetPs2.Core.LevelAssets;
 
 namespace RatchetPs2.Games.UYA.Builders;
 
@@ -11,7 +11,7 @@ internal static class UyaSoundRemapComposer
 
     public static byte[] Compose(
         ReadOnlySpan<byte> headerBytes,
-        DlAssetHeader header,
+        LevelAssetHeader header,
         IReadOnlyList<int> targetClassIds)
     {
         if (header.SoundRemapOffset == 0) return [];
@@ -25,7 +25,7 @@ internal static class UyaSoundRemapComposer
         var sourceConfigCount = (otherOffset - HeaderSize) / MobyConfigSize;
         if (sourceConfigCount > header.MobyModelCount)
             throw new InvalidDataException("UYA sound remap has more moby configs than model definitions.");
-        var sourceDefinitions = DlAssetReader.ReadModelDefinitions(
+        var sourceDefinitions = LevelAssetReader.ReadModelDefinitions(
             headerBytes, header.MobyModelOffset, header.MobyModelCount);
         var sourceIndices = sourceDefinitions.Take(sourceConfigCount)
             .ToDictionary(value => value.ModelId, value => value.Index);

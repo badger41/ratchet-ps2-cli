@@ -2,7 +2,6 @@ using RatchetPs2.Core.Games;
 using RatchetPs2.Core.IO;
 using RatchetPs2.Core.LevelAssets;
 using RatchetPs2.Core.Wad;
-using RatchetPs2.Games.DL.Level;
 
 namespace RatchetPs2.Games.UYA.Level;
 
@@ -13,22 +12,23 @@ internal static class UyaLevelAssetExtractor
         ArgumentNullException.ThrowIfNull(levelWadBytes);
         var package = UyaLevelWadUnpacker.Unpack(levelWadBytes);
         var source = UyaLevelWadRenderPackageBuilder.ReadAssetSourceFiles(package.Files);
-        var header = DlAssetReader.ReadHeader(source.HeaderBytes);
+        var header = LevelAssetReader.ReadHeader(source.HeaderBytes);
         var assetBytes = BinaryMagic.IsWad(source.AssetWadBytes)
             ? WadCompression.Decompress(source.AssetWadBytes)
             : source.AssetWadBytes;
-        var mobys = DlAssetReader.ReadModelDefinitions(source.HeaderBytes, header.MobyModelOffset, header.MobyModelCount);
-        var ties = DlAssetReader.ReadModelDefinitions(source.HeaderBytes, header.TieModelOffset, header.TieModelCount);
-        var shrubs = DlAssetReader.ReadShrubDefinitions(source.HeaderBytes, header.ShrubModelOffset, header.ShrubModelCount);
-        var knownOffsets = DlAssetReader.CollectKnownAssetOffsets(GameId.UYA, header, assetBytes.Length, mobys, ties, shrubs);
-        var mipmaps = DlAssetReader.ReadMipmapDefinitions(
+        var mobys = LevelAssetReader.ReadModelDefinitions(source.HeaderBytes, header.MobyModelOffset, header.MobyModelCount);
+        var ties = LevelAssetReader.ReadModelDefinitions(source.HeaderBytes, header.TieModelOffset, header.TieModelCount);
+        var shrubs = LevelAssetReader.ReadShrubDefinitions(source.HeaderBytes, header.ShrubModelOffset, header.ShrubModelCount);
+        var knownOffsets = LevelAssetReader.CollectKnownAssetOffsets(
+            header, assetBytes.Length, mobys, ties, shrubs, [header.SceneViewSize]);
+        var mipmaps = LevelAssetReader.ReadMipmapDefinitions(
             source.HeaderBytes, header.GsRamOffset, Math.Max(0, header.GsRamCount + header.ExtraMipmapCount));
         var gsStash = mipmaps.Skip(header.GsRamCount).ToArray();
-        var mobyTextures = DlAssetReader.ReadTextureDefinitions(
+        var mobyTextures = LevelAssetReader.ReadTextureDefinitions(
             source.HeaderBytes, header.MobyTextureOffset, header.MobyTextureCount);
-        var tieTextures = DlAssetReader.ReadTextureDefinitions(
+        var tieTextures = LevelAssetReader.ReadTextureDefinitions(
             source.HeaderBytes, header.TieTextureOffset, header.TieTextureCount);
-        var shrubTextures = DlAssetReader.ReadTextureDefinitions(
+        var shrubTextures = LevelAssetReader.ReadTextureDefinitions(
             source.HeaderBytes, header.ShrubTextureOffset, header.ShrubTextureCount);
         var assets = new List<ExtractedLevelAsset>(mobys.Count + ties.Count + shrubs.Count);
         var failures = 0;
@@ -39,7 +39,7 @@ internal static class UyaLevelAssetExtractor
             {
                 Add(assets, FrontendAssetKind.Moby, definition.ModelId, definition.Index,
                     source.HeaderBytes.AsSpan(header.MobyModelOffset + definition.Index * 0x20, 0x20).ToArray(),
-                    DlAssetReader.ReadAssetSlice(assetBytes, definition.ModelOffset, knownOffsets),
+                    LevelAssetReader.ReadAssetSlice(assetBytes, definition.ModelOffset, knownOffsets),
                     ReadTextures("moby", definition.TextureIds, mobyTextures, source.PaletteBytes, assetBytes,
                         header.TextureDataOffset, gsStash));
             }
@@ -54,7 +54,7 @@ internal static class UyaLevelAssetExtractor
             {
                 Add(assets, FrontendAssetKind.Tie, definition.ModelId, definition.Index,
                     source.HeaderBytes.AsSpan(header.TieModelOffset + definition.Index * 0x20, 0x20).ToArray(),
-                    DlAssetReader.ReadAssetSlice(assetBytes, definition.ModelOffset, knownOffsets),
+                    LevelAssetReader.ReadAssetSlice(assetBytes, definition.ModelOffset, knownOffsets),
                     ReadTextures("tie", definition.TextureIds, tieTextures, source.PaletteBytes, assetBytes,
                         header.TextureDataOffset, null));
             }
@@ -70,10 +70,10 @@ internal static class UyaLevelAssetExtractor
                 var textures = ReadTextures("shrub", definition.TextureIds, shrubTextures, source.PaletteBytes,
                     assetBytes, header.TextureDataOffset, null).ToList();
                 if (definition.Width > 0 && definition.Height > 0 && definition.TextureId > 0)
-                    textures.Add(new(1, DlAssetReader.BuildShrubBillboardTexture(definition, source.PaletteBytes).PifBytes));
+                    textures.Add(new(1, LevelAssetReader.BuildShrubBillboardTexture(definition, source.PaletteBytes).PifBytes));
                 Add(assets, FrontendAssetKind.Shrub, definition.ModelId, definition.Index,
                     source.HeaderBytes.AsSpan(header.ShrubModelOffset + definition.Index * 0x30, 0x30).ToArray(),
-                    DlAssetReader.ReadAssetSlice(assetBytes, definition.ModelOffset, knownOffsets), textures);
+                    LevelAssetReader.ReadAssetSlice(assetBytes, definition.ModelOffset, knownOffsets), textures);
             }
             catch (Exception exception) when (IsUnsupportedAsset(exception))
             {
@@ -86,11 +86,11 @@ internal static class UyaLevelAssetExtractor
     private static IReadOnlyList<ExtractedLevelAssetTexture> ReadTextures(
         string family,
         byte[] textureIds,
-        IReadOnlyList<DlAssetTextureDefinition> definitions,
+        IReadOnlyList<LevelAssetTextureDefinition> definitions,
         byte[] paletteBytes,
         byte[] assetBytes,
         int textureDataOffset,
-        IReadOnlyList<DlAssetMipmapDefinition>? gsStash)
+        IReadOnlyList<LevelAssetMipmapDefinition>? gsStash)
     {
         var textures = new List<ExtractedLevelAssetTexture>();
         foreach (var textureId in textureIds)
@@ -99,7 +99,7 @@ internal static class UyaLevelAssetExtractor
             try
             {
                 if (textureId >= definitions.Count) throw new InvalidDataException($"{family} texture ID {textureId} is out of range.");
-                var texture = DlAssetReader.BuildAssetTexture(
+                var texture = LevelAssetReader.BuildAssetTexture(
                     family, textures.Count, definitions[textureId], paletteBytes, assetBytes, textureDataOffset,
                     gsStash, isSwizzled: false, useTextureFlags: true);
                 textures.Add(new(0, texture.PifBytes));

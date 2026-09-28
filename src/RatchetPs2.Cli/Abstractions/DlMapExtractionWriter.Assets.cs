@@ -1,4 +1,5 @@
 using RatchetPs2.Core.Games;
+using RatchetPs2.Core.LevelAssets;
 using RatchetPs2.Games.DL.Level;
 namespace RatchetPs2.Cli.Abstractions;
 
@@ -14,8 +15,8 @@ internal static partial class DlMapExtractionWriter
     {
         CleanLegacyAssetRootArtifacts(outputDirectory);
 
-        var header = DlAssetReader.ReadHeader(headerBytes);
-        var textureMetadata = new List<DlNormalizedTextureMetadata>();
+        var header = LevelAssetReader.ReadHeader(headerBytes);
+        var textureMetadata = new List<LevelAssetTextureMetadata>();
         var omittedRawPayloads = new List<object>
         {
             new
@@ -69,26 +70,26 @@ internal static partial class DlMapExtractionWriter
         };
         var headerArtifacts = WriteAssetHeaderArtifacts(outputDirectory, headerBytes, header);
 
-        var allMipmapDefinitions = DlAssetReader.ReadMipmapDefinitions(
+        var allMipmapDefinitions = LevelAssetReader.ReadMipmapDefinitions(
             headerBytes,
             header.GsRamOffset,
             Math.Max(0, header.GsRamCount + header.ExtraMipmapCount));
         var gsStashDefinitions = allMipmapDefinitions.Skip(header.GsRamCount).ToArray();
-        var mobyGsStashClassIds = DlAssetReader.ReadMobyGsStashClassIds(
+        var mobyGsStashClassIds = LevelAssetReader.ReadMobyGsStashClassIds(
             headerBytes,
             header.MobyGsStashListOffset);
-        var mobyDefinitions = DlAssetReader.ReadModelDefinitions(headerBytes, header.MobyModelOffset, header.MobyModelCount);
-        var tieDefinitions = DlAssetReader.ReadModelDefinitions(headerBytes, header.TieModelOffset, header.TieModelCount);
-        var shrubDefinitions = DlAssetReader.ReadShrubDefinitions(headerBytes, header.ShrubModelOffset, header.ShrubModelCount);
-        var tfragTextureDefinitions = DlAssetReader.ReadTextureDefinitions(headerBytes, header.TerrainTextureOffset, header.TerrainTextureCount);
-        var mobyTextureDefinitions = DlAssetReader.ReadTextureDefinitions(headerBytes, header.MobyTextureOffset, header.MobyTextureCount);
-        var tieTextureDefinitions = DlAssetReader.ReadTextureDefinitions(headerBytes, header.TieTextureOffset, header.TieTextureCount);
-        var shrubTextureDefinitions = DlAssetReader.ReadTextureDefinitions(headerBytes, header.ShrubTextureOffset, header.ShrubTextureCount);
-        var particleDefinitions = DlAssetReader.ReadParticleTextureDefinitions(
+        var mobyDefinitions = LevelAssetReader.ReadModelDefinitions(headerBytes, header.MobyModelOffset, header.MobyModelCount);
+        var tieDefinitions = LevelAssetReader.ReadModelDefinitions(headerBytes, header.TieModelOffset, header.TieModelCount);
+        var shrubDefinitions = LevelAssetReader.ReadShrubDefinitions(headerBytes, header.ShrubModelOffset, header.ShrubModelCount);
+        var tfragTextureDefinitions = LevelAssetReader.ReadTextureDefinitions(headerBytes, header.TerrainTextureOffset, header.TerrainTextureCount);
+        var mobyTextureDefinitions = LevelAssetReader.ReadTextureDefinitions(headerBytes, header.MobyTextureOffset, header.MobyTextureCount);
+        var tieTextureDefinitions = LevelAssetReader.ReadTextureDefinitions(headerBytes, header.TieTextureOffset, header.TieTextureCount);
+        var shrubTextureDefinitions = LevelAssetReader.ReadTextureDefinitions(headerBytes, header.ShrubTextureOffset, header.ShrubTextureCount);
+        var particleDefinitions = LevelAssetReader.ReadParticleTextureDefinitions(
             headerBytes,
             header.ParticleTextureDefOffset,
             header.ParticleTextureCount);
-        var fxDefinitions = DlAssetReader.ReadFxTextureDefinitions(
+        var fxDefinitions = LevelAssetReader.ReadFxTextureDefinitions(
             headerBytes,
             header.FxTextureDefOffset,
             header.FxTextureCount);
@@ -107,13 +108,13 @@ internal static partial class DlMapExtractionWriter
             FxTextureDefinitions = fxDefinitions
         };
 
-        var knownAssetOffsets = DlAssetReader.CollectKnownAssetOffsets(
-            GameId.DL,
+        var knownAssetOffsets = LevelAssetReader.CollectKnownAssetOffsets(
             header,
             assetBytes.Length,
             mobyDefinitions,
             tieDefinitions,
-            shrubDefinitions);
+            shrubDefinitions,
+            [header.LightCuboidsOffset]);
 
         ExtractTfrag(outputDirectory, header, tfragTextureDefinitions, paletteBytes, assetBytes, textureMetadata, knownAssetOffsets);
         ExtractModelFamily(
@@ -196,11 +197,11 @@ internal static partial class DlMapExtractionWriter
 
     private static void ExtractTfrag(
         string outputDirectory,
-        DlAssetHeader header,
-        IReadOnlyList<DlAssetTextureDefinition> textureDefinitions,
+        LevelAssetHeader header,
+        IReadOnlyList<LevelAssetTextureDefinition> textureDefinitions,
         byte[] paletteBytes,
         byte[] assetBytes,
-        List<DlNormalizedTextureMetadata> textureMetadata,
+        List<LevelAssetTextureMetadata> textureMetadata,
         IReadOnlyList<int> knownAssetOffsets)
     {
         CleanLegacyTerrainArtifacts(outputDirectory);
@@ -209,7 +210,7 @@ internal static partial class DlMapExtractionWriter
         CleanOldTfragArtifacts(tfragDirectory);
         File.WriteAllBytes(
             Path.Combine(tfragDirectory, "tfrag.bin"),
-            DlAssetReader.ReadAssetSlice(
+            LevelAssetReader.ReadAssetSlice(
                 assetBytes,
                 header.TerrainOffset,
                 knownAssetOffsets,
@@ -221,7 +222,7 @@ internal static partial class DlMapExtractionWriter
         {
             WriteTexture(
                 texturesDirectory,
-                DlAssetReader.BuildAssetTexture(
+                LevelAssetReader.BuildAssetTexture(
                     "tfrag",
                     textureDefinition.Index,
                     textureDefinition,
@@ -235,24 +236,24 @@ internal static partial class DlMapExtractionWriter
     private static void ExtractModelFamily(
         string outputDirectory,
         string family,
-        IReadOnlyList<DlAssetModelDefinition> modelDefinitions,
-        IReadOnlyList<DlAssetTextureDefinition> textureDefinitions,
+        IReadOnlyList<LevelAssetModelDefinition> modelDefinitions,
+        IReadOnlyList<LevelAssetTextureDefinition> textureDefinitions,
         byte[] paletteBytes,
         byte[] assetBytes,
         int textureDataOffset,
-        IReadOnlyList<DlAssetMipmapDefinition> gsStashDefinitions,
+        IReadOnlyList<LevelAssetMipmapDefinition> gsStashDefinitions,
         IReadOnlyList<int> unswizzledModelIds,
-        List<DlNormalizedTextureMetadata> textureMetadata,
+        List<LevelAssetTextureMetadata> textureMetadata,
         IReadOnlyList<int> knownAssetOffsets)
     {
         foreach (var modelDefinition in modelDefinitions)
         {
-            var modelDirectory = CreateDirectory(outputDirectory, DlAssetReader.GetAssetFolderName(modelDefinition.ModelId));
+            var modelDirectory = CreateDirectory(outputDirectory, LevelAssetReader.GetAssetFolderName(modelDefinition.ModelId));
             if (!IsEmptyMobyModel(family, modelDefinition))
             {
                 File.WriteAllBytes(
                     Path.Combine(modelDirectory, $"{family}.bin"),
-                    DlAssetReader.ReadAssetSlice(assetBytes, modelDefinition.ModelOffset, knownAssetOffsets));
+                    LevelAssetReader.ReadAssetSlice(assetBytes, modelDefinition.ModelOffset, knownAssetOffsets));
             }
 
             WriteJson(Path.Combine(modelDirectory, $"{family}.json"), modelDefinition);
@@ -269,7 +270,7 @@ internal static partial class DlMapExtractionWriter
 
                 WriteTexture(
                     texturesDirectory,
-                    DlAssetReader.BuildAssetTexture(
+                    LevelAssetReader.BuildAssetTexture(
                         family,
                         relativeTextureIndex,
                         textureDefinitions[textureId],
@@ -284,27 +285,27 @@ internal static partial class DlMapExtractionWriter
         }
     }
 
-    private static bool IsEmptyMobyModel(string family, DlAssetModelDefinition modelDefinition)
+    private static bool IsEmptyMobyModel(string family, LevelAssetModelDefinition modelDefinition)
     {
         return family == "moby" && modelDefinition.ModelOffset == 0;
     }
 
     private static void ExtractShrubFamily(
         string outputDirectory,
-        IReadOnlyList<DlAssetShrubDefinition> shrubDefinitions,
-        IReadOnlyList<DlAssetTextureDefinition> textureDefinitions,
+        IReadOnlyList<LevelAssetShrubDefinition> shrubDefinitions,
+        IReadOnlyList<LevelAssetTextureDefinition> textureDefinitions,
         byte[] paletteBytes,
         byte[] assetBytes,
         int textureDataOffset,
-        List<DlNormalizedTextureMetadata> textureMetadata,
+        List<LevelAssetTextureMetadata> textureMetadata,
         IReadOnlyList<int> knownAssetOffsets)
     {
         foreach (var shrubDefinition in shrubDefinitions)
         {
-            var shrubDirectory = CreateDirectory(outputDirectory, DlAssetReader.GetAssetFolderName(shrubDefinition.ModelId));
+            var shrubDirectory = CreateDirectory(outputDirectory, LevelAssetReader.GetAssetFolderName(shrubDefinition.ModelId));
             File.WriteAllBytes(
                 Path.Combine(shrubDirectory, "shrub.bin"),
-                DlAssetReader.ReadAssetSlice(assetBytes, shrubDefinition.ModelOffset, knownAssetOffsets));
+                LevelAssetReader.ReadAssetSlice(assetBytes, shrubDefinition.ModelOffset, knownAssetOffsets));
             WriteJson(Path.Combine(shrubDirectory, "shrub.json"), shrubDefinition);
 
             var texturesDirectory = CreateDirectory(shrubDirectory, "textures");
@@ -318,7 +319,7 @@ internal static partial class DlMapExtractionWriter
 
                 WriteTexture(
                     texturesDirectory,
-                    DlAssetReader.BuildAssetTexture(
+                    LevelAssetReader.BuildAssetTexture(
                         "shrub",
                         relativeTextureIndex,
                         textureDefinitions[textureId],
@@ -333,7 +334,7 @@ internal static partial class DlMapExtractionWriter
             {
                 WriteTexture(
                     CreateDirectory(shrubDirectory, "billboard"),
-                    DlAssetReader.BuildShrubBillboardTexture(shrubDefinition, paletteBytes),
+                    LevelAssetReader.BuildShrubBillboardTexture(shrubDefinition, paletteBytes),
                     textureMetadata);
             }
         }
@@ -342,18 +343,18 @@ internal static partial class DlMapExtractionWriter
 
     private static void ExtractParticleAndFxTextures(
         string outputDirectory,
-        DlAssetHeader header,
-        IReadOnlyList<DlParticleTextureDefinition> particleDefinitions,
-        IReadOnlyList<DlFxTextureDefinition> fxDefinitions,
+        LevelAssetHeader header,
+        IReadOnlyList<LevelParticleTextureDefinition> particleDefinitions,
+        IReadOnlyList<LevelFxTextureDefinition> fxDefinitions,
         byte[] assetBytes,
-        List<DlNormalizedTextureMetadata> textureMetadata)
+        List<LevelAssetTextureMetadata> textureMetadata)
     {
         var particleDirectory = CreateDirectory(outputDirectory, "particle", "textures");
         foreach (var definition in particleDefinitions)
         {
             WriteTexture(
                 particleDirectory,
-                DlAssetReader.BuildParticleTexture(definition, assetBytes, header.ParticleTextureDataOffset),
+                LevelAssetReader.BuildParticleTexture(definition, assetBytes, header.ParticleTextureDataOffset),
                 textureMetadata);
         }
 
@@ -362,24 +363,24 @@ internal static partial class DlMapExtractionWriter
         {
             WriteTexture(
                 fxDirectory,
-                DlAssetReader.BuildFxTexture(definition, assetBytes, header.FxTextureDataOffset),
+                LevelAssetReader.BuildFxTexture(definition, assetBytes, header.FxTextureDataOffset),
                 textureMetadata);
         }
     }
 
     private static void ExtractGsSpecialTextures(
         string outputDirectory,
-        DlAssetHeader header,
+        LevelAssetHeader header,
         byte[] paletteBytes,
-        IReadOnlyList<DlAssetMipmapDefinition> gsStashDefinitions,
-        List<DlNormalizedTextureMetadata> textureMetadata)
+        IReadOnlyList<LevelAssetMipmapDefinition> gsStashDefinitions,
+        List<LevelAssetTextureMetadata> textureMetadata)
     {
         var chromeDefinition = gsStashDefinitions.FirstOrDefault(item => item.Offset2 == header.ChromeTextureOffset);
         if (chromeDefinition is not null)
         {
             WriteTexture(
                 CreateDirectory(outputDirectory, "chrome"),
-                DlAssetReader.BuildGsStashTexture(
+                LevelAssetReader.BuildGsStashTexture(
                     "chrome",
                     0,
                     chromeDefinition,
@@ -393,7 +394,7 @@ internal static partial class DlMapExtractionWriter
         {
             WriteTexture(
                 CreateDirectory(outputDirectory, "glass"),
-                DlAssetReader.BuildGsStashTexture(
+                LevelAssetReader.BuildGsStashTexture(
                     "glass",
                     0,
                     glassDefinition,
@@ -410,7 +411,7 @@ internal static partial class DlMapExtractionWriter
         int offset,
         IReadOnlyList<int> knownAssetOffsets)
     {
-        var bytes = DlAssetReader.ReadAssetSlice(assetBytes, offset, knownAssetOffsets);
+        var bytes = LevelAssetReader.ReadAssetSlice(assetBytes, offset, knownAssetOffsets);
         if (bytes.Length > 0)
         {
             var outputPath = CombineRelativePath(outputDirectory, fileName);
@@ -424,8 +425,8 @@ internal static partial class DlMapExtractionWriter
 
     private static void WriteTexture(
         string outputDirectory,
-        DlNormalizedTexture texture,
-        List<DlNormalizedTextureMetadata> textureMetadata)
+        LevelAssetTexture texture,
+        List<LevelAssetTextureMetadata> textureMetadata)
     {
         var baseName = $"tex.{texture.Index:0000}";
         File.WriteAllBytes(Path.Combine(outputDirectory, $"{baseName}.pif"), texture.PifBytes);

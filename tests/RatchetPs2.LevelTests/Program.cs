@@ -56,6 +56,7 @@ if (args.Contains("--uya-texture-inventory", StringComparer.Ordinal))
     ValidateTextureInventory();
     ValidatePaletteOptimization();
     ValidateUyaStaticAssetComposition();
+    ValidateNormalizedTextureArtifacts();
     Console.WriteLine("UYA texture inventory and palette optimizer tests passed.");
     return;
 }
@@ -225,10 +226,10 @@ static void ValidateRc1IsoLevelExtraction()
     Expect(files["gameplay/gameplay_pal_core.bin"].Bytes[0] == 0x91, "RC1 unpack should preserve PAL gameplay");
     Expect(files["occlusion/occlusion.bin"].Bytes[0] == 0xa1, "RC1 unpack should expose occlusion data");
 
-    var texture = DlAssetReader.BuildAssetTexture(
+    var texture = LevelAssetReader.BuildAssetTexture(
         "rc1",
         0,
-        new DlAssetTextureDefinition(0, 0, 2, 2, 0, 0, 0, -1),
+        new LevelAssetTextureDefinition(0, 0, 2, 2, 0, 0, 0, -1),
         new byte[0x400],
         [1, 2, 3, 4],
         0,
@@ -1171,8 +1172,8 @@ static void ValidateUyaLevelAssetComposer()
 
     var composed = LevelAssetComposer.ComposeAssetWad(
         GameId.UYA, header, assets, new(Terrain: terrain, Collision: collision));
-    var composedHeader = DlAssetReader.ReadHeader(composed.HeaderBytes);
-    var moby = DlAssetReader.ReadModelDefinitions(
+    var composedHeader = LevelAssetReader.ReadHeader(composed.HeaderBytes);
+    var moby = LevelAssetReader.ReadModelDefinitions(
         composed.HeaderBytes, composedHeader.MobyModelOffset, composedHeader.MobyModelCount).Single();
     Expect(composedHeader.TerrainOffset == 0x20
         && composedHeader.SkyOffset == 0x60
@@ -1581,15 +1582,15 @@ static void ValidateUyaStaticAssetComposition()
             [new(TextureRole.Material, sourcePif), new(TextureRole.Billboard, sourcePif)]),
     };
     var composed = StaticAssetComposer.Compose(GameId.UYA, new byte[0xc0], new byte[0x10], [], inputs);
-    var header = DlAssetReader.ReadHeader(composed.HeaderBytes);
+    var header = LevelAssetReader.ReadHeader(composed.HeaderBytes);
     Expect(header is { MobyModelCount: 2, TieModelCount: 1, ShrubModelCount: 1 }
         && header is { MobyTextureCount: 1, TieTextureCount: 1, ShrubTextureCount: 1 }
         && composed.Optimization.Palettes.Count == 1,
         "UYA static composition should install all selected classes and share their exact palette");
-    var mobys = DlAssetReader.ReadModelDefinitions(composed.HeaderBytes, header.MobyModelOffset, 2);
+    var mobys = LevelAssetReader.ReadModelDefinitions(composed.HeaderBytes, header.MobyModelOffset, 2);
     var moby = mobys[0];
-    var tie = DlAssetReader.ReadModelDefinitions(composed.HeaderBytes, header.TieModelOffset, 1).Single();
-    var shrub = DlAssetReader.ReadShrubDefinitions(composed.HeaderBytes, header.ShrubModelOffset, 1).Single();
+    var tie = LevelAssetReader.ReadModelDefinitions(composed.HeaderBytes, header.TieModelOffset, 1).Single();
+    var shrub = LevelAssetReader.ReadShrubDefinitions(composed.HeaderBytes, header.ShrubModelOffset, 1).Single();
     Expect(moby is { ModelId: 0x100, Unknown8: 0x11 }
         && tie is { ModelId: 0x200, Unknown8: 0x22 }
         && shrub is { ModelId: 0x300, Unknown8: 0x33 }
@@ -1635,7 +1636,7 @@ static void ValidateUyaStaticAssetComposition()
             StaticDefinition(TextureAssetFamily.Moby, 0), ReadOnlyMemory<byte>.Empty, []),
     };
     var soundComposition = StaticAssetComposer.Compose(GameId.UYA, soundHeader, [], [], soundInputs);
-    var soundOutputHeader = DlAssetReader.ReadHeader(soundComposition.HeaderBytes);
+    var soundOutputHeader = LevelAssetReader.ReadHeader(soundComposition.HeaderBytes);
     var outputRemap = soundComposition.HeaderBytes.AsSpan(soundOutputHeader.SoundRemapOffset);
     var existingSoundOffset = BinaryPrimitives.ReadInt16LittleEndian(outputRemap[8..]);
     Expect(BinaryPrimitives.ReadInt16LittleEndian(outputRemap[10..]) == 2
@@ -1667,8 +1668,8 @@ static void ValidateUyaStaticAssetComposition()
         teamModelBytes, [new(TextureRole.Material, sourcePif)]);
     var teamComposition = StaticAssetComposer.Compose(
         GameId.UYA, new byte[0xc0], new byte[0x10], [], [teamInput]);
-    var teamHeader = DlAssetReader.ReadHeader(teamComposition.HeaderBytes);
-    var teamDefinition = DlAssetReader.ReadModelDefinitions(
+    var teamHeader = LevelAssetReader.ReadHeader(teamComposition.HeaderBytes);
+    var teamDefinition = LevelAssetReader.ReadModelDefinitions(
         teamComposition.HeaderBytes, teamHeader.MobyModelOffset, 1).Single();
     using var teamStream = new MemoryStream(teamComposition.AssetWadBytes[
         teamDefinition.ModelOffset..teamHeader.SceneViewSize]);
@@ -1704,7 +1705,7 @@ static void ValidateUyaStaticAssetComposition()
     compactHeader[0xd0] = 1;
     WriteInt16(compactHeader, 0xe4, 4);
     WriteInt16(compactHeader, 0xe6, 4);
-    WriteInt16(compactHeader, 0xe8, 1);
+    WriteInt16(compactHeader, 0xe8, 3);
     WriteInt16(compactHeader, 0xec, -1);
     WriteInt32(compactHeader, 0x110, 0);
     WriteInt32(compactHeader, 0x118, 0x800);
@@ -1723,6 +1724,16 @@ static void ValidateUyaStaticAssetComposition()
     var compactSource = new byte[0xa0];
     compactSource.AsSpan(0, 0x20).Fill(0xa1);
     compactSource.AsSpan(0x20, 0x20).Fill(0xa2);
+    var preservedInventory = TextureInventoryBuilder.Build([
+        new("moby-shared", TextureAssetFamily.Moby, 0x101, 0, TextureRole.Material, sourcePif,
+            PreserveReferencedPaletteIndexes: true),
+    ]);
+    var preservedOptimization = PaletteOptimizer.Optimize(preservedInventory);
+    var preservedPif = PaletteTextureWriter.RewritePif(
+        sourcePif, preservedOptimization.Assignments.Single(), preservedOptimization.Palettes.Single());
+    var rewrittenTexture = PifReader.Read(preservedPif);
+    rewrittenTexture.PixelData.CopyTo(compactSource, 0x20);
+    rewrittenTexture.MipPixelData[0].CopyTo(compactSource, 0x30);
     for (var index = 0; index < 0x30; index++) compactSource[0x40 + index] = (byte)(0x80 + index);
     compactSource.AsSpan(0x70).Fill(0xa3);
     var meshless = new StaticAssetInput(
@@ -1732,18 +1743,19 @@ static void ValidateUyaStaticAssetComposition()
     compactPalette.AsSpan(0, 0x400).Fill(0x5a);
     compactPalette.AsSpan(0xc00, 0x10).Fill(0x6b);
     var compacted = StaticAssetComposer.Compose(
-        GameId.UYA, compactHeader, compactSource, compactPalette, [inputs[0], inputs[1], meshless]);
-    var compactedHeader = DlAssetReader.ReadHeader(compacted.HeaderBytes);
-    Expect(compacted.AssetWadBytes.AsSpan(0, 0x30).SequenceEqual(compactSource.AsSpan(0, 0x30)),
+        GameId.UYA, compactHeader, compactSource, compactPalette,
+        [inputs[0], inputs[1] with { PreserveTextureIndexes = true }, meshless]);
+    var compactedHeader = LevelAssetReader.ReadHeader(compacted.HeaderBytes);
+    Expect(compacted.AssetWadBytes.AsSpan(0, 0x40).SequenceEqual(compactSource.AsSpan(0, 0x40)),
         "UYA static composition should retain terrain pixels while replacing old static textures and models");
-    var compactedTextures = DlAssetReader.ReadTextureDefinitions(
+    var compactedTextures = LevelAssetReader.ReadTextureDefinitions(
         compacted.HeaderBytes, compactedHeader.MobyTextureOffset, compactedHeader.MobyTextureCount);
     var compactedStashedTexture = compactedTextures.Single(value => value.Type == 0);
     var compactedTexture = compactedTextures.Single(value => value.Type != 0);
-    Expect(compactedTexture.TextureOffset >= 0x10,
-        "UYA static composition should append static pixels after retained terrain pixels");
+    Expect(compactedTexture.TextureOffset == 0,
+        $"UYA static composition should reuse identical retained terrain pixels (got 0x{compactedTexture.TextureOffset:X})");
     Expect(compactedStashedTexture is { Index: 1, PaletteId: 8, TextureOffset: 0 }
-        && DlAssetReader.ReadModelDefinitions(
+        && LevelAssetReader.ReadModelDefinitions(
                 compacted.HeaderBytes, compactedHeader.MobyModelOffset, compactedHeader.MobyModelCount)
             .Single(value => value.ModelId == 0x100).TextureIds[0] == compactedStashedTexture.Index,
         "UYA static composition should retain GS-stashed moby texture definitions and references");
@@ -1759,7 +1771,7 @@ static void ValidateUyaStaticAssetComposition()
     Expect(compactedHeader.GsRamCount == 4 && compactedHeader.ExtraMipmapCount == 1,
         $"UYA static composition should retain terrain and stashed GS definitions "
         + $"(got {compactedHeader.GsRamCount} primary and {compactedHeader.ExtraMipmapCount} extra)");
-    var compactedMipmaps = DlAssetReader.ReadMipmapDefinitions(
+    var compactedMipmaps = LevelAssetReader.ReadMipmapDefinitions(
         compacted.HeaderBytes, compactedHeader.GsRamOffset,
         compactedHeader.GsRamCount + compactedHeader.ExtraMipmapCount);
     var compactedExtra = compactedMipmaps.Last();
@@ -1775,10 +1787,10 @@ static void ValidateUyaStaticAssetComposition()
             .Select(value => value.Offset2).SequenceEqual(
                 compactedMipmaps.Take(compactedHeader.GsRamCount).Select(value => value.Offset2).Order()),
         "UYA static composition should address-order primary GS RAM records after filling gaps");
-    Expect(DlAssetReader.ReadMobyGsStashClassIds(
+    Expect(LevelAssetReader.ReadMobyGsStashClassIds(
             compacted.HeaderBytes, compactedHeader.MobyGsStashListOffset).SequenceEqual([0x100]),
         "UYA static composition should retain the moby GS stash class list");
-    Expect(DlAssetReader.ReadModelDefinitions(
+    Expect(LevelAssetReader.ReadModelDefinitions(
             compacted.HeaderBytes, compactedHeader.MobyModelOffset, compactedHeader.MobyModelCount)
             .Single(value => value.ModelId == 0x102).ModelOffset == 0,
         "UYA static composition should retain intentional meshless moby definitions");
@@ -1792,9 +1804,17 @@ static void ValidateUyaStaticAssetComposition()
     var sequenceSource = new byte[0xc0];
     compactSource.CopyTo(sequenceSource, 0);
     for (var index = 0; index < 0x20; index++) sequenceSource[0xa0 + index] = (byte)(0x40 + index);
+    var sequenceSourceHeader = LevelAssetReader.ReadHeader(sequenceHeader);
+    var sequenceSourceMobys = LevelAssetReader.ReadModelDefinitions(
+        sequenceHeader, sequenceSourceHeader.MobyModelOffset, sequenceSourceHeader.MobyModelCount);
+    var sequenceSourceOffsets = LevelAssetReader.CollectKnownAssetOffsets(
+        sequenceSourceHeader, sequenceSource.Length, sequenceSourceMobys, [], [],
+        [sequenceSourceHeader.SceneViewSize]);
+    Expect(LevelAssetReader.ReadAssetSlice(sequenceSource, 0x70, sequenceSourceOffsets).Length == 0x30,
+        "UYA model extraction should stop at the scene-view boundary before Ratchet animations");
     var withSequences = StaticAssetComposer.Compose(
         GameId.UYA, sequenceHeader, sequenceSource, compactPalette, [inputs[0], meshless]);
-    var sequenceOutputHeader = DlAssetReader.ReadHeader(withSequences.HeaderBytes);
+    var sequenceOutputHeader = LevelAssetReader.ReadHeader(withSequences.HeaderBytes);
     var outputSequenceTable = withSequences.HeaderBytes.AsSpan(^0x400);
     Expect(withSequences.AssetWadBytes.AsSpan(sequenceOutputHeader.SceneViewSize)
             .SequenceEqual(sequenceSource.AsSpan(0xa0))
@@ -1805,16 +1825,18 @@ static void ValidateUyaStaticAssetComposition()
         && sequenceOutputHeader.LightCuboidsOffset == withSequences.HeaderBytes.Length - 0x400,
         "UYA static composition should relocate and retain the trailing sequence table");
 
-    var mobyTexture = DlAssetReader.ReadTextureDefinitions(
+    var mobyTexture = LevelAssetReader.ReadTextureDefinitions(
         composed.HeaderBytes, header.MobyTextureOffset, 1).Single();
-    var tieTexture = DlAssetReader.ReadTextureDefinitions(
+    var tieTexture = LevelAssetReader.ReadTextureDefinitions(
         composed.HeaderBytes, header.TieTextureOffset, 1).Single();
-    var shrubTexture = DlAssetReader.ReadTextureDefinitions(
+    var shrubTexture = LevelAssetReader.ReadTextureDefinitions(
         composed.HeaderBytes, header.ShrubTextureOffset, 1).Single();
     Expect(mobyTexture.PaletteId == tieTexture.PaletteId
         && tieTexture.PaletteId == shrubTexture.PaletteId
-        && shrubTexture.PaletteId == shrub.PaletteId,
-        "moby, tie, shrub, and billboard definitions should reference the shared palette");
+        && shrubTexture.PaletteId == shrub.PaletteId
+        && mobyTexture.TextureOffset == tieTexture.TextureOffset
+        && tieTexture.TextureOffset == shrubTexture.TextureOffset,
+        "moby, tie, shrub, and billboard definitions should share identical palette and pixel data");
     Expect(composed.HeaderBytes.Length % 0x10 == 0
         && compacted.HeaderBytes.Length % 0x10 == 0
         && withSequences.HeaderBytes.Length % 0x10 == 0,
@@ -1826,13 +1848,13 @@ static void ValidateUyaStaticAssetComposition()
             ("shrub", shrubTexture),
         })
     {
-        var outputPif = DlAssetReader.BuildAssetTexture(
+        var outputPif = LevelAssetReader.BuildAssetTexture(
             name, 0, definition, composed.PaletteBytes, composed.AssetWadBytes,
             header.TextureDataOffset, isSwizzled: false).PifBytes;
         Expect(DecodedPifColors(sourcePif).SequenceEqual(DecodedPifColors(outputPif)),
             $"composed {name} texture should preserve every source texel");
     }
-    var billboardPif = DlAssetReader.BuildShrubBillboardTexture(shrub, composed.PaletteBytes).PifBytes;
+    var billboardPif = LevelAssetReader.BuildShrubBillboardTexture(shrub, composed.PaletteBytes).PifBytes;
     Expect(DecodedPifColors(sourcePif).SequenceEqual(DecodedPifColors(billboardPif)),
         "composed shrub billboard should preserve every source texel");
     ValidateUyaCampaignStaticAssetCompositionWhenAvailable();
@@ -1850,10 +1872,10 @@ static void ValidateUyaCampaignStaticAssetCompositionWhenAvailable()
     var sourceAssetBytes = File.ReadAllBytes(assetPath);
     var sourcePaletteBytes = File.ReadAllBytes(palettePath);
     if (BinaryMagic.IsWad(sourceAssetBytes)) sourceAssetBytes = WadCompression.Decompress(sourceAssetBytes);
-    var sourceHeader = DlAssetReader.ReadHeader(sourceHeaderBytes);
+    var sourceHeader = LevelAssetReader.ReadHeader(sourceHeaderBytes);
     var composed = StaticAssetComposer.Compose(
         GameId.UYA, sourceHeaderBytes, sourceAssetBytes, sourcePaletteBytes, []);
-    var header = DlAssetReader.ReadHeader(composed.HeaderBytes);
+    var header = LevelAssetReader.ReadHeader(composed.HeaderBytes);
     var table = composed.HeaderBytes.AsSpan(header.LightCuboidsOffset, 0x400).ToArray();
     var pointers = Enumerable.Range(0, table.Length / sizeof(int))
         .Select(index => BinaryPrimitives.ReadInt32LittleEndian(table[(index * sizeof(int))..]))
@@ -1865,15 +1887,15 @@ static void ValidateUyaCampaignStaticAssetCompositionWhenAvailable()
             && value < header.DecompressedSize && value % 0x10 == 0),
         "UYA campaign composition should relocate the Ratchet animation table and every sequence pointer");
 
-    var sourceMipmaps = DlAssetReader.ReadMipmapDefinitions(
+    var sourceMipmaps = LevelAssetReader.ReadMipmapDefinitions(
         sourceHeaderBytes, sourceHeader.GsRamOffset,
         sourceHeader.GsRamCount + sourceHeader.ExtraMipmapCount);
-    var outputMipmaps = DlAssetReader.ReadMipmapDefinitions(
+    var outputMipmaps = LevelAssetReader.ReadMipmapDefinitions(
         composed.HeaderBytes, header.GsRamOffset,
         header.GsRamCount + header.ExtraMipmapCount);
     var sourceExtra = sourceMipmaps.Skip(sourceHeader.GsRamCount).ToArray();
     var outputExtra = outputMipmaps.Skip(header.GsRamCount).ToArray();
-    var gadgetPaletteOffsets = DlAssetReader.ReadTextureDefinitions(
+    var gadgetPaletteOffsets = LevelAssetReader.ReadTextureDefinitions(
             sourceHeaderBytes, sourceHeader.MobyTextureOffset, sourceHeader.MobyTextureCount)
         .Where(value => value.Type == 0 && value.PaletteId >= 0)
         .Select(value => value.PaletteId * 0x100)
@@ -1885,13 +1907,13 @@ static void ValidateUyaCampaignStaticAssetCompositionWhenAvailable()
             && composed.PaletteBytes.AsSpan(offset, 0x400)
                 .SequenceEqual(sourcePaletteBytes.AsSpan(offset, 0x400))),
         "UYA campaign composition should preserve gadget-WAD moby palettes and GS destinations");
-    var sourceStashedTextures = DlAssetReader.ReadTextureDefinitions(
+    var sourceStashedTextures = LevelAssetReader.ReadTextureDefinitions(
             sourceHeaderBytes, sourceHeader.MobyTextureOffset, sourceHeader.MobyTextureCount)
         .Where(value => value.Type == 0)
         .Select(value => (value.Index, value.TextureOffset, value.Width, value.Height, value.Type,
             value.PaletteId, value.MipmapPaletteId))
         .ToArray();
-    var outputStashedTextures = DlAssetReader.ReadTextureDefinitions(
+    var outputStashedTextures = LevelAssetReader.ReadTextureDefinitions(
             composed.HeaderBytes, header.MobyTextureOffset, header.MobyTextureCount)
         .Where(value => value.Type == 0)
         .Select(value => (value.Index, value.TextureOffset, value.Width, value.Height, value.Type,
@@ -1907,8 +1929,8 @@ static void ValidateUyaCampaignStaticAssetCompositionWhenAvailable()
         && outputExtra.Select(value => (value.TextureFormat, value.Width, value.Height, value.Offset2))
             .SequenceEqual(sourceExtra.Select(value =>
                 (value.TextureFormat, value.Width, value.Height, value.Offset2)))
-        && DlAssetReader.ReadMobyGsStashClassIds(composed.HeaderBytes, header.MobyGsStashListOffset)
-            .SequenceEqual(DlAssetReader.ReadMobyGsStashClassIds(
+        && LevelAssetReader.ReadMobyGsStashClassIds(composed.HeaderBytes, header.MobyGsStashListOffset)
+            .SequenceEqual(LevelAssetReader.ReadMobyGsStashClassIds(
                 sourceHeaderBytes, sourceHeader.MobyGsStashListOffset))
         && header.ChromeTextureOffset == sourceHeader.ChromeTextureOffset
         && header.ChromePaletteOffset == sourceHeader.ChromePaletteOffset
@@ -2289,7 +2311,7 @@ static void ValidateUyaGameplayTypedParsing()
         "UYA occlusion grid should be located through the level asset header");
     var alwaysVisible = LevelAssetComposer.SetAlwaysVisibleOcclusionBit(
         GameId.UYA, assetHeader, assetWad, 42);
-    var alwaysVisibleHeader = DlAssetReader.ReadHeader(alwaysVisible.HeaderBytes);
+    var alwaysVisibleHeader = LevelAssetReader.ReadHeader(alwaysVisible.HeaderBytes);
     var alwaysVisibleGrid = UyaOcclusionGridReader.ReadLevelAsset(
         alwaysVisible.HeaderBytes, alwaysVisible.AssetWadBytes);
     Expect((alwaysVisible.AssetWadBytes[alwaysVisibleHeader.OcclusionOffset
@@ -3594,22 +3616,23 @@ static void ValidateAssetSlicing()
     var assetData = Enumerable.Range(0, 32).Select(value => (byte)value).ToArray();
     var knownOffsets = new[] { 0, 10, 20, assetData.Length };
 
-    var defaultZeroOffsetSlice = DlAssetReader.ReadAssetSlice(assetData, 0, knownOffsets);
+    var defaultZeroOffsetSlice = LevelAssetReader.ReadAssetSlice(assetData, 0, knownOffsets);
     Expect(defaultZeroOffsetSlice.Length == 0, "asset offset zero should be treated as absent by default");
 
-    var tfragSlice = DlAssetReader.ReadAssetSlice(assetData, 0, knownOffsets, allowZeroOffset: true);
+    var tfragSlice = LevelAssetReader.ReadAssetSlice(assetData, 0, knownOffsets, allowZeroOffset: true);
     Expect(tfragSlice.SequenceEqual(assetData[..10]), "tfrag asset slices should allow offset zero and stop at the next known asset offset");
 
-    var nonZeroSlice = DlAssetReader.ReadAssetSlice(assetData, 10, knownOffsets);
+    var nonZeroSlice = LevelAssetReader.ReadAssetSlice(assetData, 10, knownOffsets);
     Expect(nonZeroSlice.SequenceEqual(assetData[10..20]), "non-zero asset slices should stop at the next known asset offset");
 
     var headerBytes = new byte[0xc0];
     WriteInt32(headerBytes, 0x10, 0x100);
     WriteInt32(headerBytes, 0x14, 0x1000);
     WriteInt32(headerBytes, 0x78, 0x200);
-    var header = DlAssetReader.ReadHeader(headerBytes);
-    var gcOffsets = DlAssetReader.CollectKnownAssetOffsets(GameId.GC, header, 0x2000, [], [], []);
-    var dlOffsets = DlAssetReader.CollectKnownAssetOffsets(GameId.DL, header, 0x2000, [], [], []);
+    var header = LevelAssetReader.ReadHeader(headerBytes);
+    var gcOffsets = LevelAssetReader.CollectKnownAssetOffsets(header, 0x2000, [], [], []);
+    var dlOffsets = LevelAssetReader.CollectKnownAssetOffsets(
+        header, 0x2000, [], [], [], [header.LightCuboidsOffset]);
     Expect(!gcOffsets.Contains(0x200), "GC ratchet sequence table pointers should not truncate asset slices");
     Expect(dlOffsets.Contains(0x200), "DL light cuboid offsets should remain asset slice boundaries");
 }
@@ -3637,7 +3660,7 @@ static void ValidateMobyGsStashTextures()
     WriteInt16(headerBytes, 0xf0, classId);
     WriteInt16(headerBytes, 0xf2, -1);
 
-    var classIds = DlAssetReader.ReadMobyGsStashClassIds(headerBytes, 0xf0);
+    var classIds = LevelAssetReader.ReadMobyGsStashClassIds(headerBytes, 0xf0);
     Expect(classIds.SequenceEqual([classId]), "moby GS stash class ids should be read through the -1 terminator");
 
     var palette = CreatePalette();
@@ -3656,8 +3679,8 @@ static void ValidateMobyGsStashTextures()
         assetBytes);
     var exportedPng = files.Single(file =>
         file.Path == "assets/moby/09500_251C/textures/tex.0000.png").Bytes;
-    var definition = DlAssetReader.ReadTextureDefinitions(headerBytes, 0xe0, 1).Single();
-    var unswizzledPng = DlAssetReader.BuildAssetTexture(
+    var definition = LevelAssetReader.ReadTextureDefinitions(headerBytes, 0xe0, 1).Single();
+    var unswizzledPng = LevelAssetReader.BuildAssetTexture(
         "moby",
         0,
         definition,
@@ -3665,7 +3688,7 @@ static void ValidateMobyGsStashTextures()
         assetBytes,
         textureDataOffset: 0,
         isSwizzled: false).PngBytes;
-    var swizzledPng = DlAssetReader.BuildAssetTexture(
+    var swizzledPng = LevelAssetReader.BuildAssetTexture(
         "moby",
         0,
         definition,
@@ -4241,7 +4264,7 @@ static void ValidateNormalizedTextureArtifacts()
         assetData[0x70 + i] = (byte)(0x80 + i);
     }
 
-    var definition = new DlAssetTextureDefinition(
+    var definition = new LevelAssetTextureDefinition(
         Index: 7,
         TextureOffset: 0x20,
         Width: 4,
@@ -4251,7 +4274,7 @@ static void ValidateNormalizedTextureArtifacts()
         MipmapPaletteId: 1,
         Padding: 0);
 
-    var texture = DlAssetReader.BuildAssetTexture(
+    var texture = LevelAssetReader.BuildAssetTexture(
         "moby",
         0,
         definition,
@@ -4262,8 +4285,19 @@ static void ValidateNormalizedTextureArtifacts()
     var pif = PifReader.Read(texture.PifBytes);
     Expect(pif.TotalMipLevels == 3, "DL normalized asset texture should store base mip plus mipmaps in PIF");
     Expect(texture.PngBytes.Length > 0, "DL normalized asset texture should generate a PNG preview");
-    Expect(texture.Metadata.SourceDefinition is DlAssetTextureDefinition, "texture manifest metadata should retain source table definition");
+    Expect(texture.Metadata.SourceDefinition is LevelAssetTextureDefinition, "texture manifest metadata should retain source table definition");
     Expect(texture.Metadata.MipPixelOffsets.SequenceEqual([0x70, 0x100]), "texture manifest metadata should retain mip source offsets");
+
+    var type2Texture = PifReader.Read(LevelAssetReader.BuildAssetTexture(
+        "moby",
+        0,
+        definition with { Type = 2, MipmapPaletteId = -1 },
+        palette,
+        assetData,
+        textureDataOffset: 0x40).PifBytes);
+    Expect(type2Texture.PixelData.SequenceEqual(assetData.AsSpan(0x60, 16).ToArray())
+        && type2Texture.MipPixelData.Single().SequenceEqual(assetData.AsSpan(0x70, 4).ToArray()),
+        "type 2 asset textures should read their base pixels and first mip from asset data");
 
     var overlappingPaletteData = new byte[0x500];
     for (var i = 0; i < overlappingPaletteData.Length; i++)
@@ -4271,7 +4305,7 @@ static void ValidateNormalizedTextureArtifacts()
         overlappingPaletteData[i] = (byte)(i & 0xff);
     }
 
-    var paletteStrideTexture = DlAssetReader.BuildAssetTexture(
+    var paletteStrideTexture = LevelAssetReader.BuildAssetTexture(
         "tie",
         0,
         definition with { PaletteId = 1, MipmapPaletteId = -1 },

@@ -295,9 +295,9 @@ public static class DlLevelWadRenderPackageBuilder
         IReadOnlyDictionary<int, Vector3>? skyRotationDeltasRadiansPerFrame,
         FrontendMapAssetGroup assetGroup)
     {
-        var header = DlAssetReader.ReadHeader(headerBytes);
+        var header = LevelAssetReader.ReadHeader(headerBytes);
         var assetProfile = options.AssetProfile;
-        var allMipmapDefinitions = DlAssetReader.ReadMipmapDefinitions(
+        var allMipmapDefinitions = LevelAssetReader.ReadMipmapDefinitions(
             headerBytes,
             header.GsRamOffset,
             Math.Max(
@@ -310,24 +310,29 @@ public static class DlLevelWadRenderPackageBuilder
             ? BuildEnvironmentTextures(files, header, paletteBytes, gsStashDefinitions)
             : new Dictionary<string, string>();
         var mobyGsStashClassIds = assetProfile.HasMobyGsStashClassList
-            ? DlAssetReader.ReadMobyGsStashClassIds(headerBytes, header.MobyGsStashListOffset)
+            ? LevelAssetReader.ReadMobyGsStashClassIds(headerBytes, header.MobyGsStashListOffset)
             : [];
-        var mobyDefinitions = DlAssetReader.ReadModelDefinitions(headerBytes, header.MobyModelOffset, header.MobyModelCount);
-        var tieDefinitions = DlAssetReader.ReadModelDefinitions(headerBytes, header.TieModelOffset, header.TieModelCount);
-        var shrubDefinitions = DlAssetReader.ReadShrubDefinitions(headerBytes, header.ShrubModelOffset, header.ShrubModelCount);
-        var tfragTextureDefinitions = DlAssetReader.ReadTextureDefinitions(headerBytes, header.TerrainTextureOffset, header.TerrainTextureCount);
-        var mobyTextureDefinitions = DlAssetReader.ReadTextureDefinitions(headerBytes, header.MobyTextureOffset, header.MobyTextureCount);
-        var tieTextureDefinitions = DlAssetReader.ReadTextureDefinitions(headerBytes, header.TieTextureOffset, header.TieTextureCount);
-        var shrubTextureDefinitions = DlAssetReader.ReadTextureDefinitions(headerBytes, header.ShrubTextureOffset, header.ShrubTextureCount);
-        var fxDefinitions = DlAssetReader.ReadFxTextureDefinitions(headerBytes, header.FxTextureDefOffset, header.FxTextureCount);
+        var mobyDefinitions = LevelAssetReader.ReadModelDefinitions(headerBytes, header.MobyModelOffset, header.MobyModelCount);
+        var tieDefinitions = LevelAssetReader.ReadModelDefinitions(headerBytes, header.TieModelOffset, header.TieModelCount);
+        var shrubDefinitions = LevelAssetReader.ReadShrubDefinitions(headerBytes, header.ShrubModelOffset, header.ShrubModelCount);
+        var tfragTextureDefinitions = LevelAssetReader.ReadTextureDefinitions(headerBytes, header.TerrainTextureOffset, header.TerrainTextureCount);
+        var mobyTextureDefinitions = LevelAssetReader.ReadTextureDefinitions(headerBytes, header.MobyTextureOffset, header.MobyTextureCount);
+        var tieTextureDefinitions = LevelAssetReader.ReadTextureDefinitions(headerBytes, header.TieTextureOffset, header.TieTextureCount);
+        var shrubTextureDefinitions = LevelAssetReader.ReadTextureDefinitions(headerBytes, header.ShrubTextureOffset, header.ShrubTextureCount);
+        var fxDefinitions = LevelAssetReader.ReadFxTextureDefinitions(headerBytes, header.FxTextureDefOffset, header.FxTextureCount);
         var textureIsSwizzled = ShouldSwizzleAssetTextures(gameId);
-        var knownAssetOffsets = DlAssetReader.CollectKnownAssetOffsets(
-            gameId,
+        var knownAssetOffsets = LevelAssetReader.CollectKnownAssetOffsets(
             header,
             assetBytes.Length,
             mobyDefinitions,
             tieDefinitions,
-            shrubDefinitions);
+            shrubDefinitions,
+            gameId switch
+            {
+                GameId.DL => [header.LightCuboidsOffset],
+                GameId.UYA => [header.SceneViewSize],
+                _ => [],
+            });
         var gltfExports = new List<GltfExportRoute>();
 
         if (buildCommon)
@@ -519,9 +524,9 @@ public static class DlLevelWadRenderPackageBuilder
 
     private static IReadOnlyDictionary<string, string> BuildEnvironmentTextures(
         List<PackedFile> files,
-        DlAssetHeader header,
+        LevelAssetHeader header,
         byte[] paletteBytes,
-        IReadOnlyList<DlAssetMipmapDefinition> gsStashDefinitions)
+        IReadOnlyList<LevelAssetMipmapDefinition> gsStashDefinitions)
     {
         var paths = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var (name, textureOffset, paletteOffset) in new[]
@@ -537,7 +542,7 @@ public static class DlLevelWadRenderPackageBuilder
             }
 
             var path = $"environment/{name}.png";
-            var texture = DlAssetReader.BuildGsStashTexture(
+            var texture = LevelAssetReader.BuildGsStashTexture(
                 name,
                 0,
                 definition,
@@ -617,8 +622,8 @@ public static class DlLevelWadRenderPackageBuilder
 
     private static RenderTextureResources BuildTfragTextureResources(
         List<PackedFile> files,
-        DlAssetHeader header,
-        IReadOnlyList<DlAssetTextureDefinition> textureDefinitions,
+        LevelAssetHeader header,
+        IReadOnlyList<LevelAssetTextureDefinition> textureDefinitions,
         byte[] paletteBytes,
         byte[] assetBytes,
         bool textureIsSwizzled,
@@ -627,7 +632,7 @@ public static class DlLevelWadRenderPackageBuilder
         var textureResources = new RenderTextureResources();
         foreach (var definition in textureDefinitions)
         {
-            var texture = DlAssetReader.BuildAssetTexture(
+            var texture = LevelAssetReader.BuildAssetTexture(
                 "tfrag",
                 definition.Index,
                 definition,
@@ -703,14 +708,14 @@ public static class DlLevelWadRenderPackageBuilder
         List<PackedFile> files,
         GameId gameId,
         int levelIndex,
-        DlAssetHeader header,
+        LevelAssetHeader header,
         byte[] assetBytes,
         IReadOnlyList<int> knownAssetOffsets,
         DlLevelWadRenderPackageBuildOptions options,
         IReadOnlyDictionary<int, Vector3>? skyRotationDeltasRadiansPerFrame)
     {
         const string packageRoot = "assets/skybox";
-        var skyboxBytes = DlAssetReader.ReadAssetSlice(assetBytes, header.SkyOffset, knownAssetOffsets);
+        var skyboxBytes = LevelAssetReader.ReadAssetSlice(assetBytes, header.SkyOffset, knownAssetOffsets);
         if (options.IncludeSourceFiles)
         {
             AddFile(files, $"{packageRoot}/sky.bin", skyboxBytes);
@@ -762,12 +767,12 @@ public static class DlLevelWadRenderPackageBuilder
     private static IEnumerable<GltfExportRoute> BuildMobyGltfs(
         List<PackedFile> files,
         GameId gameId,
-        IReadOnlyList<DlAssetModelDefinition> modelDefinitions,
-        IReadOnlyList<DlAssetTextureDefinition> textureDefinitions,
+        IReadOnlyList<LevelAssetModelDefinition> modelDefinitions,
+        IReadOnlyList<LevelAssetTextureDefinition> textureDefinitions,
         byte[] paletteBytes,
         byte[] assetBytes,
         int textureDataOffset,
-        IReadOnlyList<DlAssetMipmapDefinition> gsStashDefinitions,
+        IReadOnlyList<LevelAssetMipmapDefinition> gsStashDefinitions,
         IReadOnlyList<int> mobyGsStashClassIds,
         IReadOnlyList<int> knownAssetOffsets,
         bool textureIsSwizzled,
@@ -775,12 +780,12 @@ public static class DlLevelWadRenderPackageBuilder
     {
         foreach (var definition in modelDefinitions)
         {
-            var folderName = DlAssetReader.GetAssetFolderName(definition.ModelId);
+            var folderName = LevelAssetReader.GetAssetFolderName(definition.ModelId);
             var relativeDirectory = $"moby/{folderName}";
             var sourcePath = $"{relativeDirectory}/moby.bin";
             var gltfPath = $"{relativeDirectory}/moby.gltf";
             var packageRoot = $"assets/{relativeDirectory}";
-            var mobyBytes = DlAssetReader.ReadAssetSlice(assetBytes, definition.ModelOffset, knownAssetOffsets);
+            var mobyBytes = LevelAssetReader.ReadAssetSlice(assetBytes, definition.ModelOffset, knownAssetOffsets);
             if (options.IncludeSourceFiles)
             {
                 AddFile(files, $"{packageRoot}/moby.bin", mobyBytes);
@@ -807,7 +812,7 @@ public static class DlLevelWadRenderPackageBuilder
                         continue;
                     }
 
-                    var texture = DlAssetReader.BuildAssetTexture(
+                    var texture = LevelAssetReader.BuildAssetTexture(
                         "moby",
                         relativeTextureIndex,
                         textureDefinitions[textureId],
@@ -899,13 +904,13 @@ public static class DlLevelWadRenderPackageBuilder
                 {
                     var texture = PifAssetExporter.Export(moby.PifTextures[textureIndex]);
                     var image = TextureConverter.Decode(texture.Texture);
-                    var normalized = new DlNormalizedTexture(
+                    var normalized = new LevelAssetTexture(
                         textureIndex,
                         "mission_moby",
                         texture.PifBytes,
                         texture.PngBytes,
                         TextureConverter.AnalyzeAlpha(image),
-                        new DlNormalizedTextureMetadata(
+                        new LevelAssetTextureMetadata(
                             "mission_moby",
                             textureIndex,
                             texture.Texture.Header.USize,
@@ -1049,8 +1054,8 @@ public static class DlLevelWadRenderPackageBuilder
     private static IEnumerable<GltfExportRoute> BuildTieGltfs(
         List<PackedFile> files,
         GameId gameId,
-        IReadOnlyList<DlAssetModelDefinition> modelDefinitions,
-        IReadOnlyList<DlAssetTextureDefinition> textureDefinitions,
+        IReadOnlyList<LevelAssetModelDefinition> modelDefinitions,
+        IReadOnlyList<LevelAssetTextureDefinition> textureDefinitions,
         byte[] paletteBytes,
         byte[] assetBytes,
         int textureDataOffset,
@@ -1061,12 +1066,12 @@ public static class DlLevelWadRenderPackageBuilder
     {
         foreach (var definition in modelDefinitions)
         {
-            var folderName = DlAssetReader.GetAssetFolderName(definition.ModelId);
+            var folderName = LevelAssetReader.GetAssetFolderName(definition.ModelId);
             var relativeDirectory = $"tie/{folderName}";
             var sourcePath = $"{relativeDirectory}/tie.bin";
             var gltfPath = $"{relativeDirectory}/tie.gltf";
             var packageRoot = $"assets/{relativeDirectory}";
-            var tieBytes = DlAssetReader.ReadAssetSlice(assetBytes, definition.ModelOffset, knownAssetOffsets);
+            var tieBytes = LevelAssetReader.ReadAssetSlice(assetBytes, definition.ModelOffset, knownAssetOffsets);
             if (options.IncludeSourceFiles)
             {
                 AddFile(files, $"{packageRoot}/tie.bin", tieBytes);
@@ -1088,7 +1093,7 @@ public static class DlLevelWadRenderPackageBuilder
                     continue;
                 }
 
-                var texture = DlAssetReader.BuildAssetTexture(
+                var texture = LevelAssetReader.BuildAssetTexture(
                     "tie",
                     relativeTextureIndex,
                     textureDefinitions[textureId],
@@ -1145,8 +1150,8 @@ public static class DlLevelWadRenderPackageBuilder
     private static IEnumerable<GltfExportRoute> BuildShrubGltfs(
         List<PackedFile> files,
         GameId gameId,
-        IReadOnlyList<DlAssetShrubDefinition> shrubDefinitions,
-        IReadOnlyList<DlAssetTextureDefinition> textureDefinitions,
+        IReadOnlyList<LevelAssetShrubDefinition> shrubDefinitions,
+        IReadOnlyList<LevelAssetTextureDefinition> textureDefinitions,
         byte[] paletteBytes,
         byte[] assetBytes,
         int textureDataOffset,
@@ -1156,12 +1161,12 @@ public static class DlLevelWadRenderPackageBuilder
     {
         foreach (var definition in shrubDefinitions)
         {
-            var folderName = DlAssetReader.GetAssetFolderName(definition.ModelId);
+            var folderName = LevelAssetReader.GetAssetFolderName(definition.ModelId);
             var relativeDirectory = $"shrub/{folderName}";
             var sourcePath = $"{relativeDirectory}/shrub.bin";
             var gltfPath = $"{relativeDirectory}/shrub.gltf";
             var packageRoot = $"assets/{relativeDirectory}";
-            var shrubBytes = DlAssetReader.ReadAssetSlice(assetBytes, definition.ModelOffset, knownAssetOffsets);
+            var shrubBytes = LevelAssetReader.ReadAssetSlice(assetBytes, definition.ModelOffset, knownAssetOffsets);
             if (options.IncludeSourceFiles)
             {
                 AddFile(files, $"{packageRoot}/shrub.bin", shrubBytes);
@@ -1183,7 +1188,7 @@ public static class DlLevelWadRenderPackageBuilder
                     continue;
                 }
 
-                var texture = DlAssetReader.BuildAssetTexture(
+                var texture = LevelAssetReader.BuildAssetTexture(
                     "shrub",
                     relativeTextureIndex,
                     textureDefinitions[textureId],
@@ -1203,7 +1208,7 @@ public static class DlLevelWadRenderPackageBuilder
                     files,
                     $"{packageRoot}/textures",
                     "textures",
-                    DlAssetReader.BuildShrubBillboardTexture(definition, paletteBytes),
+                    LevelAssetReader.BuildShrubBillboardTexture(definition, paletteBytes),
                     null,
                     outputFileName: "billboard.png");
             }
@@ -1252,7 +1257,7 @@ public static class DlLevelWadRenderPackageBuilder
 
     private static void BuildFxTextures(
         List<PackedFile> files,
-        IReadOnlyList<DlFxTextureDefinition> fxDefinitions,
+        IReadOnlyList<LevelFxTextureDefinition> fxDefinitions,
         byte[] assetBytes,
         int fxTextureDataOffset,
         bool textureIsSwizzled)
@@ -1263,7 +1268,7 @@ public static class DlLevelWadRenderPackageBuilder
         {
             try
             {
-                var texture = DlAssetReader.BuildFxTexture(
+                var texture = LevelAssetReader.BuildFxTexture(
                     definition,
                     assetBytes,
                     fxTextureDataOffset,
@@ -1452,7 +1457,7 @@ public static class DlLevelWadRenderPackageBuilder
         List<PackedFile> files,
         string packageDirectory,
         string gltfTextureDirectory,
-        DlNormalizedTexture texture,
+        LevelAssetTexture texture,
         RenderTextureResources? resources,
         string? outputFileName = null)
     {

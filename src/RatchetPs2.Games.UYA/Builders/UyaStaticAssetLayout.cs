@@ -1,5 +1,5 @@
 using System.Buffers.Binary;
-using RatchetPs2.Games.DL.Level;
+using RatchetPs2.Core.LevelAssets;
 
 namespace RatchetPs2.Games.UYA.Builders;
 
@@ -10,14 +10,14 @@ internal static class UyaStaticAssetLayout
     private const int PaletteAlignment = 0x100;
     internal const int SequenceTableSize = 0x400;
 
-    public static (IReadOnlyList<DlAssetMipmapDefinition> Primary,
-        IReadOnlyList<DlAssetMipmapDefinition> Extra) ReadRetainedMipmaps(
+    public static (IReadOnlyList<LevelAssetMipmapDefinition> Primary,
+        IReadOnlyList<LevelAssetMipmapDefinition> Extra) ReadRetainedMipmaps(
         ReadOnlySpan<byte> headerBytes,
-        DlAssetHeader header)
+        LevelAssetHeader header)
     {
-        var offsets = DlAssetReader.ReadTextureDefinitions(
+        var offsets = LevelAssetReader.ReadTextureDefinitions(
                 headerBytes, header.TerrainTextureOffset, header.TerrainTextureCount)
-            .Concat(DlAssetReader.ReadTextureDefinitions(
+            .Concat(LevelAssetReader.ReadTextureDefinitions(
                     headerBytes, header.MobyTextureOffset, header.MobyTextureCount)
                 .Where(texture => texture.Type == 0))
             .SelectMany(texture => new[] { texture.PaletteId, texture.MipmapPaletteId })
@@ -26,7 +26,7 @@ internal static class UyaStaticAssetLayout
             .Append(header.ChromePaletteOffset)
             .Append(header.GlassPaletteOffset)
             .ToHashSet();
-        var mipmaps = DlAssetReader.ReadMipmapDefinitions(
+        var mipmaps = LevelAssetReader.ReadMipmapDefinitions(
             headerBytes, header.GsRamOffset, checked(header.GsRamCount + header.ExtraMipmapCount));
         return (
             mipmaps.Take(header.GsRamCount).Where(value => offsets.Contains(value.Offset1)).ToArray(),
@@ -34,8 +34,8 @@ internal static class UyaStaticAssetLayout
     }
 
     public static int FindRetainedPaletteLength(
-        IReadOnlyList<DlAssetMipmapDefinition> mipmaps,
-        DlAssetHeader header,
+        IReadOnlyList<LevelAssetMipmapDefinition> mipmaps,
+        LevelAssetHeader header,
         int paletteLength)
     {
         var length = mipmaps.Select(value => checked(value.Offset1 + (value.TextureFormat switch
@@ -69,15 +69,15 @@ internal static class UyaStaticAssetLayout
 
     public static int FindRetainedTextureLength(
         ReadOnlySpan<byte> headerBytes,
-        DlAssetHeader header,
+        LevelAssetHeader header,
         int preservedDataOffset)
     {
         if (header.TextureDataOffset <= 0) return 0;
         var maxEnd = 0;
-        foreach (var texture in DlAssetReader.ReadTextureDefinitions(
+        foreach (var texture in LevelAssetReader.ReadTextureDefinitions(
                      headerBytes, header.TerrainTextureOffset, header.TerrainTextureCount))
         {
-            if ((texture.Type & 1) == 0) continue;
+            if (texture.Type == 0) continue;
             if (texture.TextureOffset < 0 || texture.Width <= 0 || texture.Height <= 0)
                 throw new InvalidDataException("UYA terrain texture definition has invalid bounds.");
             var end = checked(texture.TextureOffset + texture.Width * texture.Height);
@@ -93,15 +93,15 @@ internal static class UyaStaticAssetLayout
 
     public static int FindModelDataOffset(
         ReadOnlySpan<byte> headerBytes,
-        DlAssetHeader header,
+        LevelAssetHeader header,
         int assetWadLength)
     {
-        var offsets = DlAssetReader.ReadModelDefinitions(
+        var offsets = LevelAssetReader.ReadModelDefinitions(
                 headerBytes, header.MobyModelOffset, header.MobyModelCount)
             .Select(value => value.ModelOffset)
-            .Concat(DlAssetReader.ReadModelDefinitions(
+            .Concat(LevelAssetReader.ReadModelDefinitions(
                 headerBytes, header.TieModelOffset, header.TieModelCount).Select(value => value.ModelOffset))
-            .Concat(DlAssetReader.ReadShrubDefinitions(
+            .Concat(LevelAssetReader.ReadShrubDefinitions(
                 headerBytes, header.ShrubModelOffset, header.ShrubModelCount).Select(value => value.ModelOffset))
             .Where(value => value > 0)
             .ToArray();
@@ -111,7 +111,7 @@ internal static class UyaStaticAssetLayout
         return offset;
     }
 
-    public static int FindPreservedDataOffset(DlAssetHeader header, int modelDataOffset)
+    public static int FindPreservedDataOffset(LevelAssetHeader header, int modelDataOffset)
     {
         var offset = new[] { header.ParticleTextureDataOffset, header.FxTextureDataOffset, modelDataOffset }
             .Where(value => value > header.TextureDataOffset)
@@ -129,7 +129,7 @@ internal static class UyaStaticAssetLayout
 
     public static byte[]? ReadSequenceTable(
         ReadOnlySpan<byte> headerBytes,
-        DlAssetHeader header,
+        LevelAssetHeader header,
         int assetWadLength)
     {
         if (header.SceneViewSize <= 0 || header.SceneViewSize == assetWadLength) return null;

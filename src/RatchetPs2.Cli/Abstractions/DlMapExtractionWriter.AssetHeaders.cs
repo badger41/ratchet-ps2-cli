@@ -1,3 +1,4 @@
+using RatchetPs2.Core.LevelAssets;
 using RatchetPs2.Games.DL.Level;
 
 namespace RatchetPs2.Cli.Abstractions;
@@ -7,7 +8,7 @@ internal static partial class DlMapExtractionWriter
     private static IReadOnlyList<HeaderPayloadRoute> WriteAssetHeaderArtifacts(
         string outputDirectory,
         byte[] headerBytes,
-        DlAssetHeader header)
+        LevelAssetHeader header)
     {
         var routes = new List<HeaderPayloadRoute>
         {
@@ -52,7 +53,7 @@ internal static partial class DlMapExtractionWriter
 
     private static IReadOnlyList<HeaderPayloadRoute> ExtractLooseAssetBlocks(
         string outputDirectory,
-        DlAssetHeader header,
+        LevelAssetHeader header,
         byte[] headerBytes,
         byte[] assetBytes,
         IReadOnlyList<int> knownAssetOffsets)

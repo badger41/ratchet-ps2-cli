@@ -1,8 +1,8 @@
 using static RatchetPs2.Core.IO.BinarySpanReader;
 using RatchetPs2.Core.Games;
 using RatchetPs2.Core.IO;
+using RatchetPs2.Core.LevelAssets;
 using RatchetPs2.Core.Wad;
-using RatchetPs2.Games.DL.Level;
 
 namespace RatchetPs2.Games.UYA.Level;
 
@@ -19,20 +19,20 @@ public static class UyaOcclusionGridReader
         ReadOnlySpan<byte> assetHeaderBytes,
         ReadOnlySpan<byte> assetWadBytes)
     {
-        var header = DlAssetReader.ReadHeader(assetHeaderBytes);
+        var header = LevelAssetReader.ReadHeader(assetHeaderBytes);
         if (header.OcclusionOffset <= 0) return new(0, []);
         var assets = BinaryMagic.IsWad(assetWadBytes)
             ? WadCompression.Decompress(assetWadBytes)
             : assetWadBytes.ToArray();
-        var mobys = DlAssetReader.ReadModelDefinitions(
+        var mobys = LevelAssetReader.ReadModelDefinitions(
             assetHeaderBytes, header.MobyModelOffset, header.MobyModelCount);
-        var ties = DlAssetReader.ReadModelDefinitions(
+        var ties = LevelAssetReader.ReadModelDefinitions(
             assetHeaderBytes, header.TieModelOffset, header.TieModelCount);
-        var shrubs = DlAssetReader.ReadShrubDefinitions(
+        var shrubs = LevelAssetReader.ReadShrubDefinitions(
             assetHeaderBytes, header.ShrubModelOffset, header.ShrubModelCount);
-        var offsets = DlAssetReader.CollectKnownAssetOffsets(
-            GameId.UYA, header, assets.Length, mobys, ties, shrubs);
-        var payload = DlAssetReader.ReadAssetSlice(assets, header.OcclusionOffset, offsets);
+        var offsets = LevelAssetReader.CollectKnownAssetOffsets(
+            header, assets.Length, mobys, ties, shrubs, [header.SceneViewSize]);
+        var payload = LevelAssetReader.ReadAssetSlice(assets, header.OcclusionOffset, offsets);
         return payload.Length >= 8 ? Read(payload) : new(0, []);
     }
 

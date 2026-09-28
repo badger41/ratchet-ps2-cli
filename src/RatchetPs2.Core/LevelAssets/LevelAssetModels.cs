@@ -1,8 +1,8 @@
 using RatchetPs2.Core.Textures.Png;
 
-namespace RatchetPs2.Games.DL.Level;
+namespace RatchetPs2.Core.LevelAssets;
 
-public sealed record DlAssetHeader(
+public sealed record LevelAssetHeader(
     int GsRamCount,
     int GsRamOffset,
     int TerrainOffset,
@@ -52,7 +52,7 @@ public sealed record DlAssetHeader(
     int OcclusionRadius2Offset,
     int PaddingC);
 
-public sealed record DlAssetModelDefinition(
+public sealed record LevelAssetModelDefinition(
     int Index,
     int ModelOffset,
     int ModelId,
@@ -60,7 +60,7 @@ public sealed record DlAssetModelDefinition(
     int UnknownC,
     byte[] TextureIds);
 
-public sealed record DlAssetShrubDefinition(
+public sealed record LevelAssetShrubDefinition(
     int Index,
     int ModelOffset,
     int ModelId,
@@ -74,7 +74,7 @@ public sealed record DlAssetShrubDefinition(
     short TextureId,
     IReadOnlyList<short> Mipmaps);
 
-public sealed record DlAssetTextureDefinition(
+public sealed record LevelAssetTextureDefinition(
     int Index,
     int TextureOffset,
     short Width,
@@ -84,7 +84,7 @@ public sealed record DlAssetTextureDefinition(
     short MipmapPaletteId,
     short Padding);
 
-public sealed record DlAssetMipmapDefinition(
+public sealed record LevelAssetMipmapDefinition(
     int Index,
     int TextureFormat,
     short Width,
@@ -92,29 +92,29 @@ public sealed record DlAssetMipmapDefinition(
     int Offset1,
     int Offset2);
 
-public sealed record DlParticleTextureDefinition(
+public sealed record LevelParticleTextureDefinition(
     int Index,
     int PaletteOffset,
     int Unknown4,
     int TextureOffset,
     int Size);
 
-public sealed record DlFxTextureDefinition(
+public sealed record LevelFxTextureDefinition(
     int Index,
     int PaletteOffset,
     int TextureOffset,
     int Width,
     int Height);
 
-public sealed record DlNormalizedTexture(
+public sealed record LevelAssetTexture(
     int Index,
     string Family,
     byte[] PifBytes,
     byte[] PngBytes,
     TextureAlphaInfo Alpha,
-    DlNormalizedTextureMetadata Metadata);
+    LevelAssetTextureMetadata Metadata);
 
-public sealed record DlNormalizedTextureMetadata(
+public sealed record LevelAssetTextureMetadata(
     string Family,
     int Index,
     int Width,

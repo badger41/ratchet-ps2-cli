@@ -31,7 +31,8 @@ public sealed record StaticAssetInput(
     int ClassId,
     ReadOnlyMemory<byte> DefinitionBytes,
     ReadOnlyMemory<byte> ModelBytes,
-    IReadOnlyList<StaticAssetTexture> Textures);
+    IReadOnlyList<StaticAssetTexture> Textures,
+    bool PreserveTextureIndexes = false);
 
 public sealed record StaticAssetComposition(
     byte[] HeaderBytes,

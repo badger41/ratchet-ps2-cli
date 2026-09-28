@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using RatchetPs2.Core.Games;
+using RatchetPs2.Core.LevelAssets;
 using RatchetPs2.Core.Moby;
 using RatchetPs2.Core.Textures;
 using RatchetPs2.Core.Textures.Pif;
@@ -90,42 +91,42 @@ public static class DlDzoMobyExporter
         var headerBytes = assetHeader.PayloadBytes;
         var paletteBytes = palette.PayloadBytes;
         var assetBytes = assetWad.PayloadBytes;
-        var header = DlAssetReader.ReadHeader(headerBytes);
-        var mipmaps = DlAssetReader.ReadMipmapDefinitions(
+        var header = LevelAssetReader.ReadHeader(headerBytes);
+        var mipmaps = LevelAssetReader.ReadMipmapDefinitions(
             headerBytes,
             header.GsRamOffset,
             Math.Max(0, header.GsRamCount + header.ExtraMipmapCount));
         var gsStashDefinitions = mipmaps.Skip(header.GsRamCount).ToArray();
-        var gsStashClassIds = DlAssetReader.ReadMobyGsStashClassIds(
+        var gsStashClassIds = LevelAssetReader.ReadMobyGsStashClassIds(
             headerBytes,
             header.MobyGsStashListOffset);
-        var mobyDefinitions = DlAssetReader.ReadModelDefinitions(
+        var mobyDefinitions = LevelAssetReader.ReadModelDefinitions(
             headerBytes,
             header.MobyModelOffset,
             header.MobyModelCount);
-        var tieDefinitions = DlAssetReader.ReadModelDefinitions(
+        var tieDefinitions = LevelAssetReader.ReadModelDefinitions(
             headerBytes,
             header.TieModelOffset,
             header.TieModelCount);
-        var shrubDefinitions = DlAssetReader.ReadShrubDefinitions(
+        var shrubDefinitions = LevelAssetReader.ReadShrubDefinitions(
             headerBytes,
             header.ShrubModelOffset,
             header.ShrubModelCount);
-        var textureDefinitions = DlAssetReader.ReadTextureDefinitions(
+        var textureDefinitions = LevelAssetReader.ReadTextureDefinitions(
             headerBytes,
             header.MobyTextureOffset,
             header.MobyTextureCount);
-        var knownOffsets = DlAssetReader.CollectKnownAssetOffsets(
-            GameId.DL,
+        var knownOffsets = LevelAssetReader.CollectKnownAssetOffsets(
             header,
             assetBytes.Length,
             mobyDefinitions,
             tieDefinitions,
-            shrubDefinitions);
+            shrubDefinitions,
+            [header.LightCuboidsOffset]);
 
         foreach (var definition in mobyDefinitions)
         {
-            var modelBytes = DlAssetReader.ReadAssetSlice(assetBytes, definition.ModelOffset, knownOffsets);
+            var modelBytes = LevelAssetReader.ReadAssetSlice(assetBytes, definition.ModelOffset, knownOffsets);
             if (modelBytes.Length == 0)
             {
                 continue;
@@ -143,7 +144,7 @@ public static class DlDzoMobyExporter
                         continue;
                     }
 
-                    var texture = DlAssetReader.BuildAssetTexture(
+                    var texture = LevelAssetReader.BuildAssetTexture(
                         "moby",
                         textures.Count,
                         textureDefinitions[textureId],

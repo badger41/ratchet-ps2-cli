@@ -1,4 +1,5 @@
 using RatchetPs2.Core.Games;
+using RatchetPs2.Core.LevelAssets;
 using RatchetPs2.Core.Moby;
 using RatchetPs2.Core.Tfrags;
 using RatchetPs2.Core.Ties;
@@ -12,9 +13,9 @@ internal static partial class DlMapExtractionWriter
     private static IReadOnlyList<GltfExportRoute> ExportAssetGltfs(
         string outputDirectory,
         int levelIndex,
-        IReadOnlyList<DlAssetModelDefinition> mobyDefinitions,
-        IReadOnlyList<DlAssetModelDefinition> tieDefinitions,
-        IReadOnlyList<DlAssetShrubDefinition> shrubDefinitions)
+        IReadOnlyList<LevelAssetModelDefinition> mobyDefinitions,
+        IReadOnlyList<LevelAssetModelDefinition> tieDefinitions,
+        IReadOnlyList<LevelAssetShrubDefinition> shrubDefinitions)
     {
         var routes = new List<GltfExportRoute>();
 
@@ -187,11 +188,11 @@ internal static partial class DlMapExtractionWriter
     private static IEnumerable<GltfExportRoute> ExportModelFamilyGltfs(
         string outputDirectory,
         string family,
-        IReadOnlyList<DlAssetModelDefinition> modelDefinitions)
+        IReadOnlyList<LevelAssetModelDefinition> modelDefinitions)
     {
         foreach (var definition in modelDefinitions)
         {
-            var folderName = DlAssetReader.GetAssetFolderName(definition.ModelId);
+            var folderName = LevelAssetReader.GetAssetFolderName(definition.ModelId);
             var relativeDirectory = $"{family}/{folderName}";
             var inputPath = $"{relativeDirectory}/{family}.bin";
             var gltfPath = $"{relativeDirectory}/{family}.gltf";
@@ -311,12 +312,12 @@ internal static partial class DlMapExtractionWriter
 
     private static IEnumerable<GltfExportRoute> ExportShrubGltfs(
         string outputDirectory,
-        IReadOnlyList<DlAssetShrubDefinition> shrubDefinitions)
+        IReadOnlyList<LevelAssetShrubDefinition> shrubDefinitions)
     {
         var routes = new List<GltfExportRoute>();
         foreach (var definition in shrubDefinitions)
         {
-            var folderName = DlAssetReader.GetAssetFolderName(definition.ModelId);
+            var folderName = LevelAssetReader.GetAssetFolderName(definition.ModelId);
             var relativeDirectory = $"shrub/{folderName}";
             var inputPath = $"{relativeDirectory}/shrub.bin";
             var gltfPath = $"{relativeDirectory}/shrub.gltf";

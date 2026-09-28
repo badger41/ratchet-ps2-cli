@@ -1,3 +1,4 @@
+using RatchetPs2.Core.LevelAssets;
 using RatchetPs2.Games.DL.Level;
 
 namespace RatchetPs2.Cli.Abstractions;
@@ -6,13 +7,13 @@ internal static partial class DlMapExtractionWriter
 {
     private static AssetWadCoverageSummary WriteAssetWadCoverageArtifacts(
         string outputDirectory,
-        DlAssetHeader header,
+        LevelAssetHeader header,
         byte[] assetBytes,
         IReadOnlyList<int> knownAssetOffsets,
-        IReadOnlyList<DlAssetModelDefinition> mobyDefinitions,
-        IReadOnlyList<DlAssetModelDefinition> tieDefinitions,
-        IReadOnlyList<DlAssetShrubDefinition> shrubDefinitions,
-        IReadOnlyList<DlNormalizedTextureMetadata> textureMetadata)
+        IReadOnlyList<LevelAssetModelDefinition> mobyDefinitions,
+        IReadOnlyList<LevelAssetModelDefinition> tieDefinitions,
+        IReadOnlyList<LevelAssetShrubDefinition> shrubDefinitions,
+        IReadOnlyList<LevelAssetTextureMetadata> textureMetadata)
     {
         var ranges = new List<AssetCoverageRange>();
         AddAssetSliceCoverageRange(ranges, assetBytes.Length, "tfrag/tfrag.bin", header.TerrainOffset, knownAssetOffsets, allowZeroOffset: true);
@@ -53,7 +54,7 @@ internal static partial class DlMapExtractionWriter
         List<AssetCoverageRange> ranges,
         int assetLength,
         string family,
-        IReadOnlyList<DlAssetModelDefinition> modelDefinitions,
+        IReadOnlyList<LevelAssetModelDefinition> modelDefinitions,
         IReadOnlyList<int> knownAssetOffsets)
     {
         foreach (var definition in modelDefinitions)
@@ -66,7 +67,7 @@ internal static partial class DlMapExtractionWriter
             AddAssetSliceCoverageRange(
                 ranges,
                 assetLength,
-                $"{family}/{DlAssetReader.GetAssetFolderName(definition.ModelId)}/{family}.bin",
+                $"{family}/{LevelAssetReader.GetAssetFolderName(definition.ModelId)}/{family}.bin",
                 definition.ModelOffset,
                 knownAssetOffsets);
         }
@@ -75,7 +76,7 @@ internal static partial class DlMapExtractionWriter
     private static void AddShrubCoverageRanges(
         List<AssetCoverageRange> ranges,
         int assetLength,
-        IReadOnlyList<DlAssetShrubDefinition> shrubDefinitions,
+        IReadOnlyList<LevelAssetShrubDefinition> shrubDefinitions,
         IReadOnlyList<int> knownAssetOffsets)
     {
         foreach (var definition in shrubDefinitions)
@@ -83,7 +84,7 @@ internal static partial class DlMapExtractionWriter
             AddAssetSliceCoverageRange(
                 ranges,
                 assetLength,
-                $"shrub/{DlAssetReader.GetAssetFolderName(definition.ModelId)}/shrub.bin",
+                $"shrub/{LevelAssetReader.GetAssetFolderName(definition.ModelId)}/shrub.bin",
                 definition.ModelOffset,
                 knownAssetOffsets);
         }
@@ -91,13 +92,13 @@ internal static partial class DlMapExtractionWriter
 
     private static void AddTextureCoverageRanges(
         List<AssetCoverageRange> ranges,
-        DlAssetHeader header,
+        LevelAssetHeader header,
         int assetLength,
-        DlNormalizedTextureMetadata texture)
+        LevelAssetTextureMetadata texture)
     {
         switch (texture.SourceDefinition)
         {
-            case DlAssetTextureDefinition definition when (definition.Type & 1) != 0:
+            case LevelAssetTextureDefinition definition when (definition.Type & 1) != 0:
                 AddAssetCoverageRange(
                     ranges,
                     assetLength,
@@ -119,8 +120,8 @@ internal static partial class DlMapExtractionWriter
                 }
 
                 break;
-            case DlParticleTextureDefinition:
-            case DlFxTextureDefinition:
+            case LevelParticleTextureDefinition:
+            case LevelFxTextureDefinition:
                 AddAssetCoverageRange(
                     ranges,
                     assetLength,

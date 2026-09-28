@@ -1,8 +1,8 @@
 using System.Buffers.Binary;
+using System.Security.Cryptography;
 using RatchetPs2.Core.LevelAssets;
 using RatchetPs2.Core.Textures.Palettes;
 using RatchetPs2.Core.Textures.Pif;
-using RatchetPs2.Games.DL.Level;
 
 namespace RatchetPs2.Games.UYA.Builders;
 
@@ -34,13 +34,13 @@ internal static class UyaStaticAssetComposer
             throw new ArgumentException(
                 $"Multiple {duplicate.Key.Family} assets target class 0x{duplicate.Key.ClassId:X4}.", nameof(assets));
 
-        var sourceHeader = DlAssetReader.ReadHeader(headerBytes);
-        var sourceMobyModels = DlAssetReader.ReadModelDefinitions(
+        var sourceHeader = LevelAssetReader.ReadHeader(headerBytes);
+        var sourceMobyModels = LevelAssetReader.ReadModelDefinitions(
                 headerBytes, sourceHeader.MobyModelOffset, sourceHeader.MobyModelCount)
             .ToDictionary(value => value.ModelId);
-        var sourceMobyTextures = DlAssetReader.ReadTextureDefinitions(
+        var sourceMobyTextures = LevelAssetReader.ReadTextureDefinitions(
             headerBytes, sourceHeader.MobyTextureOffset, sourceHeader.MobyTextureCount);
-        var stashedClassIds = DlAssetReader.ReadMobyGsStashClassIds(
+        var stashedClassIds = LevelAssetReader.ReadMobyGsStashClassIds(
             headerBytes, sourceHeader.MobyGsStashListOffset).ToHashSet();
         var sourceStashReferences = sourceMobyModels.Values
             .Where(value => stashedClassIds.Contains(value.ModelId))
@@ -104,6 +104,8 @@ internal static class UyaStaticAssetComposer
         using var assetOutput = UyaStaticAssetLayout.CreateAssetOutput(
             assetWadBytes, sourceHeader.TextureDataOffset, retainedTextureLength);
         Align(assetOutput, AssetAlignment);
+        var materialPixelOffsets = ReadRetainedPixelOffsets(
+            headerBytes, sourceHeader, assetWadBytes, retainedTextureLength);
         var textureDataOffset = sourceHeader.TextureDataOffset > 0
             ? sourceHeader.TextureDataOffset
             : 0;
@@ -173,9 +175,14 @@ internal static class UyaStaticAssetComposer
                     textureDataOffset = checked((int)assetOutput.Position);
                     if (textureDataOffset <= 0) throw new InvalidDataException("UYA texture data cannot start at offset zero.");
                 }
-                var relativeOffset = checked((int)assetOutput.Position - textureDataOffset);
-                assetOutput.Write(rewritten.PixelData);
-                if (rewritten.MipPixelData.Count > 0) assetOutput.Write(rewritten.MipPixelData[0]);
+                var pixelKey = HashMaterialPixels(rewritten);
+                if (!materialPixelOffsets.TryGetValue(pixelKey, out var relativeOffset))
+                {
+                    relativeOffset = checked((int)assetOutput.Position - textureDataOffset);
+                    assetOutput.Write(rewritten.PixelData);
+                    if (rewritten.MipPixelData.Count > 0) assetOutput.Write(rewritten.MipPixelData[0]);
+                    materialPixelOffsets.Add(pixelKey, relativeOffset);
+                }
                 var mipPaletteId = (short)-1;
                 if (rewritten.MipPixelData.Count > 1)
                 {
@@ -334,10 +341,48 @@ internal static class UyaStaticAssetComposer
                 result.Add(new(
                     asset.AssetId, asset.Family, asset.ClassId, index, texture.Role, texture.PifBytes,
                     texture.Role == TextureRole.Material ? [index] : [],
-                    PreserveReferencedPaletteIndexes: texture.Role == TextureRole.Material && index < teamTextureCount));
+                    PreserveReferencedPaletteIndexes: texture.Role == TextureRole.Material
+                        && (asset.PreserveTextureIndexes || index < teamTextureCount)));
             }
         }
         return result;
+    }
+
+    private static Dictionary<string, int> ReadRetainedPixelOffsets(
+        ReadOnlySpan<byte> headerBytes,
+        LevelAssetHeader header,
+        ReadOnlySpan<byte> assetWadBytes,
+        int retainedTextureLength)
+    {
+        var result = new Dictionary<string, int>(StringComparer.Ordinal);
+        var definitions = LevelAssetReader.ReadTextureDefinitions(
+                headerBytes, header.TerrainTextureOffset, header.TerrainTextureCount)
+            .Concat(LevelAssetReader.ReadTextureDefinitions(
+                headerBytes, header.MobyTextureOffset, header.MobyTextureCount))
+            .Concat(LevelAssetReader.ReadTextureDefinitions(
+                headerBytes, header.TieTextureOffset, header.TieTextureCount))
+            .Concat(LevelAssetReader.ReadTextureDefinitions(
+                headerBytes, header.ShrubTextureOffset, header.ShrubTextureCount));
+        foreach (var definition in definitions.Where(value => value.Type != 0
+                     && value.TextureOffset >= 0 && value.Width > 0 && value.Height > 0))
+        {
+            var length = checked(definition.Width * definition.Height);
+            if ((definition.Type & 2) != 0)
+                length = checked(length + Math.Max(1, definition.Width / 2) * Math.Max(1, definition.Height / 2));
+            if (definition.TextureOffset > retainedTextureLength - length) continue;
+            var pixels = assetWadBytes.Slice(
+                checked(header.TextureDataOffset + definition.TextureOffset), length);
+            result.TryAdd(Convert.ToHexString(SHA256.HashData(pixels)), definition.TextureOffset);
+        }
+        return result;
+    }
+
+    private static string HashMaterialPixels(PifTextureData texture)
+    {
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        hash.AppendData(texture.PixelData);
+        if (texture.MipPixelData.Count > 0) hash.AppendData(texture.MipPixelData[0]);
+        return Convert.ToHexString(hash.GetHashAndReset());
     }
 
     private static void WriteBillboard(
@@ -345,7 +390,7 @@ internal static class UyaStaticAssetComposer
         PifTextureData texture,
         short paletteId,
         MemoryStream paletteOutput,
-        ICollection<DlAssetMipmapDefinition> mipmaps,
+        ICollection<LevelAssetMipmapDefinition> mipmaps,
         List<(int Start, int End)> occupiedPaletteRanges)
     {
         if (texture.MipPixelData.Count > 3)
@@ -404,8 +449,8 @@ internal static class UyaStaticAssetComposer
 
     private static int AppendMipmapTable(
         MemoryStream output,
-        IReadOnlyList<DlAssetMipmapDefinition> primary,
-        IReadOnlyList<DlAssetMipmapDefinition> extra)
+        IReadOnlyList<LevelAssetMipmapDefinition> primary,
+        IReadOnlyList<LevelAssetMipmapDefinition> extra)
     {
         if (primary.Count + extra.Count == 0) return 0;
         Align(output, AssetAlignment);
@@ -421,12 +466,12 @@ internal static class UyaStaticAssetComposer
         return offset;
     }
 
-    private static IReadOnlyList<DlAssetMipmapDefinition> AppendExtraMipmaps(
+    private static IReadOnlyList<LevelAssetMipmapDefinition> AppendExtraMipmaps(
         MemoryStream output,
         ReadOnlySpan<byte> source,
-        IReadOnlyList<DlAssetMipmapDefinition> mipmaps)
+        IReadOnlyList<LevelAssetMipmapDefinition> mipmaps)
     {
-        var relocated = new List<DlAssetMipmapDefinition>(mipmaps.Count);
+        var relocated = new List<LevelAssetMipmapDefinition>(mipmaps.Count);
         foreach (var mipmap in mipmaps)
         {
             if (mipmap.TextureFormat != 0x13 || mipmap.Width <= 0 || mipmap.Height <= 0)
@@ -483,7 +528,7 @@ internal static class UyaStaticAssetComposer
         IReadOnlyList<StaticAssetInput> assets,
         IReadOnlyDictionary<StaticAssetInput, byte[]> modelBytes)
     {
-        var header = DlAssetReader.ReadHeader(result.HeaderBytes);
+        var header = LevelAssetReader.ReadHeader(result.HeaderBytes);
         foreach (var family in Enum.GetValues<TextureAssetFamily>())
         {
             var offsets = FamilyOffsets(family);
@@ -491,10 +536,10 @@ internal static class UyaStaticAssetComposer
             if (ReadInt32(result.HeaderBytes, offsets.ModelCount) != expected.Length)
                 throw new InvalidDataException($"Composed UYA {family} model count failed verification.");
             var definitions = family == TextureAssetFamily.Shrub
-                ? DlAssetReader.ReadShrubDefinitions(result.HeaderBytes,
+                ? LevelAssetReader.ReadShrubDefinitions(result.HeaderBytes,
                     ReadInt32(result.HeaderBytes, offsets.ModelOffset), expected.Length)
                     .Select(value => (value.ModelId, value.ModelOffset, value.TextureIds)).ToArray()
-                : DlAssetReader.ReadModelDefinitions(result.HeaderBytes,
+                : LevelAssetReader.ReadModelDefinitions(result.HeaderBytes,
                     ReadInt32(result.HeaderBytes, offsets.ModelOffset), expected.Length)
                     .Select(value => (value.ModelId, value.ModelOffset, value.TextureIds)).ToArray();
             if (definitions.Length != expected.Length) throw new InvalidDataException("UYA model table count changed.");
@@ -513,7 +558,7 @@ internal static class UyaStaticAssetComposer
         }
         if (header.GsRamCount < result.Optimization.Palettes.Count)
             throw new InvalidDataException("Composed UYA header is missing optimized palette records.");
-        var primaryMipmaps = DlAssetReader.ReadMipmapDefinitions(
+        var primaryMipmaps = LevelAssetReader.ReadMipmapDefinitions(
             result.HeaderBytes, header.GsRamOffset, header.GsRamCount);
         if (!primaryMipmaps.Select(value => value.Offset2).SequenceEqual(
                 primaryMipmaps.Select(value => value.Offset2).Order()))
@@ -567,7 +612,7 @@ internal static class UyaStaticAssetComposer
         return offset;
     }
 
-    private static int PaletteBlockLength(DlAssetMipmapDefinition value) => value.TextureFormat switch
+    private static int PaletteBlockLength(LevelAssetMipmapDefinition value) => value.TextureFormat switch
     {
         0 => 0x400,
         1 => 0x200,

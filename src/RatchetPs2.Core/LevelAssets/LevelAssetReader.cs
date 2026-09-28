@@ -1,21 +1,20 @@
 using System.Buffers.Binary;
-using RatchetPs2.Core.Games;
 using RatchetPs2.Core.IO;
 using RatchetPs2.Core.Textures;
 using RatchetPs2.Core.Textures.Pif;
 
-namespace RatchetPs2.Games.DL.Level;
+namespace RatchetPs2.Core.LevelAssets;
 
-public static class DlAssetReader
+public static class LevelAssetReader
 {
     private const int PaletteEntryCount = 256;
     private const int PaletteBytes = PaletteEntryCount * 4;
     private const int AssetPaletteStrideBytes = 0x100;
 
-    public static DlAssetHeader ReadHeader(ReadOnlySpan<byte> data)
+    public static LevelAssetHeader ReadHeader(ReadOnlySpan<byte> data)
     {
         using var stream = CreateStream(data);
-        return new DlAssetHeader(
+        return new LevelAssetHeader(
             stream.ReadInt32LittleEndian(),
             stream.ReadInt32LittleEndian(),
             stream.ReadInt32LittleEndian(),
@@ -66,18 +65,18 @@ public static class DlAssetReader
             stream.ReadInt32LittleEndian());
     }
 
-    public static IReadOnlyList<DlAssetModelDefinition> ReadModelDefinitions(
+    public static IReadOnlyList<LevelAssetModelDefinition> ReadModelDefinitions(
         ReadOnlySpan<byte> headerData,
         int offset,
         int count)
     {
         using var stream = CreateStream(headerData);
-        var definitions = new DlAssetModelDefinition[count];
+        var definitions = new LevelAssetModelDefinition[count];
 
         for (var i = 0; i < definitions.Length; i++)
         {
             stream.Position = checked(offset + (i * 0x20));
-            definitions[i] = new DlAssetModelDefinition(
+            definitions[i] = new LevelAssetModelDefinition(
                 i,
                 stream.ReadInt32LittleEndian(),
                 stream.ReadInt32LittleEndian(),
@@ -89,13 +88,13 @@ public static class DlAssetReader
         return definitions;
     }
 
-    public static IReadOnlyList<DlAssetShrubDefinition> ReadShrubDefinitions(
+    public static IReadOnlyList<LevelAssetShrubDefinition> ReadShrubDefinitions(
         ReadOnlySpan<byte> headerData,
         int offset,
         int count)
     {
         using var stream = CreateStream(headerData);
-        var definitions = new DlAssetShrubDefinition[count];
+        var definitions = new LevelAssetShrubDefinition[count];
 
         for (var i = 0; i < definitions.Length; i++)
         {
@@ -107,7 +106,7 @@ public static class DlAssetReader
             var textureIds = stream.ReadBytesExactly(0x10);
             var mipmaps = new short[3];
 
-            definitions[i] = new DlAssetShrubDefinition(
+            definitions[i] = new LevelAssetShrubDefinition(
                 i,
                 modelOffset,
                 modelId,
@@ -125,18 +124,18 @@ public static class DlAssetReader
         return definitions;
     }
 
-    public static IReadOnlyList<DlAssetTextureDefinition> ReadTextureDefinitions(
+    public static IReadOnlyList<LevelAssetTextureDefinition> ReadTextureDefinitions(
         ReadOnlySpan<byte> headerData,
         int offset,
         int count)
     {
         using var stream = CreateStream(headerData);
-        var definitions = new DlAssetTextureDefinition[count];
+        var definitions = new LevelAssetTextureDefinition[count];
 
         for (var i = 0; i < definitions.Length; i++)
         {
             stream.Position = checked(offset + (i * 0x10));
-            definitions[i] = new DlAssetTextureDefinition(
+            definitions[i] = new LevelAssetTextureDefinition(
                 i,
                 stream.ReadInt32LittleEndian(),
                 (short)ReadInt16(stream),
@@ -150,7 +149,7 @@ public static class DlAssetReader
         return definitions;
     }
 
-    public static IReadOnlyList<DlAssetMipmapDefinition> ReadMipmapDefinitions(
+    public static IReadOnlyList<LevelAssetMipmapDefinition> ReadMipmapDefinitions(
         ReadOnlySpan<byte> headerData,
         int offset,
         int count)
@@ -161,12 +160,12 @@ public static class DlAssetReader
         }
 
         using var stream = CreateStream(headerData);
-        var definitions = new DlAssetMipmapDefinition[count];
+        var definitions = new LevelAssetMipmapDefinition[count];
 
         for (var i = 0; i < definitions.Length; i++)
         {
             stream.Position = checked(offset + (i * 0x10));
-            definitions[i] = new DlAssetMipmapDefinition(
+            definitions[i] = new LevelAssetMipmapDefinition(
                 i,
                 stream.ReadInt32LittleEndian(),
                 (short)ReadInt16(stream),
@@ -197,21 +196,21 @@ public static class DlAssetReader
             classIds.Add(classId);
         }
 
-        throw new InvalidDataException("DL moby GS stash class list is missing its terminator.");
+        throw new InvalidDataException("Moby GS stash class list is missing its terminator.");
     }
 
-    public static IReadOnlyList<DlParticleTextureDefinition> ReadParticleTextureDefinitions(
+    public static IReadOnlyList<LevelParticleTextureDefinition> ReadParticleTextureDefinitions(
         ReadOnlySpan<byte> headerData,
         int offset,
         int count)
     {
         using var stream = CreateStream(headerData);
-        var definitions = new DlParticleTextureDefinition[count];
+        var definitions = new LevelParticleTextureDefinition[count];
 
         for (var i = 0; i < definitions.Length; i++)
         {
             stream.Position = checked(offset + (i * 0x10));
-            definitions[i] = new DlParticleTextureDefinition(
+            definitions[i] = new LevelParticleTextureDefinition(
                 i,
                 stream.ReadInt32LittleEndian(),
                 stream.ReadInt32LittleEndian(),
@@ -222,18 +221,18 @@ public static class DlAssetReader
         return definitions;
     }
 
-    public static IReadOnlyList<DlFxTextureDefinition> ReadFxTextureDefinitions(
+    public static IReadOnlyList<LevelFxTextureDefinition> ReadFxTextureDefinitions(
         ReadOnlySpan<byte> headerData,
         int offset,
         int count)
     {
         using var stream = CreateStream(headerData);
-        var definitions = new DlFxTextureDefinition[count];
+        var definitions = new LevelFxTextureDefinition[count];
 
         for (var i = 0; i < definitions.Length; i++)
         {
             stream.Position = checked(offset + (i * 0x10));
-            definitions[i] = new DlFxTextureDefinition(
+            definitions[i] = new LevelFxTextureDefinition(
                 i,
                 stream.ReadInt32LittleEndian(),
                 stream.ReadInt32LittleEndian(),
@@ -244,14 +243,14 @@ public static class DlAssetReader
         return definitions;
     }
 
-    public static DlNormalizedTexture BuildAssetTexture(
+    public static LevelAssetTexture BuildAssetTexture(
         string family,
         int outputIndex,
-        DlAssetTextureDefinition definition,
+        LevelAssetTextureDefinition definition,
         ReadOnlySpan<byte> paletteData,
         ReadOnlySpan<byte> assetData,
         int textureDataOffset,
-        IReadOnlyList<DlAssetMipmapDefinition>? gsStashDefinitions = null,
+        IReadOnlyList<LevelAssetMipmapDefinition>? gsStashDefinitions = null,
         bool isSwizzled = true,
         bool useTextureFlags = true)
     {
@@ -265,7 +264,7 @@ public static class DlAssetReader
         var mipLengths = new List<int>();
         var mips = new List<byte[]>();
 
-        if ((definition.Type & 1) != 0 || !useTextureFlags)
+        if (definition.Type != 0 || !useTextureFlags)
         {
             pixelOffset = checked(textureDataOffset + definition.TextureOffset);
             var pixelLength = checked(definition.Width * definition.Height);
@@ -319,8 +318,8 @@ public static class DlAssetReader
             definition);
     }
 
-    public static DlNormalizedTexture BuildShrubBillboardTexture(
-        DlAssetShrubDefinition definition,
+    public static LevelAssetTexture BuildShrubBillboardTexture(
+        LevelAssetShrubDefinition definition,
         ReadOnlySpan<byte> paletteData)
     {
         ValidateDimensions(definition.Width, definition.Height, definition);
@@ -368,8 +367,8 @@ public static class DlAssetReader
             definition);
     }
 
-    public static DlNormalizedTexture BuildParticleTexture(
-        DlParticleTextureDefinition definition,
+    public static LevelAssetTexture BuildParticleTexture(
+        LevelParticleTextureDefinition definition,
         ReadOnlySpan<byte> assetData,
         int dataOffset,
         bool isSwizzled = true)
@@ -395,8 +394,8 @@ public static class DlAssetReader
             definition);
     }
 
-    public static DlNormalizedTexture BuildFxTexture(
-        DlFxTextureDefinition definition,
+    public static LevelAssetTexture BuildFxTexture(
+        LevelFxTextureDefinition definition,
         ReadOnlySpan<byte> assetData,
         int dataOffset,
         bool isSwizzled = true)
@@ -422,10 +421,10 @@ public static class DlAssetReader
             definition);
     }
 
-    public static DlNormalizedTexture BuildGsStashTexture(
+    public static LevelAssetTexture BuildGsStashTexture(
         string family,
         int outputIndex,
-        DlAssetMipmapDefinition definition,
+        LevelAssetMipmapDefinition definition,
         int paletteOffset,
         ReadOnlySpan<byte> paletteData,
         bool isSwizzled = false)
@@ -472,12 +471,12 @@ public static class DlAssetReader
     }
 
     public static IReadOnlyList<int> CollectKnownAssetOffsets(
-        GameId gameId,
-        DlAssetHeader header,
+        LevelAssetHeader header,
         int assetLength,
-        IEnumerable<DlAssetModelDefinition> mobyDefinitions,
-        IEnumerable<DlAssetModelDefinition> tieDefinitions,
-        IEnumerable<DlAssetShrubDefinition> shrubDefinitions)
+        IEnumerable<LevelAssetModelDefinition> mobyDefinitions,
+        IEnumerable<LevelAssetModelDefinition> tieDefinitions,
+        IEnumerable<LevelAssetShrubDefinition> shrubDefinitions,
+        IEnumerable<int>? additionalOffsets = null)
     {
         var offsets = new List<int>
         {
@@ -494,10 +493,7 @@ public static class DlAssetReader
             header.OcclusionRadius2Offset,
             assetLength
         };
-        if (gameId == GameId.DL)
-        {
-            offsets.Add(header.LightCuboidsOffset);
-        }
+        if (additionalOffsets is not null) offsets.AddRange(additionalOffsets);
         offsets.AddRange(mobyDefinitions.Select(definition => definition.ModelOffset));
         offsets.AddRange(tieDefinitions.Select(definition => definition.ModelOffset));
         offsets.AddRange(shrubDefinitions.Select(definition => definition.ModelOffset));
@@ -510,7 +506,7 @@ public static class DlAssetReader
         return $"{oClass:00000}_{oClass:X4}";
     }
 
-    private static DlNormalizedTexture BuildTexture(
+    private static LevelAssetTexture BuildTexture(
         string family,
         int outputIndex,
         int width,
@@ -536,13 +532,13 @@ public static class DlAssetReader
         var image = TextureConverter.Decode(texture);
         var pngBytes = TextureConverter.EncodePng(image);
 
-        return new DlNormalizedTexture(
+        return new LevelAssetTexture(
             outputIndex,
             family,
             pifBytes,
             pngBytes,
             TextureConverter.AnalyzeAlpha(image),
-            new DlNormalizedTextureMetadata(
+            new LevelAssetTextureMetadata(
                 family,
                 outputIndex,
                 width,
