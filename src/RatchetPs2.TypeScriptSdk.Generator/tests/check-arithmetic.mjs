@@ -127,6 +127,10 @@ public static class SdkArithmeticCheck {
         results.Add(Capture(() => checked((short)single).ToString()));
         single = 32768f;
         results.Add(Capture(() => checked((short)single).ToString()));
+        single = 65535f;
+        results.Add(Capture(() => checked((ushort)single).ToString()));
+        single = 65536f;
+        results.Add(Capture(() => checked((ushort)single).ToString()));
         single = float.NaN;
         results.Add(Capture(() => checked((int)single).ToString()));
         single = float.PositiveInfinity;

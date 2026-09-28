@@ -69,6 +69,14 @@ export const CheckedArithmetic = {
             throw new System.OverflowException();
         return Transpose.Int.check(Transpose.Int.trunc(value), System.Int16);
     },
+    ToUInt16(value: number): number {
+        if (!Number.isFinite(value))
+            throw new System.OverflowException();
+        value = Transpose.Int.trunc(value);
+        if (value < 0 || value > 65535)
+            throw new System.OverflowException();
+        return value;
+    },
     SingleToInt32(value: number): number {
         if (!Number.isFinite(value))
             throw new System.OverflowException();

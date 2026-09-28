@@ -1145,6 +1145,9 @@ namespace System
         [Transpose.Template("Browser.CheckedArithmetic.ToInt16({value})")]
         public static extern short ToInt16(float value);
 
+        [Transpose.Template("Browser.CheckedArithmetic.ToUInt16({value})")]
+        public static extern ushort ToUInt16(float value);
+
         [Transpose.Template("Browser.CheckedArithmetic.SingleToInt32({value})")]
         public static extern int ToInt32(float value);
     }
