@@ -48,11 +48,13 @@ using (var emptyDocument = JsonDocument.Parse(emptyExport.GltfBytes))
 
 var syntheticBaseBytes = BuildUyaSkyboxFixture(0x11);
 var syntheticSourceBytes = BuildUyaSkyboxFixture(0x22);
+var syntheticThirdBytes = BuildUyaSkyboxFixture(0x33);
 var syntheticComposition = new[]
 {
     new SkyboxShellComposition(syntheticBaseBytes, 0),
     new SkyboxShellComposition(syntheticSourceBytes, 0),
     new SkyboxShellComposition(syntheticSourceBytes, 0),
+    new SkyboxShellComposition(syntheticThirdBytes, 0),
 };
 var syntheticComposed = SkyboxComposer.Compose(GameId.UYA, syntheticBaseBytes, syntheticComposition);
 var syntheticRepeated = SkyboxComposer.Compose(GameId.UYA, syntheticBaseBytes, syntheticComposition);
@@ -61,12 +63,37 @@ using (var syntheticStream = new MemoryStream(syntheticComposed.Bytes, writable:
     var syntheticSkybox = SkyboxReader.Read(syntheticStream, GameId.UYA);
     Expect(syntheticComposed.Bytes.SequenceEqual(syntheticRepeated.Bytes),
         "expected synthetic UYA sky composition to be deterministic");
-    Expect(syntheticSkybox.Shells.Count == 3 && syntheticSkybox.Textures.Count == 2,
-        "expected synthetic UYA sky composition to merge two texture tables");
+    Expect(syntheticSkybox.Shells.Count == 4 && syntheticSkybox.Textures.Count == 3,
+        "expected synthetic UYA sky composition to merge three texture tables");
     Expect(syntheticSkybox.Shells.Select(shell => shell.Clusters[0].Triangles[0].TextureId)
-        .SequenceEqual(new byte[] { 0, 1, 1 }),
+        .SequenceEqual(new byte[] { 0, 1, 1, 2 }),
         "expected synthetic UYA sky composition to reuse remapped source textures");
+    Expect(syntheticSkybox.Header.TextureDataOffset % 0x40 == 0,
+        "expected composed UYA texture data to retain native 0x40 alignment");
 }
+var syntheticPruned = SkyboxComposer.Compose(
+    GameId.UYA,
+    syntheticBaseBytes,
+    [new SkyboxShellComposition(syntheticSourceBytes, 0)]);
+using (var syntheticPrunedStream = new MemoryStream(syntheticPruned.Bytes, writable: false))
+{
+    var syntheticPrunedSkybox = SkyboxReader.Read(syntheticPrunedStream, GameId.UYA);
+    Expect(syntheticPrunedSkybox.Textures.Count == 1
+        && syntheticPrunedSkybox.Textures[0].PaletteData[0] == 0x22,
+        "expected composed UYA skyboxes to omit unreferenced base textures");
+}
+var largeSyntheticSkyboxes = new[]
+{
+    BuildUyaSkyboxFixture(0x41, 512, 512),
+    BuildUyaSkyboxFixture(0x42, 512, 512),
+    BuildUyaSkyboxFixture(0x43, 512, 512),
+};
+ExpectThrows<InvalidDataException>(
+    () => SkyboxComposer.Compose(
+        GameId.UYA,
+        largeSyntheticSkyboxes[0],
+        largeSyntheticSkyboxes.Select(bytes => new SkyboxShellComposition(bytes, 0)).ToArray()),
+    "expected synthetic UYA sky composition to reject textures beyond the runtime budget");
 ExpectThrows<InvalidDataException>(
     () => SkyboxComposer.Compose(
         GameId.UYA,
@@ -350,7 +377,9 @@ if (File.Exists(uyaLevel4SkyboxPath) && File.Exists(uyaLevel41SkyboxPath))
     var baseBytes = File.ReadAllBytes(uyaLevel4SkyboxPath);
     var sourceBytes = File.ReadAllBytes(uyaLevel41SkyboxPath);
     using var baseStream = new MemoryStream(baseBytes, writable: false);
+    using var sourceStream = new MemoryStream(sourceBytes, writable: false);
     var baseSkybox = SkyboxReader.Read(baseStream, GameId.UYA);
+    var sourceSkybox = SkyboxReader.Read(sourceStream, GameId.UYA);
     var originalShells = Enumerable.Range(0, baseSkybox.Shells.Count)
         .Select(index => new SkyboxShellComposition(baseBytes, index))
         .ToArray();
@@ -398,11 +427,18 @@ if (File.Exists(uyaLevel4SkyboxPath) && File.Exists(uyaLevel41SkyboxPath))
         && composedSkybox.Shells[1].RotationDeltaY == -5
         && composedSkybox.Shells[1].RotationDeltaZ == 6,
         "expected composed UYA shell angular velocity to round-trip through signed ticks");
-    Expect(composedSkybox.Textures.Take(baseSkybox.Textures.Count)
-        .Select((texture, index) => texture.PaletteData.SequenceEqual(baseSkybox.Textures[index].PaletteData)
-            && texture.PixelData.SequenceEqual(baseSkybox.Textures[index].PixelData))
-        .All(equal => equal),
-        "expected composed UYA skybox to retain all base textures at their original indexes");
+    var selectedTextureIds = sourceSkybox.Shells[2].Clusters
+        .SelectMany(cluster => cluster.Triangles)
+        .Select(triangle => triangle.TextureId)
+        .Where(textureId => textureId != byte.MaxValue)
+        .Distinct()
+        .ToArray();
+    Expect(composedSkybox.Textures.Count == selectedTextureIds.Length
+        && composedSkybox.Textures.Select((texture, index) =>
+            texture.PaletteData.SequenceEqual(sourceSkybox.Textures[selectedTextureIds[index]].PaletteData)
+            && texture.PixelData.SequenceEqual(sourceSkybox.Textures[selectedTextureIds[index]].PixelData))
+            .All(equal => equal),
+        "expected composed UYA skybox to retain only textures referenced by selected shells");
     Expect(composedSkybox.Shells.SelectMany(shell => shell.Clusters).SelectMany(cluster => cluster.Triangles)
         .All(triangle => triangle.TextureId == byte.MaxValue || triangle.TextureId < composedSkybox.Textures.Count),
         "expected composed UYA shell texture IDs to be remapped into the output texture table");
@@ -548,13 +584,14 @@ static MemoryStream BuildGcSkyboxFixture()
     return new MemoryStream(bytes, writable: false);
 }
 
-static byte[] BuildUyaSkyboxFixture(byte paletteMarker)
+static byte[] BuildUyaSkyboxFixture(byte paletteMarker, int width = 1, int height = 1)
 {
     const int textureDefinitions = 0x40;
-    const int textureData = 0x70;
-    const int shellOffset = 0x480;
-    const int clusterData = 0x4b0;
-    var bytes = new byte[0x4d8];
+    const int textureData = 0x80;
+    var pixelLength = checked(width * height);
+    var shellOffset = checked((textureData + 0x400 + pixelLength + 0xf) & ~0xf);
+    var clusterData = checked(shellOffset + 0x30);
+    var bytes = new byte[checked(clusterData + 0x28)];
     using var writer = new BinaryWriter(new MemoryStream(bytes, writable: true));
     writer.BaseStream.Position = 6;
     writer.Write((short)1);
@@ -570,8 +607,8 @@ static byte[] BuildUyaSkyboxFixture(byte paletteMarker)
     writer.BaseStream.Position = textureDefinitions;
     writer.Write((uint)0);
     writer.Write((uint)0x400);
-    writer.Write(1);
-    writer.Write(1);
+    writer.Write(width);
+    writer.Write(height);
     writer.BaseStream.Position = textureData;
     writer.Write(paletteMarker);
     writer.BaseStream.Position = textureData + 0x400;

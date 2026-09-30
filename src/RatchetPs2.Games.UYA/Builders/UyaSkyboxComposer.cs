@@ -9,7 +9,7 @@ internal static class UyaSkyboxComposer
 {
     private const int HeaderSize = 0x20;
     private const int TextureDefinitionSize = 0x10;
-    private const int TextureDefinitionTrailerSize = 0x20;
+    private const int MaxTextureDataSize = 0x90000;
     private const int SpriteSize = 0x20;
     private const int ShellHeaderSize = 0x10;
     private const int ClusterHeaderSize = 0x20;
@@ -55,7 +55,7 @@ internal static class UyaSkyboxComposer
                 $"Target base skybox sprite capacity {baseSkybox.Header.SpriteMax} is below its sprite count {baseSkybox.Header.SpriteCount}.");
         }
 
-        var textures = baseSkybox.Textures.ToList();
+        var textures = baseSkybox.Textures.Take(baseSkybox.Header.FxCount).ToList();
         EnsureTextureCount(textures.Count);
         var shells = new List<ComposedShell>(shellCompositions.Count);
         var isBasePassThrough = shellCompositions.Count == baseSkybox.Shells.Count;
@@ -200,17 +200,27 @@ internal static class UyaSkyboxComposer
 
         Align(writer, 0x10);
         var textureDefinitionOffset = CheckedUInt(stream.Position);
-        WriteZeros(writer, checked((textures.Count * TextureDefinitionSize) + TextureDefinitionTrailerSize));
+        WriteZeros(writer, checked(textures.Count * TextureDefinitionSize));
+        Align(writer, 0x40);
         var textureDataOffset = CheckedUInt(stream.Position);
         var textureOffsets = new List<(uint Palette, uint Pixels)>(textures.Count);
         foreach (var texture in textures)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            Align(writer, 0x40);
             var paletteOffset = CheckedUInt(stream.Position - textureDataOffset);
             writer.Write(texture.PaletteData);
+            Align(writer, 0x40);
             var pixelOffset = CheckedUInt(stream.Position - textureDataOffset);
             writer.Write(texture.PixelData);
             textureOffsets.Add((paletteOffset, pixelOffset));
+        }
+        var textureDataSize = checked((int)(stream.Position - textureDataOffset));
+        if (textureDataSize > MaxTextureDataSize)
+        {
+            throw new InvalidDataException(
+                $"Composed UYA skybox textures require 0x{textureDataSize:X} bytes; " +
+                $"the runtime supports at most 0x{MaxTextureDataSize:X}. Remove shells or use smaller textures.");
         }
 
         uint spritesOffset = 0;
