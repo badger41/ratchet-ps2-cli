@@ -57,17 +57,20 @@ internal static class UyaLevelAssetComposer
             headerBytes, header.TieModelOffset, header.TieModelCount);
         var shrubs = LevelAssetReader.ReadShrubDefinitions(
             headerBytes, header.ShrubModelOffset, header.ShrubModelCount);
-        var references = CollectReferences(header, mobys, ties, shrubs, assetWadBytes.Length);
+        var assetWadLength = assetWadBytes.Length;
+        var references = CollectReferences(header, mobys, ties, shrubs, assetWadLength);
         var offsets = references.Select(value => value.AssetOffset)
-            .Append(assetWadBytes.Length).Distinct().Order().ToArray();
+            .Append(header.SceneViewSize)
+            .Where(value => value > 0 && value < assetWadLength)
+            .Append(assetWadLength).Distinct().Order().ToArray();
         if (offsets.Length < 2)
             throw new InvalidDataException("UYA asset WAD has no addressable payloads.");
 
         var replacementByOffset = new Dictionary<int, ReadOnlyMemory<byte>>();
-        AddReplacement(replacementByOffset, "terrain", header.TerrainOffset, replacements.Terrain, assetWadBytes.Length);
-        AddReplacement(replacementByOffset, "occlusion", header.OcclusionOffset, replacements.Occlusion, assetWadBytes.Length);
-        AddReplacement(replacementByOffset, "sky", header.SkyOffset, replacements.Sky, assetWadBytes.Length);
-        AddReplacement(replacementByOffset, "collision", header.CollisionOffset, replacements.Collision, assetWadBytes.Length);
+        AddReplacement(replacementByOffset, "terrain", header.TerrainOffset, replacements.Terrain, assetWadLength);
+        AddReplacement(replacementByOffset, "occlusion", header.OcclusionOffset, replacements.Occlusion, assetWadLength);
+        AddReplacement(replacementByOffset, "sky", header.SkyOffset, replacements.Sky, assetWadLength);
+        AddReplacement(replacementByOffset, "collision", header.CollisionOffset, replacements.Collision, assetWadLength);
         if (replacementByOffset.Count == 0)
             return new(headerBytes.ToArray(), assetWadBytes.ToArray());
 
@@ -93,6 +96,19 @@ internal static class UyaLevelAssetComposer
                 composedHeader.AsSpan(reference.HeaderOffset, sizeof(int)),
                 relocated[reference.AssetOffset]);
         var composedAsset = output.ToArray();
+        var sceneViewSize = header.SceneViewSize switch
+        {
+            <= 0 => header.SceneViewSize,
+            var value when value == assetWadLength => composedAsset.Length,
+            var value when relocated.TryGetValue(value, out var moved) => moved,
+            _ => throw new InvalidDataException("UYA scene-view boundary is outside the asset WAD."),
+        };
+        if (sceneViewSize > 0)
+            BinaryPrimitives.WriteInt32LittleEndian(composedHeader.AsSpan(0x7c, sizeof(int)), sceneViewSize);
+        BinaryPrimitives.WriteInt32LittleEndian(composedHeader.AsSpan(0x88, sizeof(int)), 0);
+        BinaryPrimitives.WriteInt32LittleEndian(
+            composedHeader.AsSpan(0x8c, sizeof(int)), composedAsset.Length);
+        RelocateSequenceTable(composedHeader, header, sceneViewSize, assetWadLength);
         ValidateComposition(composedHeader, composedAsset, replacements);
         return new(composedHeader, composedAsset);
     }
@@ -226,6 +242,24 @@ internal static class UyaLevelAssetComposer
             || !actual.AsSpan(0, expected.Value.Length).SequenceEqual(expected.Value.Span)
             || actual.AsSpan(expected.Value.Length).ContainsAnyExcept((byte)0))
             throw new InvalidDataException($"Composed UYA {name} payload failed semantic verification.");
+    }
+
+    private static void RelocateSequenceTable(
+        byte[] headerBytes,
+        LevelAssetHeader source,
+        int sceneViewSize,
+        int sourceAssetLength)
+    {
+        var table = UyaStaticAssetLayout.ReadSequenceTable(headerBytes, source, sourceAssetLength);
+        if (table is null) return;
+        var delta = checked(sceneViewSize - source.SceneViewSize);
+        for (var offset = 0; offset < table.Length; offset += sizeof(int))
+        {
+            var value = BinaryPrimitives.ReadInt32LittleEndian(table.AsSpan(offset));
+            if (value != 0)
+                BinaryPrimitives.WriteInt32LittleEndian(table.AsSpan(offset), checked(value + delta));
+        }
+        table.CopyTo(headerBytes.AsSpan(source.LightCuboidsOffset));
     }
 
     private static void Align(Stream stream, int alignment)

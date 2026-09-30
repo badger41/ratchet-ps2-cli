@@ -24,7 +24,7 @@ public static partial class SkyboxGltfExporter
             CoordinateBasis = GltfCoordinateBasis.Ps2XzyBasisDescription,
             PositionScale = positionScale,
             RuntimeFrameRate = runtimeFrameRate,
-            RotationTickRadians = RotationTickRadians,
+            RotationTickRadians = SkyboxFormat.RotationTickRadians,
             RuntimeRotatingShellCount = skybox.Shells.Count(shell => HasShellRuntimeRotation(shell, shellRotationOverrides)),
             RuntimeRotationPatchCount = skybox.Shells.Count(shell => shellRotationOverrides.ContainsKey(shell.Index)),
             SkyboxNightSpriteCount = nightSpriteCount,
@@ -49,7 +49,7 @@ public static partial class SkyboxGltfExporter
             mesh.TriangleCount,
             mesh.UsesUntexturedGouraudColors,
             RuntimeFrameRate = runtimeFrameRate,
-            RotationTickRadians = RotationTickRadians,
+            RotationTickRadians = SkyboxFormat.RotationTickRadians,
             RuntimeRotatingShellCount = skybox.Shells.Count(shell => HasShellRuntimeRotation(shell, shellRotationOverrides)),
             RuntimeRotationPatchCount = skybox.Shells.Count(shell => shellRotationOverrides.ContainsKey(shell.Index)),
             TextureIds = mesh.TextureIds.Select(textureId => textureId == UntexturedTextureId ? "untextured" : textureId.ToString()).ToArray()
@@ -78,7 +78,7 @@ public static partial class SkyboxGltfExporter
             rotation.SkyboxShellHasRuntimeRotation,
             rotation.SkyboxShellRotationPatchApplied,
             rotation.SkyboxShellRotationPatchReason,
-            SkyboxRotationTickRadians = RotationTickRadians,
+            SkyboxRotationTickRadians = SkyboxFormat.RotationTickRadians,
             SkyboxRuntimeFrameRate = runtimeFrameRate
         };
     }
@@ -113,7 +113,7 @@ public static partial class SkyboxGltfExporter
             rotation.SkyboxShellHasRuntimeRotation,
             rotation.SkyboxShellRotationPatchApplied,
             rotation.SkyboxShellRotationPatchReason,
-            SkyboxRotationTickRadians = RotationTickRadians,
+            SkyboxRotationTickRadians = SkyboxFormat.RotationTickRadians,
             SkyboxRuntimeFrameRate = runtimeFrameRate
         };
     }
@@ -146,7 +146,7 @@ public static partial class SkyboxGltfExporter
             rotation.SkyboxShellHasRuntimeRotation,
             rotation.SkyboxShellRotationPatchApplied,
             rotation.SkyboxShellRotationPatchReason,
-            SkyboxRotationTickRadians = RotationTickRadians,
+            SkyboxRotationTickRadians = SkyboxFormat.RotationTickRadians,
             SkyboxRuntimeFrameRate = runtimeFrameRate
         };
     }
@@ -168,7 +168,7 @@ public static partial class SkyboxGltfExporter
             rotation.SkyboxShellHasRuntimeRotation,
             rotation.SkyboxShellRotationPatchApplied,
             rotation.SkyboxShellRotationPatchReason,
-            SkyboxRotationTickRadians = RotationTickRadians,
+            SkyboxRotationTickRadians = SkyboxFormat.RotationTickRadians,
             SkyboxRuntimeFrameRate = runtimeFrameRate
         };
     }
@@ -188,7 +188,7 @@ public static partial class SkyboxGltfExporter
                 shell.RotationDeltaX,
                 shell.RotationDeltaY,
                 shell.RotationDeltaZ,
-                RotationTickRadians * runtimeFrameRate)
+                SkyboxFormat.RotationTickRadians * runtimeFrameRate)
             : GltfCoordinateBasis.FromPs2Position(
                 sourceAngularVelocity.X,
                 sourceAngularVelocity.Y,
@@ -197,7 +197,7 @@ public static partial class SkyboxGltfExporter
         return new SkyboxShellRotationMetadata(
             SourceVector(shell.RotationX, shell.RotationY, shell.RotationZ),
             SourceVector(rotationX, rotationY, rotationZ),
-            ToGltfRotationVector(rotationX, rotationY, rotationZ, RotationTickRadians),
+            ToGltfRotationVector(rotationX, rotationY, rotationZ, SkyboxFormat.RotationTickRadians),
             SourceVector(shell.RotationDeltaX, shell.RotationDeltaY, shell.RotationDeltaZ),
             [sourceAngularVelocity.X, sourceAngularVelocity.Y, sourceAngularVelocity.Z],
             [angularVelocity.X, angularVelocity.Y, angularVelocity.Z],

@@ -2,6 +2,8 @@ using RatchetPs2.Core.Games;
 using RatchetPs2.Core.Gltf;
 using RatchetPs2.Core.Skyboxes;
 using RatchetPs2.Core.Textures;
+using RatchetPs2.Sdk;
+using System.Numerics;
 using System.Text.Json;
 
 var repoRoot = FindRepoRoot(AppContext.BaseDirectory);
@@ -28,6 +30,50 @@ using (var input = BuildGcSkyboxFixture())
     var shell = SkyboxReader.Read(input, GameId.RC1).Shells[0];
     Expect(shell.ClusterCount == 1 && shell.Flags == 1, "expected RC1 32-bit shell header fields to decode");
 }
+
+var emptyShellSkybox = new Skybox(
+    new(new(0, 0, 0, 0), 0, 1, 0, 0, 0, 0, 0, 0, 0, 0),
+    [new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, [])],
+    [],
+    [],
+    null,
+    0);
+var emptyExport = SkyboxGltfExporter.Export(emptyShellSkybox, options: new() { IncludeDiagnostics = false });
+using (var emptyDocument = JsonDocument.Parse(emptyExport.GltfBytes))
+{
+    Expect(!emptyDocument.RootElement.TryGetProperty("meshes", out _),
+        "expected an empty sky shell to export a valid meshless glTF");
+    Expect(emptyExport.BinBytes.Length == 0, "expected an empty sky shell to export no buffer data");
+}
+
+var syntheticBaseBytes = BuildUyaSkyboxFixture(0x11);
+var syntheticSourceBytes = BuildUyaSkyboxFixture(0x22);
+var syntheticComposition = new[]
+{
+    new SkyboxShellComposition(syntheticBaseBytes, 0),
+    new SkyboxShellComposition(syntheticSourceBytes, 0),
+    new SkyboxShellComposition(syntheticSourceBytes, 0),
+};
+var syntheticComposed = SkyboxComposer.Compose(GameId.UYA, syntheticBaseBytes, syntheticComposition);
+var syntheticRepeated = SkyboxComposer.Compose(GameId.UYA, syntheticBaseBytes, syntheticComposition);
+using (var syntheticStream = new MemoryStream(syntheticComposed.Bytes, writable: false))
+{
+    var syntheticSkybox = SkyboxReader.Read(syntheticStream, GameId.UYA);
+    Expect(syntheticComposed.Bytes.SequenceEqual(syntheticRepeated.Bytes),
+        "expected synthetic UYA sky composition to be deterministic");
+    Expect(syntheticSkybox.Shells.Count == 3 && syntheticSkybox.Textures.Count == 2,
+        "expected synthetic UYA sky composition to merge two texture tables");
+    Expect(syntheticSkybox.Shells.Select(shell => shell.Clusters[0].Triangles[0].TextureId)
+        .SequenceEqual(new byte[] { 0, 1, 1 }),
+        "expected synthetic UYA sky composition to reuse remapped source textures");
+}
+ExpectThrows<InvalidDataException>(
+    () => SkyboxComposer.Compose(
+        GameId.UYA,
+        syntheticBaseBytes,
+        Enumerable.Range(0, SkyboxFormat.MaxShellCount + 1)
+            .Select(_ => new SkyboxShellComposition(syntheticSourceBytes, 0)).ToArray()),
+    "expected synthetic UYA sky composition to enforce the shared shell limit");
 
 if (!File.Exists(skyboxPath))
 {
@@ -299,6 +345,119 @@ if (File.Exists(uyaLevel41SkyboxPath))
     Expect(primitives[2].GetProperty("extras").GetProperty("SkyboxShellIndex").GetInt32() == 2, "expected UYA level41 planet shell to draw after the star shell");
 }
 
+if (File.Exists(uyaLevel4SkyboxPath) && File.Exists(uyaLevel41SkyboxPath))
+{
+    var baseBytes = File.ReadAllBytes(uyaLevel4SkyboxPath);
+    var sourceBytes = File.ReadAllBytes(uyaLevel41SkyboxPath);
+    using var baseStream = new MemoryStream(baseBytes, writable: false);
+    var baseSkybox = SkyboxReader.Read(baseStream, GameId.UYA);
+    var originalShells = Enumerable.Range(0, baseSkybox.Shells.Count)
+        .Select(index => new SkyboxShellComposition(baseBytes, index))
+        .ToArray();
+    var passThrough = SkyboxComposer.Compose(GameId.UYA, baseBytes, originalShells);
+    Expect(passThrough.IsBasePassThrough, "expected unchanged UYA sky composition to be recognized as a pass-through");
+    Expect(passThrough.Bytes.SequenceEqual(baseBytes), "expected unchanged UYA sky composition to retain exact source bytes");
+
+    const float rotationTick = MathF.PI / 32768f;
+    var effectiveOriginalShells = baseSkybox.Shells.Select(shell => new SkyboxShellComposition(
+        baseBytes,
+        shell.Index,
+        new Vector3(shell.RotationX * rotationTick, shell.RotationY * rotationTick, shell.RotationZ * rotationTick),
+        new Vector3(
+            shell.RotationDeltaX * rotationTick * 60,
+            shell.RotationDeltaY * rotationTick * 60,
+            shell.RotationDeltaZ * rotationTick * 60))).ToArray();
+    var effectivePassThrough = SkyboxComposer.Compose(GameId.UYA, baseBytes, effectiveOriginalShells);
+    Expect(effectivePassThrough.IsBasePassThrough,
+        "expected explicit source-equivalent UYA rotation values to remain a pass-through");
+    Expect(effectivePassThrough.Bytes.SequenceEqual(baseBytes),
+        "expected explicit source-equivalent UYA rotation values to retain exact source bytes");
+
+    var importedShells = new[]
+    {
+        new SkyboxShellComposition(baseBytes, 0),
+        new SkyboxShellComposition(
+            sourceBytes,
+            2,
+            new Vector3(123 * rotationTick, -456 * rotationTick, 789 * rotationTick),
+            new Vector3(4 * rotationTick * 60, -5 * rotationTick * 60, 6 * rotationTick * 60)),
+        new SkyboxShellComposition(sourceBytes, 2),
+    };
+    var composed = SkyboxComposer.Compose(GameId.UYA, baseBytes, importedShells);
+    var repeated = SkyboxComposer.Compose(GameId.UYA, baseBytes, importedShells);
+    Expect(!composed.IsBasePassThrough, "expected cross-level UYA sky composition to require native writing");
+    Expect(composed.Bytes.SequenceEqual(repeated.Bytes), "expected UYA sky composition to be deterministic");
+    using var composedStream = new MemoryStream(composed.Bytes, writable: false);
+    var composedSkybox = SkyboxReader.Read(composedStream, GameId.UYA);
+    Expect(composedSkybox.Shells.Count == 3, "expected composed UYA skybox to contain ordered base, imported, and duplicate shells");
+    Expect(composedSkybox.Shells[1].RotationX == 123
+        && composedSkybox.Shells[1].RotationY == -456
+        && composedSkybox.Shells[1].RotationZ == 789,
+        "expected composed UYA shell initial rotation to round-trip through signed ticks");
+    Expect(composedSkybox.Shells[1].RotationDeltaX == 4
+        && composedSkybox.Shells[1].RotationDeltaY == -5
+        && composedSkybox.Shells[1].RotationDeltaZ == 6,
+        "expected composed UYA shell angular velocity to round-trip through signed ticks");
+    Expect(composedSkybox.Textures.Take(baseSkybox.Textures.Count)
+        .Select((texture, index) => texture.PaletteData.SequenceEqual(baseSkybox.Textures[index].PaletteData)
+            && texture.PixelData.SequenceEqual(baseSkybox.Textures[index].PixelData))
+        .All(equal => equal),
+        "expected composed UYA skybox to retain all base textures at their original indexes");
+    Expect(composedSkybox.Shells.SelectMany(shell => shell.Clusters).SelectMany(cluster => cluster.Triangles)
+        .All(triangle => triangle.TextureId == byte.MaxValue || triangle.TextureId < composedSkybox.Textures.Count),
+        "expected composed UYA shell texture IDs to be remapped into the output texture table");
+
+    var empty = SkyboxComposer.Compose(GameId.UYA, baseBytes, Array.Empty<SkyboxShellComposition>());
+    using var emptyStream = new MemoryStream(empty.Bytes, writable: false);
+    var emptySkybox = SkyboxReader.Read(emptyStream, GameId.UYA);
+    Expect(emptySkybox.Shells.Count == 0,
+        "expected UYA sky composition to support zero shells");
+    Expect(emptySkybox.Header.TextureDefOffset == 0x40,
+        "expected UYA sky composition to retain the fixed eight-entry shell offset table");
+    var full = SkyboxComposer.Compose(
+        GameId.UYA,
+        baseBytes,
+        Enumerable.Range(0, 8).Select(_ => new SkyboxShellComposition(sourceBytes, 2)).ToArray());
+    using var fullStream = new MemoryStream(full.Bytes, writable: false);
+    Expect(SkyboxReader.Read(fullStream, GameId.UYA).Shells.Count == 8,
+        "expected UYA sky composition to support eight duplicate shells");
+    ExpectThrows<InvalidDataException>(
+        () => SkyboxComposer.Compose(
+            GameId.UYA,
+            baseBytes,
+            Enumerable.Range(0, 9).Select(_ => new SkyboxShellComposition(sourceBytes, 2)).ToArray()),
+        "expected UYA sky composition to reject more than eight shells");
+
+    var malformedBytes = sourceBytes.ToArray();
+    var malformedShellIndex = -1;
+    using (var malformedStream = new MemoryStream(malformedBytes, writable: false))
+    {
+        var malformedSkybox = SkyboxReader.Read(malformedStream, GameId.UYA);
+        malformedShellIndex = malformedSkybox.Shells
+            .ToList()
+            .FindIndex(shell => shell.Clusters.Any(cluster =>
+                cluster.Triangles.Any(triangle => triangle.TextureId != byte.MaxValue)));
+        var texturedCluster = malformedSkybox.Shells[malformedShellIndex].Clusters
+            .First(cluster => cluster.Triangles.Any(triangle => triangle.TextureId != byte.MaxValue));
+        var triangleIndex = texturedCluster.Triangles
+            .ToList()
+            .FindIndex(triangle => triangle.TextureId != byte.MaxValue);
+        malformedBytes[checked((int)texturedCluster.DataOffset + texturedCluster.TriangleOffset + (triangleIndex * 4) + 3)] = 0xFE;
+    }
+    ExpectThrows<InvalidDataException>(
+        () => SkyboxComposer.Compose(
+            GameId.UYA,
+            baseBytes,
+            [new SkyboxShellComposition(malformedBytes, malformedShellIndex)]),
+        "expected UYA sky composition to reject a missing source texture reference");
+
+    using var cancellation = new CancellationTokenSource();
+    cancellation.Cancel();
+    ExpectThrows<OperationCanceledException>(
+        () => SkyboxComposer.Compose(GameId.UYA, baseBytes, importedShells, cancellation.Token),
+        "expected UYA sky composition to honor cancellation");
+}
+
 if (failures.Count > 0)
 {
     Console.Error.WriteLine($"{failures.Count} skybox test assertion(s) failed:");
@@ -318,6 +477,18 @@ void Expect(bool condition, string message)
     if (!condition)
     {
         failures.Add(message);
+    }
+}
+
+void ExpectThrows<TException>(Action action, string message) where TException : Exception
+{
+    try
+    {
+        action();
+        failures.Add(message);
+    }
+    catch (TException)
+    {
     }
 }
 
@@ -375,6 +546,62 @@ static MemoryStream BuildGcSkyboxFixture()
     }
 
     return new MemoryStream(bytes, writable: false);
+}
+
+static byte[] BuildUyaSkyboxFixture(byte paletteMarker)
+{
+    const int textureDefinitions = 0x40;
+    const int textureData = 0x70;
+    const int shellOffset = 0x480;
+    const int clusterData = 0x4b0;
+    var bytes = new byte[0x4d8];
+    using var writer = new BinaryWriter(new MemoryStream(bytes, writable: true));
+    writer.BaseStream.Position = 6;
+    writer.Write((short)1);
+    writer.BaseStream.Position = 12;
+    writer.Write((short)1);
+    writer.BaseStream.Position = 16;
+    writer.Write((uint)textureDefinitions);
+    writer.Write((uint)textureData);
+    writer.Write(0);
+    writer.Write((uint)0);
+    writer.BaseStream.Position = 0x20;
+    writer.Write((uint)shellOffset);
+    writer.BaseStream.Position = textureDefinitions;
+    writer.Write((uint)0);
+    writer.Write((uint)0x400);
+    writer.Write(1);
+    writer.Write(1);
+    writer.BaseStream.Position = textureData;
+    writer.Write(paletteMarker);
+    writer.BaseStream.Position = textureData + 0x400;
+    writer.Write(paletteMarker);
+    writer.BaseStream.Position = shellOffset;
+    writer.Write((short)1);
+    writer.Write((short)0);
+    writer.Write(new byte[12]);
+    writer.Write(0f);
+    writer.Write(0f);
+    writer.Write(0f);
+    writer.Write(1f);
+    writer.Write((uint)clusterData);
+    writer.Write((short)3);
+    writer.Write((short)1);
+    writer.Write((short)0);
+    writer.Write((short)24);
+    writer.Write((short)36);
+    writer.Write((short)40);
+    writer.BaseStream.Position = clusterData;
+    foreach (var vertex in new (short X, short Y, short Z)[] { (0, 0, 0), (1, 0, 0), (0, 1, 0) })
+    {
+        writer.Write(vertex.X);
+        writer.Write(vertex.Y);
+        writer.Write(vertex.Z);
+        writer.Write((short)0x80);
+    }
+    writer.Write(new byte[12]);
+    writer.Write(new byte[] { 0, 1, 2, 0 });
+    return bytes;
 }
 
 static JsonElement FindMaterial(JsonElement materials, string name)

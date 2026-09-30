@@ -59,7 +59,6 @@ public static partial class SkyboxGltfExporter
     private const string UnlitExtensionName = "KHR_materials_unlit";
     private const string EmissiveStrengthExtensionName = "KHR_materials_emissive_strength";
     private const float BloomEmissionStrength = 1f;
-    private const float RotationTickRadians = MathF.PI / 32768f;
     private const int GltfLinearFilter = 9729;
     private const int GltfWrapClampToEdge = 33071;
 
@@ -203,14 +202,17 @@ public static partial class SkyboxGltfExporter
             ["asset"] = new { version = "2.0", generator = $"RatchetPs2 {gameLabel} skybox glTF exporter" },
             ["scene"] = 0,
             ["scenes"] = new[] { new { nodes = new[] { 0 } } },
-            ["nodes"] = nodes,
-            ["meshes"] = shellMeshes,
-            ["materials"] = materialResult.Materials,
-            ["buffers"] = new[] { new { uri = binFileName, byteLength = binBytes.Length } },
-            ["bufferViews"] = gltfBufferWriter.BufferViews,
-            ["accessors"] = gltfBufferWriter.Accessors,
-            ["extensionsUsed"] = BuildExtensionsUsed(materialResult.UsesBloomEmission)
+            ["nodes"] = nodes
         };
+        if (shellMeshes.Count > 0)
+        {
+            gltf["meshes"] = shellMeshes;
+            gltf["materials"] = materialResult.Materials;
+            gltf["buffers"] = new[] { new { uri = binFileName, byteLength = binBytes.Length } };
+            gltf["bufferViews"] = gltfBufferWriter.BufferViews;
+            gltf["accessors"] = gltfBufferWriter.Accessors;
+            gltf["extensionsUsed"] = BuildExtensionsUsed(materialResult.UsesBloomEmission);
+        }
         if (options.MetadataMode == GltfExportMetadataMode.Full)
         {
             gltf["extras"] = BuildMeshExtras(skybox, mesh, options.RuntimeFrameRate, shellRotationOverrides);

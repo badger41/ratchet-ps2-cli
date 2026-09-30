@@ -6,7 +6,6 @@ public static class SkyboxReader
 {
     private const int HeaderSize = 0x20;
     private const int ShellOffsetTableOffset = 0x20;
-    private const int MaxShellCount = 8;
     private const int TextureDefinitionSize = 0x10;
     private const int PaletteSize = 256 * 4;
     private const int ShellHeaderSize = 0x10;
@@ -38,7 +37,7 @@ public static class SkyboxReader
         var header = ReadHeader(reader);
         var availableLength = input.Length - baseOffset;
 
-        ValidateCount(header.ShellCount, MaxShellCount, nameof(header.ShellCount));
+        ValidateCount(header.ShellCount, SkyboxFormat.MaxShellCount, nameof(header.ShellCount));
         ValidateCount(header.TextureCount, short.MaxValue, nameof(header.TextureCount));
         ValidateCount(header.SpriteCount, short.MaxValue, nameof(header.SpriteCount));
         ValidateCount(header.FxCount, short.MaxValue, nameof(header.FxCount));

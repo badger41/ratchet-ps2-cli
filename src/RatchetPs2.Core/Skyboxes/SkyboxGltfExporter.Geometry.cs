@@ -76,11 +76,6 @@ public static partial class SkyboxGltfExporter
             }
         }
 
-        if (positions.Count == 0)
-        {
-            throw new InvalidDataException("Skybox has no decoded triangles to export.");
-        }
-
         var primitives = primitiveBuilders
             .OrderBy(builder => builder.SourceDrawOrder)
             .Select((builder, drawOrder) => builder.ToPrimitive(drawOrder))

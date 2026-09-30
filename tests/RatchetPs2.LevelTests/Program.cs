@@ -51,6 +51,13 @@ if (args.Contains("--uya-sdk-archive", StringComparer.Ordinal))
     return;
 }
 
+if (args.Contains("--uya-level-asset-composer", StringComparer.Ordinal))
+{
+    ValidateUyaLevelAssetComposer();
+    Console.WriteLine("UYA level asset composer tests passed.");
+    return;
+}
+
 if (args.Contains("--uya-texture-inventory", StringComparer.Ordinal))
 {
     ValidateTextureInventory();
@@ -1163,6 +1170,8 @@ static void ValidateUyaLevelAssetComposer()
     WriteInt32(header, 0x1c, 0xc0);
     WriteInt32(header, 0xc0, 0x80);
     var assets = new byte[0xa0];
+    WriteInt32(header, 0x7c, assets.Length);
+    WriteInt32(header, 0x8c, assets.Length);
     assets.AsSpan(0x20, 0x20).Fill(0x11);
     assets.AsSpan(0x40, 0x20).Fill(0x22);
     assets.AsSpan(0x60, 0x20).Fill(0x33);
@@ -1178,7 +1187,9 @@ static void ValidateUyaLevelAssetComposer()
     Expect(composedHeader.TerrainOffset == 0x20
         && composedHeader.SkyOffset == 0x60
         && composedHeader.CollisionOffset == 0x80
-        && moby.ModelOffset == 0xa0,
+        && moby.ModelOffset == 0xa0
+        && composedHeader.SceneViewSize == composed.AssetWadBytes.Length
+        && composedHeader.DecompressedSize == composed.AssetWadBytes.Length,
         "UYA asset composer should relocate every pointer after resized payloads");
     Expect(composed.AssetWadBytes.AsSpan(composedHeader.TerrainOffset, terrain.Length).SequenceEqual(terrain)
         && composed.AssetWadBytes.AsSpan(composedHeader.SkyOffset, 0x20)
