@@ -42,4 +42,16 @@ public static class LevelAssetComposer
                 chunkBytes, terrainBytes, decompression, cancellationToken),
             _ => throw new NotSupportedException($"Tfrag composition is not supported for {gameId}."),
         };
+
+    public static byte[] ComposeTfragChunkCollision(
+        GameId gameId,
+        ReadOnlySpan<byte> chunkBytes,
+        ReadOnlySpan<byte> collisionBytes,
+        WadDecompressionOptions? decompression = null,
+        CancellationToken cancellationToken = default) => gameId switch
+        {
+            GameId.UYA => UyaLevelAssetComposer.ComposeTfragChunkCollision(
+                chunkBytes, collisionBytes, decompression, cancellationToken),
+            _ => throw new NotSupportedException($"Tfrag collision composition is not supported for {gameId}."),
+        };
 }

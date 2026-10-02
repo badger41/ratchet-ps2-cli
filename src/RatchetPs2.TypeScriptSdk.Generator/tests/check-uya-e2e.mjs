@@ -17,6 +17,7 @@ const native = spawnSync(dotnet, [
   '--output', sdkDir,
   '--type', 'RatchetPs2.Games.UYA.Builders.UyaFrontendMapPackageBuilder',
   '--type', 'RatchetPs2.Games.UYA.Gameplay.UyaGameplayBlockReader',
+  '--type', 'RatchetPs2.Sdk.CollisionConverter',
   '--verify-uya', wadPath, zipPath
 ], { cwd, encoding: 'utf8', stdio: 'inherit' });
 assert.ifError(native.error);

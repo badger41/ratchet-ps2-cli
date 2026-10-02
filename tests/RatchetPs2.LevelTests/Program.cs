@@ -28,6 +28,7 @@ using RatchetPs2.Games.GC.Skyboxes;
 using RatchetPs2.Games.RC1.Gameplay;
 using RatchetPs2.Games.RC1.Level;
 using RatchetPs2.Games.RC1.Ties;
+using RatchetPs2.Games.UYA.Collision;
 using RatchetPs2.Games.UYA.Gameplay;
 using RatchetPs2.Games.UYA.Level;
 using RatchetPs2.Sdk;
@@ -37,6 +38,15 @@ if (args is ["--qualify-uya-iso", var isoPath, var reportPath])
     var report = UyaArchiveQualification.Run(isoPath);
     UyaArchiveQualification.Write(report, reportPath);
     Console.WriteLine($"Qualified {report.PassedLevelCount}/{report.LevelCount} UYA levels: {reportPath}");
+    Environment.ExitCode = report.PassedLevelCount == report.LevelCount ? 0 : 1;
+    return;
+}
+
+if (args is ["--qualify-uya-collision", var collisionIsoPath, var collisionReportPath])
+{
+    var report = UyaCollisionQualification.Run(collisionIsoPath);
+    UyaCollisionQualification.Write(report, collisionReportPath);
+    Console.WriteLine($"Qualified collision in {report.PassedLevelCount}/{report.LevelCount} UYA levels: {collisionReportPath}");
     Environment.ExitCode = report.PassedLevelCount == report.LevelCount ? 0 : 1;
     return;
 }
@@ -83,6 +93,13 @@ if (args.Contains("--wad-compression", StringComparer.Ordinal))
     return;
 }
 
+if (args.Contains("--uya-collision", StringComparer.Ordinal))
+{
+    ValidateUyaCollisionParsingAndGltf();
+    Console.WriteLine("UYA collision parser and glTF checks passed.");
+    return;
+}
+
 if (args.Contains("--uya-inventory", StringComparer.Ordinal))
 {
     ValidateUyaLevelWadInventory();
@@ -125,6 +142,7 @@ ValidateUyaStandaloneLevelDataUnpacking();
 ValidateUyaStandaloneGameplayUnpacking();
 ValidateUyaCustomMapZipUnpacking();
 ValidateUyaGameplayTypedParsing();
+ValidateUyaCollisionParsingAndGltf();
 ValidateUyaStaticInstanceParsing();
 ValidateGameplayGeometryParsing();
 ValidateUyaGameplayLightingParsing();
@@ -2823,6 +2841,176 @@ static void ValidateUyaAssetRenderPackageBuild()
         "UYA asset render package should report the decompressed asset WAD length");
 }
 
+static void ValidateUyaCollisionParsingAndGltf()
+{
+    var bytes = CreateSyntheticUyaCollision();
+    var collision = UyaCollisionReader.Read(bytes);
+
+    Expect(collision.NativeOctantCount == 2, "UYA collision should report native octants");
+    Expect(collision.NativeFaceCount == 3, "UYA collision should report native faces");
+    Expect(collision.DuplicateSolidFaceCount == 1, "UYA collision should deduplicate octant faces");
+    Expect(collision.SolidPieces.Count == 2, "UYA collision should split disconnected solid pieces");
+    var quad = collision.SolidPieces[0].Faces.Single();
+    var triangle = collision.SolidPieces[1].Faces.Single();
+    Expect(quad.Type == 0x21 && quad.IsQuad, "UYA collision should preserve solid type nibbles and quads");
+    Expect(quad.A == new UyaCollisionVertex(64, 64, 128), "UYA collision should convert octant-local coordinates to world ticks");
+    Expect(triangle.Type == 0xab && !triangle.IsQuad, "UYA collision should preserve sound and collision nibbles and triangles");
+    var barrier = collision.PlayerBarriers.Single();
+    Expect(barrier.Triangles.Single() == new UyaCollisionTriangle(0, 1, 2), "UYA collision should parse player barriers");
+    Expect(barrier.BoundingSphere.Value == new Vector4(1, 1, 1, 2), "UYA collision should preserve player barrier bounds");
+    var inspection = CollisionConverter.Inspect(bytes, GameId.UYA);
+    Expect(inspection.Pieces.Count == 3
+        && inspection.Pieces[1].Types.Single() == new CollisionTypeCount(0xab, 1),
+        "collision inspection should expose stable pieces and raw type counts");
+
+    var noOp = CollisionConverter.Compose(bytes, GameId.UYA, []);
+    Expect(!noOp.Changed && ReferenceEquals(noOp.Bytes, bytes), "collision no-op should preserve source bytes");
+    var edits = new[]
+    {
+        new CollisionPieceEdit(CollisionPieceKind.Solid, 0, 1, 0, 0),
+        new CollisionPieceEdit(CollisionPieceKind.Solid, 1, 0, 0, 0, Remove: true),
+        new CollisionPieceEdit(CollisionPieceKind.PlayerBarrier, 0, 1, 1, 0),
+    };
+    var composed = CollisionConverter.Compose(bytes, GameId.UYA, edits);
+    var rebuilt = UyaCollisionReader.Read(composed.Bytes);
+    Expect(composed.Changed
+        && rebuilt.SolidPieces.Count == 1
+        && rebuilt.SolidPieces[0].Faces.Single().A == new UyaCollisionVertex(128, 64, 128)
+        && rebuilt.SolidPieces[0].Faces.Single().Type == 0x21,
+        "collision composition should translate and remove solid pieces without changing raw types");
+    Expect(rebuilt.PlayerBarriers.Single().Vertices[0] == new UyaCollisionVertex(128, 128, 64),
+        "collision composition should translate player barriers");
+    var repeatedComposition = CollisionConverter.Compose(bytes, GameId.UYA, edits);
+    Expect(composed.Bytes.SequenceEqual(repeatedComposition.Bytes), "collision composition should be deterministic");
+    var removed = CollisionConverter.Compose(bytes, GameId.UYA,
+    [
+        new(CollisionPieceKind.Solid, 0, 0, 0, 0, Remove: true),
+        new(CollisionPieceKind.Solid, 1, 0, 0, 0, Remove: true),
+        new(CollisionPieceKind.PlayerBarrier, 0, 0, 0, 0, Remove: true),
+    ]);
+    var emptyCollision = UyaCollisionReader.Read(removed.Bytes);
+    Expect(emptyCollision.SolidPieces.Count == 0 && emptyCollision.PlayerBarriers.Count == 0,
+        "collision composition should support deleting every piece");
+    ExpectThrows<ArgumentException>(() => UyaCollisionComposer.Compose(bytes,
+    [
+        new(UyaCollisionPieceKind.Solid, 0, 1, 0, 0),
+    ]));
+    ExpectThrows<ArgumentException>(() => CollisionConverter.Compose(bytes, GameId.UYA,
+    [
+        new(CollisionPieceKind.Solid, 0, 0, 0, 0, Remove: true),
+        new(CollisionPieceKind.Solid, 0, 1, 0, 0),
+    ]));
+    ExpectThrows<NotSupportedException>(() => CollisionConverter.Compose(bytes, GameId.DL, []));
+
+    var files = CollisionConverter.ExportGltf(bytes, GameId.UYA, "collision.gltf", minify: true);
+    using var gltf = JsonDocument.Parse(files.GltfBytes);
+    var root = gltf.RootElement;
+    var nodes = root.GetProperty("nodes").EnumerateArray().ToArray();
+    Expect(nodes.Any(node => node.GetProperty("name").GetString() == "solid_collision_0000"), "collision glTF should name solid pieces");
+    Expect(nodes.Any(node => node.GetProperty("name").GetString() == "player_barrier_0000"), "collision glTF should name player barriers");
+    var typedNode = nodes.Single(node => node.GetProperty("name").GetString() == "solid_collision_0001");
+    Expect(typedNode.GetProperty("extras").GetProperty("rawTypeHistogram").GetProperty("0xAB").GetInt32() == 1, "collision glTF should expose raw type IDs");
+    Expect(typedNode.GetProperty("extras").GetProperty("collisionTypeHistogram").GetProperty("0xB").GetInt32() == 1, "collision glTF should expose collision nibbles");
+    Expect(typedNode.GetProperty("extras").GetProperty("soundTypeHistogram").GetProperty("0xA").GetInt32() == 1, "collision glTF should expose sound nibbles");
+    var materials = root.GetProperty("materials").EnumerateArray().ToArray();
+    Expect(materials.Length == 2, "collision glTF should contain solid and barrier materials");
+    Expect(materials[1].GetProperty("alphaMode").GetString() == "BLEND", "player barriers should be translucent");
+    Expect(files.BinBytes.Length > 0, "collision glTF should include geometry data");
+    var repeated = CollisionConverter.ExportGltf(bytes, GameId.UYA, "collision.gltf", minify: true);
+    Expect(files.GltfBytes.SequenceEqual(repeated.GltfBytes) && files.BinBytes.SequenceEqual(repeated.BinBytes), "collision glTF should be deterministic");
+
+    var generic = UyaCollisionGltfPalette.Generic;
+    var collisionColors = Enumerable.Repeat(Vector3.Zero, 16).ToArray();
+    var soundColors = Enumerable.Repeat(Vector3.Zero, 16).ToArray();
+    collisionColors[0xb] = Vector3.UnitX;
+    soundColors[0xa] = Vector3.UnitZ;
+    var customPalette = new UyaCollisionGltfPalette(collisionColors, soundColors, Vector3.One);
+    var custom = UyaCollisionGltfExporter.Export(
+        collision,
+        options: new UyaCollisionGltfExportOptions { Palette = customPalette, Minify = true });
+    var sdkCustom = CollisionConverter.ExportGltf(
+        bytes,
+        GameId.UYA,
+        minify: true,
+        palette: new(collisionColors, soundColors, Vector3.One));
+    Expect(sdkCustom.GltfBytes.SequenceEqual(custom.GltfBytes)
+        && sdkCustom.BinBytes.SequenceEqual(custom.BinBytes),
+        "collision SDK facade should forward palette overrides");
+    Expect(!files.BinBytes.SequenceEqual(custom.BinBytes), "collision glTF should honor palette overrides");
+    using var customGltf = JsonDocument.Parse(custom.GltfBytes);
+    var customRoot = customGltf.RootElement;
+    var colorAccessorIndex = customRoot.GetProperty("meshes")[1]
+        .GetProperty("primitives")[0]
+        .GetProperty("attributes")
+        .GetProperty("COLOR_0")
+        .GetInt32();
+    var colorViewIndex = customRoot.GetProperty("accessors")[colorAccessorIndex]
+        .GetProperty("bufferView")
+        .GetInt32();
+    var colorOffset = customRoot.GetProperty("bufferViews")[colorViewIndex]
+        .GetProperty("byteOffset")
+        .GetInt32();
+    Expect(
+        custom.BinBytes.AsSpan(colorOffset, 4).SequenceEqual(new byte[] { 255, 0, 0, 255 }),
+        "collision glTF should use the low collision nibble as its base color");
+    var customAttributes = customRoot.GetProperty("meshes")[1]
+        .GetProperty("primitives")[0]
+        .GetProperty("attributes");
+    Expect(ReadFirstAccessorByte(customRoot, custom.BinBytes, customAttributes.GetProperty("_COLLISION_TYPE").GetInt32()) == 0xb
+        && ReadFirstAccessorByte(customRoot, custom.BinBytes, customAttributes.GetProperty("_SOUND_TYPE").GetInt32()) == 0xa,
+        "collision glTF should preserve collision and sound nibbles as vertex attributes");
+
+    var compressed = WadCompression.Compress(bytes);
+    var collisionEnd = (0x10 + compressed.Length + 0x0f) & ~0x0f;
+    var chunk = new byte[collisionEnd + 0x20];
+    WriteInt32(chunk, 4, 0x10);
+    WriteInt32(chunk, 8, collisionEnd);
+    compressed.CopyTo(chunk.AsSpan(0x10));
+    chunk.AsSpan(collisionEnd, 0x20).Fill(0x5c);
+    Expect(UyaCollisionReader.ReadChunkWad(chunk).NativeFaceCount == 3, "UYA chunk WAD collision should be decompressed");
+    var composedChunk = LevelAssetComposer.ComposeTfragChunkCollision(GameId.UYA, chunk, composed.Bytes);
+    var movedCollisionSuffix = BinaryPrimitives.ReadInt32LittleEndian(composedChunk.AsSpan(8));
+    Expect(TfragChunkWadReader.ReadCollisionPayload(composedChunk).SequenceEqual(composed.Bytes)
+        && composedChunk.AsSpan(movedCollisionSuffix, 0x20).SequenceEqual(chunk.AsSpan(collisionEnd, 0x20)),
+        "UYA chunk composer should replace compressed collision and preserve later payloads");
+    var unchangedChunk = LevelAssetComposer.ComposeTfragChunkCollision(GameId.UYA, chunk, bytes);
+    Expect(unchangedChunk.SequenceEqual(chunk), "UYA chunk collision no-op should remain byte-identical");
+    var badCompression = new byte[0x20];
+    WriteInt32(badCompression, 4, 0x10);
+    badCompression[0x10] = (byte)'W';
+    badCompression[0x11] = (byte)'A';
+    badCompression[0x12] = (byte)'D';
+    WriteInt32(badCompression, 0x13, int.MaxValue);
+    ExpectThrows<InvalidDataException>(() => UyaCollisionReader.ReadChunkWad(badCompression));
+
+    var badIndex = (byte[])bytes.Clone();
+    badIndex[0x84] = 7;
+    ExpectThrows<InvalidDataException>(() => UyaCollisionReader.Read(badIndex));
+    var overlappingOctants = (byte[])bytes.Clone();
+    WriteUInt32(overlappingOctants, 0x58, 0x2003);
+    ExpectThrows<InvalidDataException>(() => UyaCollisionReader.Read(overlappingOctants));
+    var badBarrierPadding = (byte[])bytes.Clone();
+    badBarrierPadding[0xe6] = 1;
+    ExpectThrows<InvalidDataException>(() => UyaCollisionReader.Read(badBarrierPadding));
+    var badBarrierCount = (byte[])bytes.Clone();
+    WriteInt32(badBarrierCount, 0xc0, int.MaxValue);
+    ExpectThrows<InvalidDataException>(() => UyaCollisionReader.Read(badBarrierCount));
+    ExpectThrows<InvalidDataException>(() => UyaCollisionReader.Read(new byte[7]));
+    var empty = new byte[0x10];
+    WriteInt32(empty, 0, 8);
+    Expect(UyaCollisionReader.Read(empty).SolidPieces.Count == 0, "UYA collision should accept empty layers");
+    ExpectThrows<NotSupportedException>(() => CollisionConverter.ExportGltf(bytes, GameId.DL));
+
+    var shortPalette = new UyaCollisionGltfPalette(
+        [Vector3.One],
+        generic.SoundTypeSrgbColors,
+        generic.PlayerBarrierSrgbColor);
+    ExpectThrows<ArgumentException>(() => UyaCollisionGltfExporter.Export(
+        collision,
+        options: new UyaCollisionGltfExportOptions { Palette = shortPalette }));
+}
+
+
 static void ValidateChunkTfragAssetRenderPackageWhenAvailable()
 {
     var tfragPath = Path.Combine("test-assets", "tfrags", "DL", "level1", "terrain", "terrain.bin");
@@ -4536,6 +4724,112 @@ static byte[] BuildAlignedGameplayData(int headerSize, params (int HeaderOffset,
 }
 
 static int Align16(int value) => checked((value + 0xf) & ~0xf);
+
+static byte ReadFirstAccessorByte(JsonElement gltf, byte[] buffer, int accessorIndex)
+{
+    var accessor = gltf.GetProperty("accessors")[accessorIndex];
+    var view = gltf.GetProperty("bufferViews")[accessor.GetProperty("bufferView").GetInt32()];
+    var offset = view.GetProperty("byteOffset").GetInt32()
+        + (accessor.TryGetProperty("byteOffset", out var accessorOffset) ? accessorOffset.GetInt32() : 0);
+    return buffer[offset];
+}
+
+static byte[] CreateSyntheticUyaCollision()
+{
+    var data = new byte[0x100];
+    WriteInt32(data, 0x00, 0x40);
+    WriteInt32(data, 0x04, 0xc0);
+
+    WriteInt16(data, 0x40, 0);
+    WriteUInt16(data, 0x42, 1);
+    WriteUInt16(data, 0x44, 2);
+    WriteInt16(data, 0x48, 0);
+    WriteUInt16(data, 0x4a, 1);
+    WriteUInt32(data, 0x4c, 0x10);
+    WriteInt16(data, 0x50, 0);
+    WriteUInt16(data, 0x52, 2);
+    WriteUInt32(data, 0x54, 0x2003);
+    WriteUInt32(data, 0x58, 0x5002);
+
+    WriteUInt16(data, 0x60, 2);
+    data[0x62] = 7;
+    data[0x63] = 1;
+    var firstVertices = new[]
+    {
+        (-64, -64, 0),
+        (0, -64, 0),
+        (0, 0, 0),
+        (-64, 0, 0),
+        (96, -64, -64),
+        (160, -64, -64),
+        (128, 0, -64),
+    };
+    for (var index = 0; index < firstVertices.Length; index++)
+    {
+        var vertex = firstVertices[index];
+        WriteUInt32(data, 0x64 + index * 4, PackCollisionVertex(vertex.Item1, vertex.Item2, vertex.Item3));
+    }
+
+    data[0x80] = 0;
+    data[0x81] = 1;
+    data[0x82] = 2;
+    data[0x83] = 0x21;
+    data[0x84] = 4;
+    data[0x85] = 5;
+    data[0x86] = 6;
+    data[0x87] = 0xab;
+    data[0x88] = 3;
+
+    WriteUInt16(data, 0x90, 1);
+    data[0x92] = 3;
+    var secondVertices = new[]
+    {
+        (-160, -64, -64),
+        (-96, -64, -64),
+        (-128, 0, -64),
+    };
+    for (var index = 0; index < secondVertices.Length; index++)
+    {
+        var vertex = secondVertices[index];
+        WriteUInt32(data, 0x94 + index * 4, PackCollisionVertex(vertex.Item1, vertex.Item2, vertex.Item3));
+    }
+
+    data[0xa0] = 0;
+    data[0xa1] = 1;
+    data[0xa2] = 2;
+    data[0xa3] = 0xab;
+
+    WriteInt32(data, 0xc0, 1);
+    WriteUInt16(data, 0xd0, 64);
+    WriteUInt16(data, 0xd2, 64);
+    WriteUInt16(data, 0xd4, 64);
+    WriteUInt16(data, 0xd6, 128);
+    WriteUInt16(data, 0xd8, 1);
+    WriteUInt16(data, 0xda, 3);
+    WriteUInt32(data, 0xdc, 0x20);
+    var barrierVertices = new[]
+    {
+        (64, 64, 64),
+        (128, 64, 64),
+        (64, 128, 64),
+    };
+    for (var index = 0; index < barrierVertices.Length; index++)
+    {
+        var vertex = barrierVertices[index];
+        WriteUInt16(data, 0xe0 + index * 8, (ushort)vertex.Item1);
+        WriteUInt16(data, 0xe2 + index * 8, (ushort)vertex.Item2);
+        WriteUInt16(data, 0xe4 + index * 8, (ushort)vertex.Item3);
+    }
+
+    data[0xf8] = 0;
+    data[0xf9] = 1;
+    data[0xfa] = 2;
+    return data;
+}
+
+static uint PackCollisionVertex(int x64, int y64, int z64) =>
+    (uint)(((x64 / 4) & 0x3ff) | (((y64 / 4) & 0x3ff) << 10) | ((z64 & 0xfff) << 20));
+
 
 static byte[] CreateSyntheticUyaLevelData()
 {

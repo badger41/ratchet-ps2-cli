@@ -175,6 +175,35 @@ ratchet-ps2 pif to-png --input minimap.pif --output minimap.png --double-alpha
 ratchet-ps2 pif to-png --input icon.pif --output icon.png --png-format indexed8
 ```
 
+## `collision`
+
+Commands for level collision geometry.
+
+### `collision export-gltf`
+
+Export a UYA `collision.bin` payload to glTF.
+
+```bash
+ratchet-ps2 collision export-gltf --game UYA --input <input> --output <output> [--minify]
+```
+
+Options:
+
+- `--game <game>`: Required game ID. Currently only `UYA` is supported.
+- `--input <input>`: Required path to the decompressed collision payload.
+- `--output <output>`: Required path to write the `.gltf` file.
+- `--minify`: Write compact glTF JSON.
+
+The export contains separate solid-collision and player-barrier hierarchies. Solid
+nodes preserve the raw collision byte in glTF extras; barriers use a translucent
+material. A sibling `.buffer.bin` contains the geometry buffers.
+
+Example:
+
+```bash
+ratchet-ps2 collision export-gltf --game UYA --input collision.bin --output collision.gltf
+```
+
 ## `moby`
 
 Commands for moby model files.

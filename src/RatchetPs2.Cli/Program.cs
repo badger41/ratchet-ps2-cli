@@ -1,5 +1,6 @@
 using RatchetPs2.Cli.Commands;
 using RatchetPs2.Cli.Commands.Armor;
+using RatchetPs2.Cli.Commands.Collision;
 using RatchetPs2.Cli.Commands.Hw3d;
 using RatchetPs2.Cli.Commands.Map;
 using RatchetPs2.Cli.Commands.Moby;
@@ -31,6 +32,7 @@ var gameModuleResolver = new GameModuleResolver(gameModules);
 
 rootCommand.Subcommands.Add(HelloCommand.Build(gameModuleResolver));
 rootCommand.Subcommands.Add(ArmorCommand.Build());
+rootCommand.Subcommands.Add(CollisionCommand.Build());
 rootCommand.Subcommands.Add(Hw3dCommand.Build());
 rootCommand.Subcommands.Add(MapCommand.Build());
 rootCommand.Subcommands.Add(MobyCommand.Build(gameModuleResolver));

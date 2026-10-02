@@ -117,20 +117,45 @@ internal static class UyaLevelAssetComposer
         ReadOnlySpan<byte> chunkBytes,
         ReadOnlySpan<byte> terrainBytes,
         WadDecompressionOptions? decompression = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) => ReplaceChunkPayload(
+            chunkBytes, terrainBytes, 0x00, "terrain", decompression, cancellationToken);
+
+    public static byte[] ComposeTfragChunkCollision(
+        ReadOnlySpan<byte> chunkBytes,
+        ReadOnlySpan<byte> collisionBytes,
+        WadDecompressionOptions? decompression = null,
+        CancellationToken cancellationToken = default) => ReplaceChunkPayload(
+            chunkBytes, collisionBytes, 0x04, "collision", decompression, cancellationToken);
+
+    private static byte[] ReplaceChunkPayload(
+        ReadOnlySpan<byte> chunkBytes,
+        ReadOnlySpan<byte> replacementBytes,
+        int headerOffset,
+        string name,
+        WadDecompressionOptions? decompression,
+        CancellationToken cancellationToken)
     {
-        if (terrainBytes.IsEmpty) throw new ArgumentException("Tfrag terrain payload cannot be empty.", nameof(terrainBytes));
+        if (replacementBytes.IsEmpty) throw new ArgumentException($"Tfrag {name} payload cannot be empty.", nameof(replacementBytes));
         if (chunkBytes.Length < ChunkHeaderSize) throw new InvalidDataException("Tfrag chunk is shorter than its header.");
-        var payloadOffset = ReadOffset(chunkBytes, 0);
-        var payloadEnd = ReadOffset(chunkBytes, sizeof(int));
+        var payloadOffset = ReadOffset(chunkBytes, headerOffset);
         if (payloadOffset < ChunkHeaderSize || payloadOffset >= chunkBytes.Length)
-            throw new InvalidDataException("Tfrag chunk terrain offset is outside the chunk.");
-        if (payloadEnd <= payloadOffset || payloadEnd > chunkBytes.Length) payloadEnd = chunkBytes.Length;
+            throw new InvalidDataException($"Tfrag chunk {name} offset is outside the chunk.");
+        var payloadEnd = chunkBytes.Length;
+        for (var offset = 0; offset < ChunkHeaderSize; offset += sizeof(int))
+        {
+            var candidate = ReadOffset(chunkBytes, offset);
+            if (candidate > payloadOffset && candidate <= chunkBytes.Length)
+                payloadEnd = Math.Min(payloadEnd, candidate);
+        }
 
         var wasCompressed = BinaryMagic.IsWad(chunkBytes[payloadOffset..payloadEnd]);
+        var source = wasCompressed
+            ? WadCompression.Decompress(chunkBytes[payloadOffset..payloadEnd], decompression ?? new(), cancellationToken)
+            : chunkBytes[payloadOffset..payloadEnd].ToArray();
+        if (source.AsSpan().SequenceEqual(replacementBytes)) return chunkBytes.ToArray();
         var encoded = wasCompressed
-            ? WadCompression.CompressVerified(terrainBytes, decompression ?? new(), cancellationToken).CompressedBytes
-            : terrainBytes.ToArray();
+            ? WadCompression.CompressVerified(replacementBytes, decompression ?? new(), cancellationToken).CompressedBytes
+            : replacementBytes.ToArray();
         var newPayloadEnd = wasCompressed
             ? Align(payloadOffset + encoded.Length, AssetAlignment)
             : checked(payloadOffset + encoded.Length);
@@ -145,8 +170,11 @@ internal static class UyaLevelAssetComposer
             if (value >= payloadEnd)
                 BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(offset, sizeof(int)), checked(value + delta));
         }
-        if (!TfragChunkWadReader.ReadTerrainPayload(output).AsSpan().SequenceEqual(terrainBytes))
-            throw new InvalidDataException("Composed tfrag chunk failed semantic verification.");
+        var actual = headerOffset == 0
+            ? TfragChunkWadReader.ReadTerrainPayload(output)
+            : TfragChunkWadReader.ReadCollisionPayload(output);
+        if (!actual.AsSpan().SequenceEqual(replacementBytes))
+            throw new InvalidDataException($"Composed tfrag chunk {name} failed semantic verification.");
         return output;
     }
 
