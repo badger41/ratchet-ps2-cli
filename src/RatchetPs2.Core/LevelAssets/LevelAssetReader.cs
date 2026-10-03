@@ -1,4 +1,3 @@
-using System.Buffers.Binary;
 using RatchetPs2.Core.IO;
 using RatchetPs2.Core.Textures;
 using RatchetPs2.Core.Textures.Pif;
@@ -113,11 +112,11 @@ public static class LevelAssetReader
                 unknown8,
                 unknownC,
                 textureIds,
-                (short)ReadInt16(stream),
-                (short)ReadInt16(stream),
-                (short)ReadInt16(stream),
-                (short)ReadInt16(stream),
-                (short)ReadInt16(stream),
+                stream.ReadInt16LittleEndian(),
+                stream.ReadInt16LittleEndian(),
+                stream.ReadInt16LittleEndian(),
+                stream.ReadInt16LittleEndian(),
+                stream.ReadInt16LittleEndian(),
                 ReadInt16Array(stream, mipmaps));
         }
 
@@ -138,12 +137,12 @@ public static class LevelAssetReader
             definitions[i] = new LevelAssetTextureDefinition(
                 i,
                 stream.ReadInt32LittleEndian(),
-                (short)ReadInt16(stream),
-                (short)ReadInt16(stream),
-                (short)ReadInt16(stream),
-                (short)ReadInt16(stream),
-                (short)ReadInt16(stream),
-                (short)ReadInt16(stream));
+                stream.ReadInt16LittleEndian(),
+                stream.ReadInt16LittleEndian(),
+                stream.ReadInt16LittleEndian(),
+                stream.ReadInt16LittleEndian(),
+                stream.ReadInt16LittleEndian(),
+                stream.ReadInt16LittleEndian());
         }
 
         return definitions;
@@ -168,8 +167,8 @@ public static class LevelAssetReader
             definitions[i] = new LevelAssetMipmapDefinition(
                 i,
                 stream.ReadInt32LittleEndian(),
-                (short)ReadInt16(stream),
-                (short)ReadInt16(stream),
+                stream.ReadInt16LittleEndian(),
+                stream.ReadInt16LittleEndian(),
                 stream.ReadInt32LittleEndian(),
                 stream.ReadInt32LittleEndian());
         }
@@ -187,7 +186,7 @@ public static class LevelAssetReader
         var classIds = new List<int>();
         for (var position = offset; position <= headerData.Length - sizeof(short); position += sizeof(short))
         {
-            var classId = BinaryPrimitives.ReadInt16LittleEndian(headerData[position..]);
+            var classId = BinarySpanReader.ReadInt16LittleEndian(headerData, position);
             if (classId < 0)
             {
                 return classIds;
@@ -557,18 +556,11 @@ public static class LevelAssetReader
         return new MemoryStream(data.ToArray(), writable: false);
     }
 
-    private static int ReadInt16(Stream stream)
-    {
-        Span<byte> bytes = stackalloc byte[sizeof(short)];
-        stream.ReadExactly(bytes);
-        return BinaryPrimitives.ReadInt16LittleEndian(bytes);
-    }
-
     private static IReadOnlyList<short> ReadInt16Array(Stream stream, short[] buffer)
     {
         for (var i = 0; i < buffer.Length; i++)
         {
-            buffer[i] = (short)ReadInt16(stream);
+            buffer[i] = stream.ReadInt16LittleEndian();
         }
 
         return buffer;

@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.IO.Compression;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text.Json;
 using RatchetPs2.Core.Games;
 using RatchetPs2.Core.Gameplay;
@@ -51,6 +52,15 @@ if (args is ["--qualify-uya-collision", var collisionIsoPath, var collisionRepor
     return;
 }
 
+if (args is ["--qualify-uya-tie-collision", var tieRootPath, var tieReportPath])
+{
+    var report = UyaTieCollisionQualification.Run(tieRootPath);
+    UyaTieCollisionQualification.Write(report, tieReportPath);
+    Console.WriteLine($"Qualified {report.LodCount} TIE LODs across {report.TieCount} assets: {tieReportPath}");
+    Environment.ExitCode = report.Succeeded ? 0 : 1;
+    return;
+}
+
 if (args.Contains("--uya-sdk-archive", StringComparer.Ordinal))
 {
     ValidateUyaLevelArchiveBuilder();
@@ -96,7 +106,9 @@ if (args.Contains("--wad-compression", StringComparer.Ordinal))
 if (args.Contains("--uya-collision", StringComparer.Ordinal))
 {
     ValidateUyaCollisionParsingAndGltf();
-    Console.WriteLine("UYA collision parser and glTF checks passed.");
+    ValidateUyaTieCollisionSurfaceGeneration();
+    ValidateUyaTieCollisionConvexHullGeneration();
+    Console.WriteLine("UYA collision and TIE collision generation checks passed.");
     return;
 }
 
@@ -143,6 +155,8 @@ ValidateUyaStandaloneGameplayUnpacking();
 ValidateUyaCustomMapZipUnpacking();
 ValidateUyaGameplayTypedParsing();
 ValidateUyaCollisionParsingAndGltf();
+ValidateUyaTieCollisionSurfaceGeneration();
+ValidateUyaTieCollisionConvexHullGeneration();
 ValidateUyaStaticInstanceParsing();
 ValidateGameplayGeometryParsing();
 ValidateUyaGameplayLightingParsing();
@@ -2862,6 +2876,14 @@ static void ValidateUyaCollisionParsingAndGltf()
     Expect(inspection.Pieces.Count == 3
         && inspection.Pieces[1].Types.Single() == new CollisionTypeCount(0xab, 1),
         "collision inspection should expose stable pieces and raw type counts");
+    var analysis = CollisionConverter.Analyze(bytes, GameId.UYA);
+    Expect(analysis.LogicalFaceCount == 2
+        && analysis.OccupiedOctantCount == 2
+        && analysis.DuplicateFaceCount == 1
+        && analysis.Octants.Sum(octant => octant.EncodedByteCount) == 80,
+        "collision analysis should expose exact native octant costs");
+    Expect(analysis.Octants.All(octant => octant.AdditionIds.Count == 0),
+        "source collision analysis should not invent addition ownership");
 
     var noOp = CollisionConverter.Compose(bytes, GameId.UYA, []);
     Expect(!noOp.Changed && ReferenceEquals(noOp.Bytes, bytes), "collision no-op should preserve source bytes");
@@ -2882,6 +2904,232 @@ static void ValidateUyaCollisionParsingAndGltf()
         "collision composition should translate player barriers");
     var repeatedComposition = CollisionConverter.Compose(bytes, GameId.UYA, edits);
     Expect(composed.Bytes.SequenceEqual(repeatedComposition.Bytes), "collision composition should be deterministic");
+    var addition = new CollisionSolidAddition("tie:crate",
+    [
+        new(
+            0x31,
+            new(11, 10, 10),
+            new(10, 11, 10),
+            new(10, 10, 10),
+            default,
+        IsQuad: false),
+    ]);
+    var transformedAddition = CollisionWork.TransformAddition(
+        addition,
+        GameId.UYA,
+        "entity:rotated",
+        new(
+            new(1, 2, 3),
+            new(0, 0, MathF.Sin(MathF.PI / 4), MathF.Cos(MathF.PI / 4)),
+            new(2, 1, 1)));
+    Expect(transformedAddition.Id == "entity:rotated"
+        && transformedAddition.Faces.Single().A == new CollisionVertex(-9, 24, 13)
+        && transformedAddition.Faces.Single().B == new CollisionVertex(-10, 22, 13)
+        && transformedAddition.Faces.Single().C == new CollisionVertex(-9, 22, 13),
+        "collision addition transforms should apply scale, rotation, translation, and target quantization");
+    var mirroredAddition = CollisionWork.TransformAddition(
+        addition,
+        GameId.UYA,
+        "entity:mirrored",
+        new(new(20, 0, 0), new(0, 0, 0, 1), new(-1, 1, 1)));
+    Expect(mirroredAddition.Faces.Single().A == new CollisionVertex(9, 10, 10)
+        && mirroredAddition.Faces.Single().B == new CollisionVertex(10, 10, 10)
+        && mirroredAddition.Faces.Single().C == new CollisionVertex(10, 11, 10),
+        "mirrored collision addition transforms should reverse winding");
+    var fineAddition = new CollisionSolidAddition("tie:fine",
+    [
+        new(0x31, new(-10 / 16f, -10 / 16f, 0), new(-10 / 16f, -9 / 16f, 0),
+            new(-9 / 16f, -10 / 16f, 0), default, IsQuad: false),
+        new(0x31, new(0, 0, 0), new(1, 0, 0), new(0, 1, 0), default, IsQuad: false),
+    ]);
+    var quantizedAddition = CollisionWork.TransformAddition(
+        fineAddition,
+        GameId.UYA,
+        "entity:scaled-fine",
+        new(new(333.4231f, 337.6416f, 66.07914f), new(0, 0, 0, 1),
+            new(0.56691813f, 0.56691813f, 0.56691813f)));
+    Expect(quantizedAddition.Faces.Count == 1
+        && CollisionWork.EncodeStandalone(GameId.UYA, [quantizedAddition]).Analysis?.HardViolationCount == 0,
+        "instance quantization should discard fine faces that collapse at the placed TIE scale");
+    var withAddition = CollisionConverter.Compose(bytes, GameId.UYA, [], [addition]);
+    var standalone = CollisionConverter.EncodeStandalone(GameId.UYA, [addition]);
+    var decodedStandalone = CollisionWork.DecodeSolidAddition(
+        standalone.Bytes, GameId.UYA, "decoded:proxy");
+    var standaloneInspection = CollisionConverter.Inspect(standalone.Bytes, GameId.UYA);
+    Expect(standaloneInspection.Pieces is [{ Kind: CollisionPieceKind.Solid, FaceCount: 1 }]
+        && standalone.Analysis is { LogicalFaceCount: 1, HardViolationCount: 0 }
+        && decodedStandalone is { Id: "decoded:proxy", Faces.Count: 1 }
+        && decodedStandalone.Faces.Single().RawType == 0x31,
+        "standalone collision encoding should write and verify SDK additions");
+    var addedFace = UyaCollisionReader.Read(withAddition.Bytes).SolidPieces
+        .SelectMany(piece => piece.Faces)
+        .Single(face => face.Type == 0x31);
+    Expect(addedFace.A == new UyaCollisionVertex(640, 640, 640),
+        "collision composition should add quantized SDK solid faces");
+    var additionAnalysis = withAddition.Analysis
+        ?? throw new InvalidOperationException("collision addition composition did not return analysis");
+    Expect(additionAnalysis is
+        {
+            LogicalFaceCount: 3,
+            OccupiedOctantCount: 3,
+            DuplicateFaceCount: 1,
+        } && additionAnalysis.Octants.Single(octant => octant.AdditionIds.Count > 0)
+            .AdditionIds.SequenceEqual(["tie:crate"]),
+        "collision composition should report the responsible addition for each affected octant");
+    var analyzedAddition = CollisionConverter.Analyze(withAddition.Bytes, GameId.UYA);
+    Expect(additionAnalysis.Octants.Select(octant => (
+            octant.X,
+            octant.Y,
+            octant.Z,
+            octant.FaceCount,
+            octant.VertexCount,
+            octant.QuadCount,
+            octant.EncodedByteCount)).SequenceEqual(analyzedAddition.Octants.Select(octant => (
+            octant.X,
+            octant.Y,
+            octant.Z,
+            octant.FaceCount,
+            octant.VertexCount,
+            octant.QuadCount,
+            octant.EncodedByteCount))),
+        "collision composition analysis should match analysis of the encoded output");
+    var repeatedAddition = CollisionConverter.Compose(bytes, GameId.UYA, [], [addition]);
+    Expect(withAddition.Bytes.SequenceEqual(repeatedAddition.Bytes),
+        "collision additions should compose deterministically");
+    var boundaryAnalysis = CollisionConverter.AnalyzeComposition(bytes, GameId.UYA, [],
+    [
+        new("octant-boundary",
+        [
+            new(0x31,
+                new(3.875f, 10.125f, 10.125f),
+                new(4.125f, 10.125f, 10.125f),
+                new(3.875f, 10.375f, 10.125f),
+                default,
+                IsQuad: false),
+        ]),
+    ]);
+    var boundaryOctants = boundaryAnalysis.Octants
+        .Where(octant => octant.AdditionIds.Contains("octant-boundary"))
+        .ToArray();
+    Expect(boundaryOctants.Length == 2
+        && boundaryOctants.Select(octant => octant.X).Order().SequenceEqual([0, 1]),
+        "collision analysis should charge a proxy face to both sides of an octant boundary");
+    var boundaryTouchAnalysis = CollisionConverter.AnalyzeComposition(bytes, GameId.UYA, [],
+    [
+        new("starts-on-boundary",
+        [
+            new(0x31, new(4, 30, 30), new(4.25f, 30, 30), new(4, 30.25f, 30),
+                default, IsQuad: false),
+        ]),
+        new("ends-on-boundary",
+        [
+            new(0x31, new(3.75f, 34, 30), new(4, 34, 30), new(4, 34.25f, 30),
+                default, IsQuad: false),
+        ]),
+        new("lies-on-boundary",
+        [
+            new(0x31, new(4, 38, 30), new(4, 38.25f, 30), new(4, 38, 30.25f),
+                default, IsQuad: false),
+        ]),
+    ]);
+    Expect(boundaryTouchAnalysis.Octants
+            .Where(octant => octant.AdditionIds.Contains("starts-on-boundary"))
+            .Select(octant => octant.X).Distinct().SequenceEqual([1])
+        && boundaryTouchAnalysis.Octants
+            .Where(octant => octant.AdditionIds.Contains("ends-on-boundary"))
+            .Select(octant => octant.X).Distinct().SequenceEqual([0])
+        && boundaryTouchAnalysis.Octants
+            .Where(octant => octant.AdditionIds.Contains("lies-on-boundary"))
+            .Select(octant => octant.X).Distinct().SequenceEqual([1]),
+        "collision analysis should use half-open octants for boundary-touching faces");
+    var wideFace = new UyaCollisionSolidFace(
+        0x31,
+        new(0, 40 * 64, 40 * 64),
+        new(60 * 64, 40 * 64, 40 * 64),
+        new(0, 41 * 64, 40 * 64),
+        default,
+        IsQuad: false);
+    var wideCollision = new UyaMapCollision([new(0, [wideFace])], [], 0, 0, 0);
+    var wideBytes = UyaCollisionWriter.Write(wideCollision);
+    Expect(UyaCollisionWriter.Analyze(wideCollision) is { HardViolationCount: 0, OccupiedOctantCount: 1 }
+        && CollisionConverter.Inspect(wideBytes, GameId.UYA).Pieces.Single().FaceCount == 1,
+        "collision encoding should only index a wide face in octants that can pack every vertex");
+    ExpectThrows<ArgumentException>(() => CollisionConverter.Compose(bytes, GameId.UYA, [],
+    [
+        addition,
+        addition,
+    ]));
+    ExpectThrows<InvalidDataException>(() => CollisionConverter.Compose(bytes, GameId.UYA, [],
+    [
+        new("duplicate-source",
+        [
+            new(
+                quad.Type,
+                new(quad.A.Position.X, quad.A.Position.Y, quad.A.Position.Z),
+                new(quad.B.Position.X, quad.B.Position.Y, quad.B.Position.Z),
+                new(quad.C.Position.X, quad.C.Position.Y, quad.C.Position.Z),
+                new(quad.D.Position.X, quad.D.Position.Y, quad.D.Position.Z),
+                quad.IsQuad),
+        ]),
+    ]));
+    ExpectThrows<ArgumentException>(() => CollisionConverter.Compose(bytes, GameId.UYA, [],
+    [
+        new("empty", []),
+    ]));
+    ExpectThrows<ArgumentException>(() => CollisionConverter.Compose(bytes, GameId.UYA, [],
+    [
+        new("degenerate",
+        [
+            new(0x31, new(10, 10, 10), new(10, 10, 10), new(10, 11, 10), default, IsQuad: false),
+        ]),
+    ]));
+    ExpectThrows<ArgumentOutOfRangeException>(() => CollisionConverter.Compose(bytes, GameId.UYA, [],
+    [
+        new("non-finite",
+        [
+            new(0x31, new(float.NaN, 10, 10), new(11, 10, 10), new(10, 11, 10), default, IsQuad: false),
+        ]),
+    ]));
+    var excessiveFaces = Enumerable.Range(0, 86).Select(index =>
+    {
+        var x = 20.125f + index % 10 * 0.25f;
+        var y = 20.125f + index / 10 * 0.25f;
+        return new CollisionSolidFace(
+            0x31,
+            new(x, y, 20.125f),
+            new(x + 0.0625f, y, 20.125f),
+            new(x, y + 0.0625f, 20.125f),
+            default,
+            IsQuad: false);
+    }).ToArray();
+    var excessiveAnalysis = CollisionConverter.AnalyzeComposition(bytes, GameId.UYA, [],
+    [
+        new("too-dense", excessiveFaces),
+    ]);
+    Expect(excessiveAnalysis.HardViolationCount > 0
+        && excessiveAnalysis.Octants.Any(octant => octant.Violations.Count > 0
+            && octant.AdditionIds.Contains("too-dense")),
+        "collision composition analysis should identify unsafe additions before writing");
+    ExpectThrows<InvalidDataException>(() => CollisionConverter.Compose(bytes, GameId.UYA, [],
+    [
+        new("too-dense", excessiveFaces),
+    ]));
+    using (var cancelled = new CancellationTokenSource())
+    {
+        cancelled.Cancel();
+        ExpectThrows<OperationCanceledException>(() => UyaCollisionComposer.Compose(bytes, [],
+        [
+            new("cancelled",
+            [
+                new(0x31,
+                    new(640, 640, 640),
+                    new(704, 640, 640),
+                    new(640, 704, 640),
+                    default,
+                    IsQuad: false),
+            ]),
+        ], cancelled.Token));
+    }
     var removed = CollisionConverter.Compose(bytes, GameId.UYA,
     [
         new(CollisionPieceKind.Solid, 0, 0, 0, 0, Remove: true),
@@ -2901,6 +3149,7 @@ static void ValidateUyaCollisionParsingAndGltf()
         new(CollisionPieceKind.Solid, 0, 1, 0, 0),
     ]));
     ExpectThrows<NotSupportedException>(() => CollisionConverter.Compose(bytes, GameId.DL, []));
+    ExpectThrows<NotSupportedException>(() => CollisionConverter.Analyze(bytes, GameId.DL));
 
     var files = CollisionConverter.ExportGltf(bytes, GameId.UYA, "collision.gltf", minify: true);
     using var gltf = JsonDocument.Parse(files.GltfBytes);
@@ -3009,6 +3258,476 @@ static void ValidateUyaCollisionParsingAndGltf()
         collision,
         options: new UyaCollisionGltfExportOptions { Palette = shortPalette }));
 }
+
+static void ValidateUyaTieCollisionSurfaceGeneration()
+{
+    var tie = CreateSyntheticTieSurfaceClass();
+
+    var candidate = UyaTieCollisionGenerator.GenerateSurface(tie, "tie:synthetic", 0, 0x31);
+    var face = candidate.Addition.Faces.Single();
+    Expect(candidate is
+        {
+            SourceVertexCount: 4,
+            SourceTriangleCount: 4,
+            GeneratedVertexCount: 4,
+            GeneratedFaceCount: 1,
+            MergedQuadCount: 1,
+            RemovedDegenerateFaceCount: 1,
+            RemovedDuplicateFaceCount: 1,
+            MaximumVertexDeviation: 0,
+        } && face is { Type: 0x31, IsQuad: true }
+            && face.A == new UyaCollisionVertex(0, 0, 0)
+            && face.B == new UyaCollisionVertex(0, 64, 0)
+            && face.C == new UyaCollisionVertex(64, 64, 0)
+            && face.D == new UyaCollisionVertex(64, 0, 0),
+        "TIE surface collision should quantize, filter, merge, and use native outward-blocking winding");
+    Expect(candidate.Analysis.LogicalFaceCount == candidate.GeneratedFaceCount
+        && candidate.Analysis.LogicalVertexCount == candidate.GeneratedVertexCount
+        && candidate.Analysis.HardViolationCount == 0
+        && candidate.Analysis.Octants.SelectMany(value => value.AdditionIds).Contains("tie:synthetic"),
+        "TIE surface candidate should carry exact native octant diagnostics and addition ownership");
+    var encoded = UyaCollisionWriter.Write(new(
+        [new(0, candidate.Addition.Faces)],
+        [],
+        0,
+        0,
+        0));
+    Expect(UyaCollisionReader.Read(encoded).SolidPieces.SelectMany(piece => piece.Faces).Single().IsQuad,
+        "generated TIE collision quads should survive native write and re-read");
+    var repeated = UyaTieCollisionGenerator.GenerateSurface(tie, "tie:synthetic", 0, 0x31);
+    Expect(candidate.Addition.Faces.SequenceEqual(repeated.Addition.Faces),
+        "TIE surface collision generation should be deterministic");
+    var fine = tie.LodTopologies.Single();
+    var multiLod = new TieClass
+    {
+        Header = tie.Header,
+        ByteLength = tie.ByteLength,
+        LodTopologies =
+        [
+            fine,
+            new TieLodTopology
+            {
+                LodIndex = 1,
+                LogicalVertexCount = 3,
+                PacketVertexRowCount = 3,
+                PrimaryAddressMappedLogicalVertexCount = 3,
+                SecondaryAddressMappedLogicalVertexCount = 0,
+                UnresolvedLogicalVertexCount = 0,
+                StripCount = 1,
+                TriangleCount = 1,
+                LogicalVertices = fine.LogicalVertices.Take(3).ToArray(),
+                Triangles = [new(1, 0, 0, 0, 1, 2)],
+            },
+        ],
+    };
+    var decimated = UyaTieCollisionGenerator.GenerateDecimatedSurface(
+        multiLod, "tie:decimated", rawType: 0x31);
+    Expect(decimated is { LodIndex: 1, SourceTriangleCount: 1, GeneratedFaceCount: 1 },
+        "decimated TIE collision should use the coarsest usable authored LOD");
+    var nonCoplanar = UyaTieCollisionGenerator.GenerateSurface(
+        CreateSyntheticTieSurfaceClass(fourthZ: 1),
+        "tie:non-coplanar",
+        0,
+        0x31);
+    Expect(nonCoplanar is { GeneratedFaceCount: 2, MergedQuadCount: 0 }
+        && nonCoplanar.Addition.Faces.All(value => !value.IsQuad),
+        $"TIE surface collision should not merge non-coplanar triangles "
+        + $"(faces {nonCoplanar.GeneratedFaceCount}, merged {nonCoplanar.MergedQuadCount})");
+    var quantized = UyaTieCollisionGenerator.GenerateSurface(
+        CreateSyntheticTieSurfaceClass(scale: 1000),
+        "tie:quantized",
+        0,
+        0x31);
+    Expect(quantized.MaximumVertexDeviation is > 0 and < 0.04f,
+        "TIE surface collision should report target-quantization deviation");
+    ExpectThrows<InvalidDataException>(() => UyaTieCollisionGenerator.GenerateSurface(
+        CreateSyntheticTieSurfaceClass(fourthZ: 1),
+        "tie:limited",
+        0,
+        0x31,
+        maximumFaces: 1));
+    ExpectThrows<ArgumentOutOfRangeException>(() => UyaTieCollisionGenerator.GenerateSurface(
+        tie,
+        "tie:invalid-limit",
+        0,
+        0x31,
+        maximumFaces: 0));
+    ExpectThrows<ArgumentOutOfRangeException>(() => UyaTieCollisionGenerator.GenerateSurface(
+        tie,
+        "tie:synthetic",
+        1,
+        0x31));
+    using var cancelled = new CancellationTokenSource();
+    cancelled.Cancel();
+    ExpectThrows<OperationCanceledException>(() => UyaTieCollisionGenerator.GenerateSurface(
+        tie,
+        "tie:synthetic",
+        0,
+        0x31,
+        cancellationToken: cancelled.Token));
+    ExpectThrows<NotSupportedException>(() => CollisionConverter.GenerateTieSurfaceCandidate(
+        [],
+        GameId.DL,
+        "tie:synthetic"));
+}
+
+static void ValidateUyaTieCollisionConvexHullGeneration()
+{
+    var cube = UyaTieCollisionHullGenerator.Generate(
+        CreateSyntheticTieCubeClass(),
+        "tie:cube-hull",
+        rawType: 0x31,
+        profileSections: 1);
+    Expect(cube is
+        {
+            GeneratedVertexCount: 8,
+            GeneratedFaceCount: 12,
+            MergedQuadCount: 0,
+            MaximumSourceVertexDeviation: < 0.001f,
+        }
+        && cube.Addition.Faces.All(face => face is { Type: 0x31, IsQuad: false })
+        && cube.Analysis.HardViolationCount == 0,
+        $"convex hull should reduce a cube to twelve native triangles "
+        + $"({cube.GeneratedVertexCount} vertices, {cube.GeneratedFaceCount} faces)");
+
+    var pyramid = CreateSyntheticTieClass(
+        [
+            ((short)-4, (short)-4, (short)0),
+            ((short)4, (short)-4, (short)0),
+            ((short)4, (short)4, (short)0),
+            ((short)-4, (short)4, (short)0),
+            ((short)0, (short)0, (short)8),
+        ],
+        [
+            new(0, 0, 0, 0, 2, 1), new(0, 0, 1, 0, 3, 2),
+            new(0, 0, 2, 0, 1, 4), new(0, 0, 3, 1, 2, 4),
+            new(0, 0, 4, 2, 3, 4), new(0, 0, 5, 3, 0, 4),
+        ],
+        stripCount: 1);
+    var smooth = UyaTieCollisionHullGenerator.Generate(
+        pyramid, "tie:pyramid-hull", rawType: 0x31, profileSections: 6);
+    Expect(smooth is { ProfileSections: 1, GeneratedFaceCount: 6 }
+        && smooth.Addition.Faces.All(face => !face.IsQuad)
+        && smooth.Addition.Faces.Any(face =>
+            new[] { face.A.Z64, face.B.Z64, face.C.Z64 }.Distinct().Count() > 1),
+        $"convex hull should discard redundant sections and retain a smooth sloped silhouette "
+        + $"({smooth.GeneratedVertexCount} vertices, {smooth.GeneratedFaceCount} faces, "
+        + $"{smooth.MergedQuadCount} quads)");
+
+    var clean = UyaTieCollisionHullGenerator.Generate(
+        CreateSyntheticTieBoxes((0, 10, 0, 10, 0, 10)),
+        "tie:clean-hull",
+        rawType: 0x31,
+        profileSections: 1);
+    var nested = UyaTieCollisionHullGenerator.Generate(
+        CreateSyntheticTieBoxes(
+            (0, 10, 0, 10, 0, 10),
+            (2, 8, 2, 8, 2, 8),
+            (4, 6, 4, 6, 4, 6)),
+        "tie:nested-hull",
+        rawType: 0x31,
+        profileSections: 1);
+    Expect(clean.Addition.Faces.SequenceEqual(nested.Addition.Faces),
+        "convex hull should discard enclosed render geometry");
+
+    var insetTie = CreateSyntheticTieBoxes(
+        (-8, 8, -8, 8, 0, 4),
+        (-4, 4, -4, 4, 4, 8),
+        (-8, 8, -8, 8, 8, 12));
+    var coarseInset = UyaTieCollisionHullGenerator.Generate(
+        insetTie, "tie:coarse-inset-hull", rawType: 0x31, profileSections: 1);
+    var detailedInset = UyaTieCollisionHullGenerator.Generate(
+        insetTie, "tie:detailed-inset-hull", rawType: 0x31, profileSections: 6);
+    var coarseVertices = coarseInset.Addition.Faces.SelectMany(face => new[] { face.A, face.B, face.C });
+    var detailedVertices = detailedInset.Addition.Faces.SelectMany(face => new[] { face.A, face.B, face.C });
+    var maximumX = detailedVertices.Max(vertex => Math.Abs(vertex.X64));
+    Expect(coarseInset.ProfileSections == 1
+        && detailedInset.ProfileSections is > 1 and <= 6
+        && detailedInset.GeneratedFaceCount > coarseInset.GeneratedFaceCount
+        && !coarseVertices.Any(vertex => Math.Abs(vertex.X64) < maximumX)
+        && detailedVertices.Any(vertex => Math.Abs(vertex.X64) < maximumX),
+        "additional hull profile sections should follow a vertical inset instead of bridging it");
+
+    var denseProfile = UyaTieCollisionHullGenerator.Generate(
+        CreateSyntheticTiePrism(32, 64, 32),
+        "tie:dense-profile-hull",
+        rawType: 0x31,
+        profileSections: 6);
+    Expect(denseProfile is
+        {
+            ProfileSections: 1,
+            GeneratedVertexCount: <= 84,
+            GeneratedFaceCount: <= 180,
+        }
+        && denseProfile.Analysis.HardViolationCount == 0,
+        $"redundant hull sections should collapse while retaining bounded radial complexity "
+        + $"({denseProfile.GeneratedVertexCount} vertices, {denseProfile.GeneratedFaceCount} faces)");
+
+    var planar = UyaTieCollisionHullGenerator.Generate(
+        CreateSyntheticTieSurfaceClass(),
+        "tie:planar-hull",
+        rawType: 0x31);
+    Expect(planar is { GeneratedFaceCount: 1, MergedQuadCount: 1 },
+        "planar hull input should fall back to the source surface");
+    ExpectThrows<NotSupportedException>(() => CollisionWork.GenerateTieConvexHullCandidate(
+        [], GameId.DL, "tie:unsupported-hull"));
+    ExpectThrows<ArgumentOutOfRangeException>(() => UyaTieCollisionHullGenerator.Generate(
+        CreateSyntheticTieCubeClass(), "tie:invalid-hull-detail", profileSections: 17));
+    using var cancelled = new CancellationTokenSource();
+    cancelled.Cancel();
+    ExpectThrows<OperationCanceledException>(() => UyaTieCollisionHullGenerator.Generate(
+        CreateSyntheticTieCubeClass(),
+        "tie:cancelled-hull",
+        cancellationToken: cancelled.Token));
+}
+
+static TieClass CreateSyntheticTieSurfaceClass(short fourthZ = 0, float scale = 1024) => new()
+{
+    Header = new TieClassHeader
+    {
+        PacketTableOffsets = [],
+        PacketCounts = [],
+        CacheSizes = [],
+        RgbaRemapOffsets = [],
+        Scale = scale,
+        Lods = [],
+        UnknownOffsets78 = [],
+    },
+    ByteLength = TieClassHeader.Size,
+    LodTopologies =
+    [
+        new TieLodTopology
+        {
+            LodIndex = 0,
+            LogicalVertexCount = 4,
+            PacketVertexRowCount = 4,
+            PrimaryAddressMappedLogicalVertexCount = 4,
+            SecondaryAddressMappedLogicalVertexCount = 0,
+            UnresolvedLogicalVertexCount = 0,
+            StripCount = 1,
+            TriangleCount = 4,
+            LogicalVertices =
+            [
+                CreateSyntheticTieLogicalVertex(0, 0, 0, 0),
+                CreateSyntheticTieLogicalVertex(1, 1, 0, 0),
+                CreateSyntheticTieLogicalVertex(2, 1, 1, 0),
+                CreateSyntheticTieLogicalVertex(3, 0, 1, fourthZ),
+            ],
+            Triangles =
+            [
+                new(0, 0, 0, 0, 1, 2),
+                new(0, 0, 1, 0, 2, 3),
+                new(0, 0, 2, 2, 1, 0),
+                new(0, 0, 3, 0, 0, 1),
+            ],
+        },
+    ],
+};
+
+static TieClass CreateSyntheticTieCubeClass(
+    bool openTop = false,
+    bool includeBridge = false,
+    bool mirrorX = false,
+    short size = 4) => new()
+{
+    Header = new TieClassHeader
+    {
+        PacketTableOffsets = [],
+        PacketCounts = [],
+        CacheSizes = [],
+        RgbaRemapOffsets = [],
+        Scale = 1024,
+        Lods = [],
+        UnknownOffsets78 = [],
+    },
+    ByteLength = TieClassHeader.Size,
+    LodTopologies =
+    [
+        new TieLodTopology
+        {
+            LodIndex = 0,
+            LogicalVertexCount = includeBridge ? 12 : 8,
+            PacketVertexRowCount = includeBridge ? 12 : 8,
+            PrimaryAddressMappedLogicalVertexCount = includeBridge ? 12 : 8,
+            SecondaryAddressMappedLogicalVertexCount = 0,
+            UnresolvedLogicalVertexCount = 0,
+            StripCount = 1,
+            TriangleCount = (openTop ? 10 : 12) + (includeBridge ? 2 : 0),
+            LogicalVertices =
+            [
+                CreateSyntheticTieLogicalVertex(0, 0, 0, 0),
+                CreateSyntheticTieLogicalVertex(1, (short)(mirrorX ? -size : size), 0, 0),
+                CreateSyntheticTieLogicalVertex(2, (short)(mirrorX ? -size : size), size, 0),
+                CreateSyntheticTieLogicalVertex(3, 0, size, 0),
+                CreateSyntheticTieLogicalVertex(4, 0, 0, size),
+                CreateSyntheticTieLogicalVertex(5, (short)(mirrorX ? -size : size), 0, size),
+                CreateSyntheticTieLogicalVertex(6, (short)(mirrorX ? -size : size), size, size),
+                CreateSyntheticTieLogicalVertex(7, 0, size, size),
+                ..(includeBridge
+                    ? new[]
+                    {
+                        CreateSyntheticTieLogicalVertex(8, 0, 0, (short)(size * 2)),
+                        CreateSyntheticTieLogicalVertex(
+                            9,
+                            (short)(mirrorX ? -size : size),
+                            0,
+                            (short)(size * 2)),
+                        CreateSyntheticTieLogicalVertex(
+                            10,
+                            (short)(mirrorX ? -size : size),
+                            size,
+                            (short)(size * 2)),
+                        CreateSyntheticTieLogicalVertex(11, 0, size, (short)(size * 2)),
+                    }
+                    : Array.Empty<TieLogicalVertex>()),
+            ],
+            Triangles =
+            [
+                new(0, 0, 0, 0, 2, 1), new(0, 0, 1, 0, 3, 2),
+                ..(openTop
+                    ? Array.Empty<TieTriangle>()
+                    : new TieTriangle[] { new(0, 0, 2, 4, 5, 6), new(0, 0, 3, 4, 6, 7) }),
+                new(0, 0, 4, 0, 1, 5), new(0, 0, 5, 0, 5, 4),
+                new(0, 0, 6, 1, 2, 6), new(0, 0, 7, 1, 6, 5),
+                new(0, 0, 8, 2, 3, 7), new(0, 0, 9, 2, 7, 6),
+                new(0, 0, 10, 3, 0, 4), new(0, 0, 11, 3, 4, 7),
+                ..(includeBridge
+                    ? new TieTriangle[] { new(0, 0, 12, 8, 10, 9), new(0, 0, 13, 8, 11, 10) }
+                    : Array.Empty<TieTriangle>()),
+            ],
+        },
+    ],
+};
+
+static TieClass CreateSyntheticTieBoxes(
+    params (short MinimumX, short MaximumX, short MinimumY, short MaximumY, short MinimumZ, short MaximumZ)[] boxes)
+{
+    var positions = boxes.SelectMany(box => new[]
+    {
+        (box.MinimumX, box.MinimumY, box.MinimumZ),
+        (box.MaximumX, box.MinimumY, box.MinimumZ),
+        (box.MaximumX, box.MaximumY, box.MinimumZ),
+        (box.MinimumX, box.MaximumY, box.MinimumZ),
+        (box.MinimumX, box.MinimumY, box.MaximumZ),
+        (box.MaximumX, box.MinimumY, box.MaximumZ),
+        (box.MaximumX, box.MaximumY, box.MaximumZ),
+        (box.MinimumX, box.MaximumY, box.MaximumZ),
+    }).ToArray();
+    var triangleIndex = 0;
+    var triangles = boxes.SelectMany((_, boxIndex) =>
+    {
+        var first = boxIndex * 8;
+        return new[]
+        {
+            new TieTriangle(0, 0, triangleIndex++, first, first + 2, first + 1),
+            new TieTriangle(0, 0, triangleIndex++, first, first + 3, first + 2),
+            new TieTriangle(0, 0, triangleIndex++, first + 4, first + 5, first + 6),
+            new TieTriangle(0, 0, triangleIndex++, first + 4, first + 6, first + 7),
+            new TieTriangle(0, 0, triangleIndex++, first, first + 1, first + 5),
+            new TieTriangle(0, 0, triangleIndex++, first, first + 5, first + 4),
+            new TieTriangle(0, 0, triangleIndex++, first + 1, first + 2, first + 6),
+            new TieTriangle(0, 0, triangleIndex++, first + 1, first + 6, first + 5),
+            new TieTriangle(0, 0, triangleIndex++, first + 2, first + 3, first + 7),
+            new TieTriangle(0, 0, triangleIndex++, first + 2, first + 7, first + 6),
+            new TieTriangle(0, 0, triangleIndex++, first + 3, first, first + 4),
+            new TieTriangle(0, 0, triangleIndex++, first + 3, first + 4, first + 7),
+        };
+    }).ToArray();
+
+    return CreateSyntheticTieClass(positions, triangles, boxes.Length);
+}
+
+static TieClass CreateSyntheticTiePrism(int sides, short radius, short height)
+{
+    var positions = Enumerable.Range(0, sides).SelectMany(index =>
+    {
+        var angle = MathF.Tau * index / sides;
+        var x = checked((short)MathF.Round(MathF.Cos(angle) * radius));
+        var y = checked((short)MathF.Round(MathF.Sin(angle) * radius));
+        return new[] { (x, y, (short)0), (x, y, height) };
+    }).ToArray();
+    var triangles = new List<TieTriangle>();
+    for (var index = 0; index < sides; index++)
+    {
+        var next = (index + 1) % sides;
+        triangles.Add(new(0, 0, triangles.Count, index * 2, next * 2, next * 2 + 1));
+        triangles.Add(new(0, 0, triangles.Count, index * 2, next * 2 + 1, index * 2 + 1));
+    }
+    for (var index = 1; index + 1 < sides; index++)
+    {
+        triangles.Add(new(0, 0, triangles.Count, 0, (index + 1) * 2, index * 2));
+        triangles.Add(new(0, 0, triangles.Count, 1, index * 2 + 1, (index + 1) * 2 + 1));
+    }
+    return CreateSyntheticTieClass(positions, triangles.ToArray(), stripCount: 1);
+}
+
+static TieClass CreateSyntheticTieClass(
+    (short X, short Y, short Z)[] positions,
+    TieTriangle[] triangles,
+    int stripCount) => new()
+{
+    Header = new TieClassHeader
+    {
+        PacketTableOffsets = [],
+        PacketCounts = [],
+        CacheSizes = [],
+        RgbaRemapOffsets = [],
+        Scale = 1024,
+        Lods = [],
+        UnknownOffsets78 = [],
+    },
+    ByteLength = TieClassHeader.Size,
+    LodTopologies =
+    [
+        new TieLodTopology
+        {
+            LodIndex = 0,
+            LogicalVertexCount = positions.Length,
+            PacketVertexRowCount = positions.Length,
+            PrimaryAddressMappedLogicalVertexCount = positions.Length,
+            SecondaryAddressMappedLogicalVertexCount = 0,
+            UnresolvedLogicalVertexCount = 0,
+            StripCount = stripCount,
+            TriangleCount = triangles.Length,
+            LogicalVertices = positions.Select((position, index) =>
+                CreateSyntheticTieLogicalVertex(index, position.X, position.Y, position.Z)).ToArray(),
+            Triangles = triangles,
+        },
+    ],
+};
+
+static TieLogicalVertex CreateSyntheticTieLogicalVertex(int index, short x, short y, short z) => new()
+{
+    LodIndex = 0,
+    PacketIndex = 0,
+    PacketStripIndex = 0,
+    StripIndex = 0,
+    IndexInStrip = index,
+    LogicalVertexIndex = index,
+    VuAddress = index,
+    Token = 0,
+    MappingKind = TieLogicalVertexMappingKind.PrimaryRowAddress,
+    DecodedVertex = new()
+    {
+        Index = index,
+        SourceIndex = index,
+        Kind = TiePacketDecodedVertexKind.Dinky,
+        Offset = 0,
+        Bytes = [],
+        SourceRowIndex = index,
+        SourceRow = null,
+        X = x,
+        Y = y,
+        Z = z,
+        GsPacketWriteOffset = (ushort)index,
+        S = 0,
+        T = 0,
+        Q = 0,
+        SecondaryGsPacketWriteOffset = 0,
+    },
+    AddressRow = null,
+    VertexRow = null,
+};
 
 
 static void ValidateChunkTfragAssetRenderPackageWhenAvailable()

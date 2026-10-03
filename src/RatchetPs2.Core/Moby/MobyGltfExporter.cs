@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using RatchetPs2.Core.Geometry;
 using RatchetPs2.Core.Gltf;
+using RatchetPs2.Core.IO;
 using RatchetPs2.Core.Textures.Png;
 
 namespace RatchetPs2.Core.Moby;
@@ -2101,7 +2102,7 @@ public static partial class MobyGltfExporter
 
             for (var i = 7; i < vertices.Count; i++)
             {
-                WriteLow9Bits(vertices[i - 7], ReadLowHalfword(vertices[i]));
+                WriteLow9Bits(vertices[i - 7], BinarySpanReader.ReadUInt16LittleEndian(vertices[i], 0x00));
             }
 
             var epilogueReadOffset = vertexTableOffset + inFileVertexCount * 0x10;
@@ -2141,7 +2142,7 @@ public static partial class MobyGltfExporter
             for (var i = 0; i < vertices.Count; i++)
             {
                 var vertex = vertices[i];
-                var vertexIndex = ReadLowHalfword(vertex) & 0x01FF;
+                var vertexIndex = BinarySpanReader.ReadUInt16LittleEndian(vertex, 0x00) & 0x01FF;
                 var position = DecodePosition(vertex, scale);
                 var normal = DecodeNormal(vertex);
                 var (jointRow, weightRow) = DecodeSkinRow(vertex, i, twoWayBlendVertexCount, threeWayBlendVertexCount, rollingBlendCache);
@@ -2243,7 +2244,7 @@ public static partial class MobyGltfExporter
         ushort threeWayBlendVertexCount,
         SkinBlend?[] rollingBlendCache)
     {
-        var bits9To15 = (sbyte)((ReadLowHalfword(vertex) >> 9) & 0x7F);
+        var bits9To15 = (sbyte)((BinarySpanReader.ReadUInt16LittleEndian(vertex, 0x00) >> 9) & 0x7F);
         SkinBlend blend;
         if (vertexNumber < twoWayBlendVertexCount)
         {
@@ -3283,14 +3284,9 @@ public static partial class MobyGltfExporter
         }
     }
 
-    private static ushort ReadLowHalfword(byte[] block)
-    {
-        return BitConverter.ToUInt16(block, 0x00);
-    }
-
     private static void WriteLow9Bits(byte[] block, ushort value)
     {
-        var current = BitConverter.ToUInt16(block, 0x00);
+        var current = BinarySpanReader.ReadUInt16LittleEndian(block, 0x00);
         var next = (ushort)((current & ~0x01FF) | (value & 0x01FF));
         var bytes = BitConverter.GetBytes(next);
         block[0] = bytes[0];

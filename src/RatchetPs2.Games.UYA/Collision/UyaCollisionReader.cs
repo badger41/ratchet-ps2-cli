@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+using RatchetPs2.Core.IO;
 using RatchetPs2.Core.Tfrags;
 
 namespace RatchetPs2.Games.UYA.Collision;
@@ -351,7 +351,7 @@ public static class UyaCollisionReader
         }
     }
 
-    private static UyaCollisionSolidFace Canonicalize(UyaCollisionSolidFace face)
+    internal static UyaCollisionSolidFace Canonicalize(UyaCollisionSolidFace face)
     {
         var vertices = face.IsQuad
             ? new[] { face.A, face.B, face.C, face.D }
@@ -433,25 +433,25 @@ public static class UyaCollisionReader
     private static short ReadInt16(ReadOnlySpan<byte> data, int offset, string name, int sourceOffset = 0)
     {
         RequireRange(data, offset, sizeof(short), name, sourceOffset);
-        return BinaryPrimitives.ReadInt16LittleEndian(data[offset..]);
+        return BinarySpanReader.ReadInt16LittleEndian(data, offset);
     }
 
     private static ushort ReadUInt16(ReadOnlySpan<byte> data, int offset, string name, int sourceOffset = 0)
     {
         RequireRange(data, offset, sizeof(ushort), name, sourceOffset);
-        return BinaryPrimitives.ReadUInt16LittleEndian(data[offset..]);
+        return BinarySpanReader.ReadUInt16LittleEndian(data, offset);
     }
 
     private static int ReadInt32(ReadOnlySpan<byte> data, int offset, string name, int sourceOffset = 0)
     {
         RequireRange(data, offset, sizeof(int), name, sourceOffset);
-        return BinaryPrimitives.ReadInt32LittleEndian(data[offset..]);
+        return BinarySpanReader.ReadInt32LittleEndian(data, offset);
     }
 
     private static uint ReadUInt32(ReadOnlySpan<byte> data, int offset, string name, int sourceOffset = 0)
     {
         RequireRange(data, offset, sizeof(uint), name, sourceOffset);
-        return BinaryPrimitives.ReadUInt32LittleEndian(data[offset..]);
+        return BinarySpanReader.ReadUInt32LittleEndian(data, offset);
     }
 
     private static void RequireRange(

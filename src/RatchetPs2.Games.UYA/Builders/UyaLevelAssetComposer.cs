@@ -137,13 +137,13 @@ internal static class UyaLevelAssetComposer
     {
         if (replacementBytes.IsEmpty) throw new ArgumentException($"Tfrag {name} payload cannot be empty.", nameof(replacementBytes));
         if (chunkBytes.Length < ChunkHeaderSize) throw new InvalidDataException("Tfrag chunk is shorter than its header.");
-        var payloadOffset = ReadOffset(chunkBytes, headerOffset);
+        var payloadOffset = BinarySpanReader.ReadInt32LittleEndian(chunkBytes, headerOffset);
         if (payloadOffset < ChunkHeaderSize || payloadOffset >= chunkBytes.Length)
             throw new InvalidDataException($"Tfrag chunk {name} offset is outside the chunk.");
         var payloadEnd = chunkBytes.Length;
         for (var offset = 0; offset < ChunkHeaderSize; offset += sizeof(int))
         {
-            var candidate = ReadOffset(chunkBytes, offset);
+            var candidate = BinarySpanReader.ReadInt32LittleEndian(chunkBytes, offset);
             if (candidate > payloadOffset && candidate <= chunkBytes.Length)
                 payloadEnd = Math.Min(payloadEnd, candidate);
         }
@@ -166,7 +166,7 @@ internal static class UyaLevelAssetComposer
         var delta = newPayloadEnd - payloadEnd;
         for (var offset = 0; offset < ChunkHeaderSize; offset += sizeof(int))
         {
-            var value = ReadOffset(chunkBytes, offset);
+            var value = BinarySpanReader.ReadInt32LittleEndian(chunkBytes, offset);
             if (value >= payloadEnd)
                 BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(offset, sizeof(int)), checked(value + delta));
         }
@@ -297,9 +297,6 @@ internal static class UyaLevelAssetComposer
     }
 
     private static int Align(int value, int alignment) => checked((value + alignment - 1) / alignment * alignment);
-
-    private static int ReadOffset(ReadOnlySpan<byte> bytes, int offset) =>
-        BinaryPrimitives.ReadInt32LittleEndian(bytes.Slice(offset, sizeof(int)));
 
     private readonly record struct OffsetReference(int HeaderOffset, int AssetOffset);
 }

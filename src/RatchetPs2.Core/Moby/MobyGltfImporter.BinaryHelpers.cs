@@ -1,17 +1,13 @@
 using System.Numerics;
+using RatchetPs2.Core.IO;
 
 namespace RatchetPs2.Core.Moby;
 
 public static partial class MobyGltfImporter
 {
-    private static ushort ReadLowHalfword(byte[] block)
-    {
-        return BitConverter.ToUInt16(block, 0x00);
-    }
-
     private static void WriteLow9Bits(byte[] block, ushort value)
     {
-        var current = BitConverter.ToUInt16(block, 0x00);
+        var current = BinarySpanReader.ReadUInt16LittleEndian(block, 0x00);
         var next = (ushort)((current & ~0x01FF) | (value & 0x01FF));
         var bytes = BitConverter.GetBytes(next);
         block[0] = bytes[0];
@@ -20,7 +16,7 @@ public static partial class MobyGltfImporter
 
     private static void WriteLow9Bits(byte[] data, int offset, ushort value)
     {
-        var current = BitConverter.ToUInt16(data, offset);
+        var current = BinarySpanReader.ReadUInt16LittleEndian(data, offset);
         var next = (ushort)((current & ~0x01FF) | (value & 0x01FF));
         WriteUInt16(data, offset, next);
     }

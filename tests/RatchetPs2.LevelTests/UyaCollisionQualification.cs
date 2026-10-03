@@ -11,7 +11,7 @@ using RatchetPs2.Sdk;
 
 internal static class UyaCollisionQualification
 {
-    public const int SchemaVersion = 1;
+    public const int SchemaVersion = 2;
 
     public static UyaCollisionQualificationReport Run(string isoPath)
     {
@@ -32,7 +32,7 @@ internal static class UyaCollisionQualification
                 or ArgumentException
                 or OverflowException)
             {
-                levels.Add(new(index, false, 0, 0, 0, 0, 0, [], [exception.Message]));
+                levels.Add(new(index, false, 0, 0, 0, 0, 0, [], [], [exception.Message]));
             }
         }
 
@@ -66,6 +66,7 @@ internal static class UyaCollisionQualification
         var faces = 0;
         var nonemptyPayloads = 0;
         var hashes = new List<UyaCollisionHashCheck>();
+        var octantSummaries = new List<UyaCollisionOctantSummary>();
         foreach (var (name, payload) in payloads.Where(value => value.Bytes.Length > 0))
         {
             nonemptyPayloads++;
@@ -73,6 +74,16 @@ internal static class UyaCollisionQualification
             solidPieces += inspection.Pieces.Count(piece => piece.Kind == CollisionPieceKind.Solid);
             barriers += inspection.Pieces.Count(piece => piece.Kind == CollisionPieceKind.PlayerBarrier);
             faces += inspection.Pieces.Sum(piece => piece.FaceCount);
+            var analysis = CollisionConverter.Analyze(payload, GameId.UYA);
+            octantSummaries.Add(new(
+                name,
+                analysis.OccupiedOctantCount,
+                analysis.DuplicateFaceCount,
+                analysis.Octants.Count == 0 ? 0 : analysis.Octants.Max(octant => octant.FaceCount),
+                analysis.Octants.Count == 0 ? 0 : analysis.Octants.Max(octant => octant.VertexCount),
+                analysis.Octants.Count == 0 ? 0 : analysis.Octants.Max(octant => octant.QuadCount),
+                analysis.Octants.Count == 0 ? 0 : analysis.Octants.Max(octant => octant.EncodedByteCount),
+                analysis.HardViolationCount));
             var composition = CollisionConverter.Compose(payload, GameId.UYA, []);
             var sourceHash = Hash(payload);
             var outputHash = Hash(composition.Bytes);
@@ -84,7 +95,7 @@ internal static class UyaCollisionQualification
         }
 
         return new(levelIndex, diagnostics.Count == 0, nonemptyPayloads, solidPieces, barriers, faces,
-            payloads.Sum(value => (long)value.Bytes.Length), hashes, diagnostics);
+            payloads.Sum(value => (long)value.Bytes.Length), hashes, octantSummaries, diagnostics);
     }
 
     public static void Write(UyaCollisionQualificationReport report, string path)
@@ -136,7 +147,18 @@ internal sealed record UyaCollisionLevelQualification(
     int FaceCount,
     long SourceBytes,
     IReadOnlyList<UyaCollisionHashCheck> HashChecks,
+    IReadOnlyList<UyaCollisionOctantSummary> OctantSummaries,
     IReadOnlyList<string> Diagnostics);
+
+internal sealed record UyaCollisionOctantSummary(
+    string Payload,
+    int OccupiedOctantCount,
+    int DuplicateFaceCount,
+    int MaximumFaceCount,
+    int MaximumVertexCount,
+    int MaximumQuadCount,
+    int MaximumEncodedByteCount,
+    int HardViolationCount);
 
 internal sealed record UyaCollisionHashCheck(
     string Payload,

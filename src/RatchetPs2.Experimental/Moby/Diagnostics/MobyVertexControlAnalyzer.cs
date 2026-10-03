@@ -1,4 +1,5 @@
 using System.Text.Json;
+using RatchetPs2.Core.IO;
 using RatchetPs2.Core.Moby;
 
 namespace RatchetPs2.Experimental.Moby.Diagnostics;
@@ -76,18 +77,18 @@ public static class MobyVertexControlAnalyzer
         var vifTextureDataQw = (entry.VifTextureData?.Length ?? 0) / 0x10;
         var totalVifQw = vifDataQw + vifTextureDataQw;
         var vertexDataQw = vertexData.Length / 0x10;
-        var vertexHeaderDomainCapacity = ReadUInt16(vertexData, 0x0A);
+        var vertexHeaderDomainCapacity = ReadUInt16OrZero(vertexData, 0x0A);
         var leadingVifDomainCapacity = TryReadLeadingVertexDomainUnpackCount(entry.VifData, out var domainCount)
             ? domainCount
             : -1;
         var commonTransformCount = (model.CommonTransforms?.Length ?? 0) / 0x10;
         var hasCommonTransform = entry.CommonTransformJointIndex >= 0
             && entry.CommonTransformJointIndex < commonTransformCount;
-        var duplicateVertexCount = ReadUInt16(vertexData, 0x08);
-        var twoWayBlendVertexCount = ReadUInt16(vertexData, 0x02);
-        var threeWayBlendVertexCount = ReadUInt16(vertexData, 0x04);
-        var mainVertexCount = ReadUInt16(vertexData, 0x06);
-        var vertexTableOffset = ReadUInt16(vertexData, 0x0C);
+        var duplicateVertexCount = ReadUInt16OrZero(vertexData, 0x08);
+        var twoWayBlendVertexCount = ReadUInt16OrZero(vertexData, 0x02);
+        var threeWayBlendVertexCount = ReadUInt16OrZero(vertexData, 0x04);
+        var mainVertexCount = ReadUInt16OrZero(vertexData, 0x06);
+        var vertexTableOffset = ReadUInt16OrZero(vertexData, 0x0C);
         var inFileVertexCount = twoWayBlendVertexCount + threeWayBlendVertexCount + mainVertexCount;
         var supported = vertexTableOffset > 0
             && vertexTableOffset % 0x10 == 0
@@ -140,7 +141,7 @@ public static class MobyVertexControlAnalyzer
         for (var i = 0; i < inFileVertexCount; i++)
         {
             var offset = vertexTableOffset + i * 0x10;
-            var controlWord = ReadUInt16(vertexData, offset);
+            var controlWord = ReadUInt16OrZero(vertexData, offset);
             var low9 = controlWord & 0x01FF;
             low9Sequence.Add(low9);
             if (!controlWords.TryGetValue(controlWord, out var lowValues))
@@ -163,9 +164,9 @@ public static class MobyVertexControlAnalyzer
                     low9,
                     -1,
                     prefix,
-                    ReadInt16(vertexData, offset + 0x0A),
-                    ReadInt16(vertexData, offset + 0x0C),
-                    ReadInt16(vertexData, offset + 0x0E)));
+                    ReadInt16OrZero(vertexData, offset + 0x0A),
+                    ReadInt16OrZero(vertexData, offset + 0x0C),
+                    ReadInt16OrZero(vertexData, offset + 0x0E)));
             }
         }
 
@@ -191,13 +192,13 @@ public static class MobyVertexControlAnalyzer
         var resolvedLow9Sequence = ResolveDelayedLow9Storage(vertexData, vertexTableOffset, inFileVertexCount);
         var resolvedLow9Runs = BuildLow9Runs(resolvedLow9Sequence);
         var resolvedLow9Shape = SummarizeLow9Shape(resolvedLow9Sequence, resolvedLow9Runs);
-        var duplicateIndices = ReadDuplicateIndices(vertexData, matrixTransferCount: ReadUInt16(vertexData, 0x00), duplicateVertexCount);
+        var duplicateIndices = ReadDuplicateIndices(vertexData, matrixTransferCount: ReadUInt16OrZero(vertexData, 0x00), duplicateVertexCount);
         var topology = AnalyzeTopology(entry, inFileVertexCount + duplicateIndices.Length);
         var totalVertexRowCount = (vertexData.Length - vertexTableOffset) / 0x10;
         for (var i = inFileVertexCount; i < totalVertexRowCount && epilogueRows.Count < 16; i++)
         {
             var offset = vertexTableOffset + i * 0x10;
-            var controlWord = ReadUInt16(vertexData, offset);
+            var controlWord = ReadUInt16OrZero(vertexData, offset);
             var low9 = controlWord & 0x01FF;
             epilogueRows.Add(new MobyVertexControlRowSample(
                 i,
@@ -206,9 +207,9 @@ public static class MobyVertexControlAnalyzer
                 low9,
                 -1,
                 Convert.ToHexString(vertexData.AsSpan(offset + 0x02, 0x08)),
-                ReadInt16(vertexData, offset + 0x0A),
-                ReadInt16(vertexData, offset + 0x0C),
-                ReadInt16(vertexData, offset + 0x0E)));
+                ReadInt16OrZero(vertexData, offset + 0x0A),
+                ReadInt16OrZero(vertexData, offset + 0x0C),
+                ReadInt16OrZero(vertexData, offset + 0x0E)));
         }
 
         for (var i = 0; i < rows.Count && i < resolvedLow9Sequence.Length; i++)
@@ -259,13 +260,13 @@ public static class MobyVertexControlAnalyzer
         for (var i = 0; i < inFileVertexCount; i++)
         {
             var offset = vertexTableOffset + i * 0x10;
-            resolved[i] = ReadUInt16(vertexData, offset) & 0x01FF;
+            resolved[i] = ReadUInt16OrZero(vertexData, offset) & 0x01FF;
         }
 
         for (var i = 7; i < inFileVertexCount; i++)
         {
             var sourceOffset = vertexTableOffset + i * 0x10;
-            resolved[i - 7] = ReadUInt16(vertexData, sourceOffset) & 0x01FF;
+            resolved[i - 7] = ReadUInt16OrZero(vertexData, sourceOffset) & 0x01FF;
         }
 
         var vertexDataSizeQw = vertexData.Length / 0x10;
@@ -287,7 +288,7 @@ public static class MobyVertexControlAnalyzer
             var destinationIndex = inFileVertexCount + i - 7;
             if (destinationIndex >= 0 && destinationIndex < resolved.Length)
             {
-                resolved[destinationIndex] = ReadUInt16(vertexData, epilogueReadOffset) & 0x01FF;
+                resolved[destinationIndex] = ReadUInt16OrZero(vertexData, epilogueReadOffset) & 0x01FF;
             }
 
             epilogueReadOffset += 0x10;
@@ -306,7 +307,7 @@ public static class MobyVertexControlAnalyzer
             var destinationIndex = inFileVertexCount + epilogueVertexCount + i - 7;
             if (destinationIndex >= 0 && destinationIndex < resolved.Length)
             {
-                resolved[destinationIndex] = ReadUInt16(vertexData, lastVertexOffset + 0x04 + i * 2) & 0x01FF;
+                resolved[destinationIndex] = ReadUInt16OrZero(vertexData, lastVertexOffset + 0x04 + i * 2) & 0x01FF;
             }
         }
 
@@ -334,7 +335,7 @@ public static class MobyVertexControlAnalyzer
                 break;
             }
 
-            duplicateIndices.Add((ReadUInt16(vertexData, offset) >> 7) & 0x01FF);
+            duplicateIndices.Add((ReadUInt16OrZero(vertexData, offset) >> 7) & 0x01FF);
         }
 
         return duplicateIndices.ToArray();
@@ -525,17 +526,17 @@ public static class MobyVertexControlAnalyzer
         return runs.ToArray();
     }
 
-    private static ushort ReadUInt16(byte[] data, int offset)
+    private static ushort ReadUInt16OrZero(byte[] data, int offset)
     {
         return offset >= 0 && offset + 2 <= data.Length
-            ? BitConverter.ToUInt16(data, offset)
+            ? BinarySpanReader.ReadUInt16LittleEndian(data, offset)
             : (ushort)0;
     }
 
-    private static short ReadInt16(byte[] data, int offset)
+    private static short ReadInt16OrZero(byte[] data, int offset)
     {
         return offset >= 0 && offset + 2 <= data.Length
-            ? BitConverter.ToInt16(data, offset)
+            ? BinarySpanReader.ReadInt16LittleEndian(data, offset)
             : (short)0;
     }
 }

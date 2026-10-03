@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using RatchetPs2.Core.LevelAssets;
 using RatchetPs2.Core.Textures.Palettes;
 using RatchetPs2.Core.Textures.Pif;
+using static RatchetPs2.Core.IO.BinarySpanReader;
 
 namespace RatchetPs2.Games.UYA.Builders;
 
@@ -533,14 +534,14 @@ internal static class UyaStaticAssetComposer
         {
             var offsets = FamilyOffsets(family);
             var expected = assets.Where(value => value.Family == family).ToArray();
-            if (ReadInt32(result.HeaderBytes, offsets.ModelCount) != expected.Length)
+            if (ReadInt32LittleEndian(result.HeaderBytes, offsets.ModelCount) != expected.Length)
                 throw new InvalidDataException($"Composed UYA {family} model count failed verification.");
             var definitions = family == TextureAssetFamily.Shrub
                 ? LevelAssetReader.ReadShrubDefinitions(result.HeaderBytes,
-                    ReadInt32(result.HeaderBytes, offsets.ModelOffset), expected.Length)
+                    ReadInt32LittleEndian(result.HeaderBytes, offsets.ModelOffset), expected.Length)
                     .Select(value => (value.ModelId, value.ModelOffset, value.TextureIds)).ToArray()
                 : LevelAssetReader.ReadModelDefinitions(result.HeaderBytes,
-                    ReadInt32(result.HeaderBytes, offsets.ModelOffset), expected.Length)
+                    ReadInt32LittleEndian(result.HeaderBytes, offsets.ModelOffset), expected.Length)
                     .Select(value => (value.ModelId, value.ModelOffset, value.TextureIds)).ToArray();
             if (definitions.Length != expected.Length) throw new InvalidDataException("UYA model table count changed.");
             for (var index = 0; index < expected.Length; index++)
@@ -632,9 +633,6 @@ internal static class UyaStaticAssetComposer
         var padding = (alignment - stream.Position % alignment) % alignment;
         if (padding > 0) stream.Write(new byte[padding]);
     }
-
-    private static int ReadInt32(ReadOnlySpan<byte> bytes, int offset) =>
-        BinaryPrimitives.ReadInt32LittleEndian(bytes.Slice(offset, sizeof(int)));
 
     private static void WriteInt32(byte[] bytes, int offset, int value) =>
         BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(offset, sizeof(int)), value);

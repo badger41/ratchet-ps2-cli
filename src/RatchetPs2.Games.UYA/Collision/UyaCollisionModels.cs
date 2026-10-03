@@ -62,7 +62,31 @@ public readonly record struct UyaCollisionPieceEdit(
     int TranslationZ64,
     bool Remove = false);
 
+public sealed record UyaCollisionSolidAddition(
+    string Id,
+    IReadOnlyList<UyaCollisionSolidFace> Faces);
+
+public sealed record UyaCollisionOctantCost(
+    int X,
+    int Y,
+    int Z,
+    int FaceCount,
+    int VertexCount,
+    int QuadCount,
+    int EncodedByteCount,
+    IReadOnlyList<string> AdditionIds,
+    IReadOnlyList<string> Violations);
+
+public sealed record UyaCollisionAnalysis(
+    int LogicalFaceCount,
+    int LogicalVertexCount,
+    int OccupiedOctantCount,
+    int DuplicateFaceCount,
+    int HardViolationCount,
+    IReadOnlyList<UyaCollisionOctantCost> Octants);
+
 public sealed record UyaCollisionComposition(
     byte[] Bytes,
     bool Changed,
-    IReadOnlyList<UyaCollisionPieceEdit> EffectiveEdits);
+    IReadOnlyList<UyaCollisionPieceEdit> EffectiveEdits,
+    UyaCollisionAnalysis? Analysis = null);

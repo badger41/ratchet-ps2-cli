@@ -1,4 +1,5 @@
 using System.Numerics;
+using RatchetPs2.Core.IO;
 
 namespace RatchetPs2.Core.Moby;
 
@@ -163,7 +164,7 @@ public static partial class MobyGltfImporter
 
             for (var i = 7; i < vertices.Count; i++)
             {
-                WriteLow9Bits(vertices[i - 7], ReadLowHalfword(vertices[i]));
+                WriteLow9Bits(vertices[i - 7], BinarySpanReader.ReadUInt16LittleEndian(vertices[i], 0x00));
             }
 
             var epilogueReadOffset = vertexTableOffset + inFileVertexCount * 0x10;
@@ -205,7 +206,7 @@ public static partial class MobyGltfImporter
             for (var i = 0; i < vertices.Count; i++)
             {
                 var vertex = vertices[i];
-                var vertexIndex = ReadLowHalfword(vertex) & 0x01FF;
+                var vertexIndex = BinarySpanReader.ReadUInt16LittleEndian(vertex, 0x00) & 0x01FF;
                 var position = DecodeTemplatePosition(vertex, scale);
                 var (jointRow, weightRow) = DecodeTemplateSkinRow(vertex, i, twoWayBlendVertexCount, threeWayBlendVertexCount, rollingBlendCache);
                 positions.Add(position);
@@ -262,7 +263,7 @@ public static partial class MobyGltfImporter
         ushort threeWayBlendVertexCount,
         TemplateSkinBlend?[] rollingBlendCache)
     {
-        var bits9To15 = (sbyte)((ReadLowHalfword(vertex) >> 9) & 0x7F);
+        var bits9To15 = (sbyte)((BinarySpanReader.ReadUInt16LittleEndian(vertex, 0x00) >> 9) & 0x7F);
         TemplateSkinBlend blend;
         if (vertexNumber < twoWayBlendVertexCount)
         {

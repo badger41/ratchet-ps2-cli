@@ -46,12 +46,12 @@ public static class Hw3dReader
 
         var header = new Hw3dHeader(
             magic,
-            ReadUInt32(data, 0x08),
-            ReadUInt32(data, 0x0C),
-            ReadUInt32(data, 0x10),
-            ReadUInt32(data, 0x14),
-            ReadUInt32(data, 0x18),
-            ReadUInt32(data, 0x1C));
+            BinarySpanReader.ReadUInt32LittleEndian(data, 0x08),
+            BinarySpanReader.ReadUInt32LittleEndian(data, 0x0C),
+            BinarySpanReader.ReadUInt32LittleEndian(data, 0x10),
+            BinarySpanReader.ReadUInt32LittleEndian(data, 0x14),
+            BinarySpanReader.ReadUInt32LittleEndian(data, 0x18),
+            BinarySpanReader.ReadUInt32LittleEndian(data, 0x1C));
 
         var toc = ReadToc(data, header);
         var embeddedSections = FindEmbeddedSections(data);
@@ -220,8 +220,8 @@ public static class Hw3dReader
             var entryOffset = tocOffset + (int)i * 8;
             toc.Add(new Hw3dTocEntry(
                 (int)i,
-                ReadUInt32(data, entryOffset),
-                ReadUInt32(data, entryOffset + 4)));
+                BinarySpanReader.ReadUInt32LittleEndian(data, entryOffset),
+                BinarySpanReader.ReadUInt32LittleEndian(data, entryOffset + 4)));
         }
 
         return toc;
@@ -247,7 +247,7 @@ public static class Hw3dReader
 
             for (var i = 0; i + 4 <= availableWordBytes; i += 4)
             {
-                words.Add(ReadUInt32(data, wordStart + i));
+                words.Add(BinarySpanReader.ReadUInt32LittleEndian(data, wordStart + i));
             }
 
             sections.Add(new Hw3dEmbeddedSection(
@@ -259,11 +259,6 @@ public static class Hw3dReader
         }
 
         return sections;
-    }
-
-    private static uint ReadUInt32(ReadOnlySpan<byte> data, int offset)
-    {
-        return BitConverter.ToUInt32(data.Slice(offset, sizeof(uint)));
     }
 
     private static void AppendTocEntryAnalysis(StringBuilder builder, Hw3dArchive archive, Hw3dTocEntry entry)
@@ -278,7 +273,7 @@ public static class Hw3dReader
         var available = Math.Min(blockLength, archive.Length - (int)entry.Offset);
         var bytes = GetArchiveBytes(archive).AsSpan((int)entry.Offset, Math.Min(available, 0x40));
 
-        var controlWord = ReadUInt32(bytes, 0);
+        var controlWord = BinarySpanReader.ReadUInt32LittleEndian(bytes, 0);
         var controlType = controlWord >> 16;
         var controlCount = controlWord & 0xffff;
 
@@ -287,17 +282,17 @@ public static class Hw3dReader
 
         if (bytes.Length >= 0x18)
         {
-            var word08 = ReadUInt32(bytes, 0x08);
-            var word0C = ReadUInt32(bytes, 0x0C);
-            var word10 = ReadUInt32(bytes, 0x10);
-            var word14 = ReadUInt32(bytes, 0x14);
+            var word08 = BinarySpanReader.ReadUInt32LittleEndian(bytes, 0x08);
+            var word0C = BinarySpanReader.ReadUInt32LittleEndian(bytes, 0x0C);
+            var word10 = BinarySpanReader.ReadUInt32LittleEndian(bytes, 0x10);
+            var word14 = BinarySpanReader.ReadUInt32LittleEndian(bytes, 0x14);
             builder.AppendLine(
                 $"       words: +0x08=0x{word08:X8}, +0x0C=float {FormatFloat(word0C)}, +0x10=0x{word10:X8}, +0x14=0x{word14:X8}");
         }
 
         if (bytes.Length >= 0x2C)
         {
-            var colorWord = ReadUInt32(bytes, 0x28);
+            var colorWord = BinarySpanReader.ReadUInt32LittleEndian(bytes, 0x28);
             builder.AppendLine($"       possible color @+0x28: 0x{colorWord:X8} ({FormatColor(colorWord)})");
         }
 
@@ -306,7 +301,7 @@ public static class Hw3dReader
             var tailWords = new List<string>();
             for (var offset = 0x18; offset < Math.Min(bytes.Length, 0x30); offset += 4)
             {
-                tailWords.Add($"+0x{offset:X2}=0x{ReadUInt32(bytes, offset):X8}");
+                tailWords.Add($"+0x{offset:X2}=0x{BinarySpanReader.ReadUInt32LittleEndian(bytes, offset):X8}");
             }
 
             if (tailWords.Count > 0)
@@ -413,8 +408,8 @@ public static class Hw3dReader
         }
 
         var bytes = data.ToArray();
-        var controlFlags = ReadUInt32(data, 0x10);
-        var screenCount = ReadUInt32(data, 0x14);
+        var controlFlags = BinarySpanReader.ReadUInt32LittleEndian(data, 0x10);
+        var screenCount = BinarySpanReader.ReadUInt32LittleEndian(data, 0x14);
         var tocOffset = 0x18;
         var tocLength = checked((int)screenCount * 4);
 
@@ -427,7 +422,7 @@ public static class Hw3dReader
         for (var i = 0; i < screenCount; i++)
         {
             var entryOffset = tocOffset + (i * 4);
-            toc.Add(new Hw3dTocEntry(i, ReadUInt32(data, entryOffset), (uint)i));
+            toc.Add(new Hw3dTocEntry(i, BinarySpanReader.ReadUInt32LittleEndian(data, entryOffset), (uint)i));
         }
 
         var header = new Hw3dHeader(
@@ -566,10 +561,10 @@ public static class Hw3dReader
         var recordBase = screenOffset + 0x04;
         var flags = BitConverter.ToUInt32(bytes, recordBase + 0x00);
         var relativeId = BitConverter.ToUInt32(bytes, recordBase + 0x04);
-        var posX = ReadFloat(bytes, recordBase + 0x08);
-        var posY = ReadFloat(bytes, recordBase + 0x0C);
-        var scaleX = ReadFloat(bytes, recordBase + 0x10);
-        var scaleY = ReadFloat(bytes, recordBase + 0x14);
+        var posX = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x08);
+        var posY = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x0C);
+        var scaleX = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x10);
+        var scaleY = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x14);
         var animId = BitConverter.ToInt32(bytes, recordBase + 0x18);
         var visible = BitConverter.ToUInt32(bytes, recordBase + 0x1C) != 0;
         var firstChildOffset = screenOffset + 0x24;
@@ -809,10 +804,10 @@ public static class Hw3dReader
 
                 var flags = BitConverter.ToUInt32(bytes, recordBase + 0x00);
                 var widgetId = BitConverter.ToUInt32(bytes, recordBase + 0x04);
-                var posX = ReadFloat(bytes, recordBase + 0x08);
-                var posY = ReadFloat(bytes, recordBase + 0x0C);
-                var scaleX = ReadFloat(bytes, recordBase + 0x14);
-                var scaleY = ReadFloat(bytes, recordBase + 0x18);
+                var posX = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x08);
+                var posY = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x0C);
+                var scaleX = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x14);
+                var scaleY = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x18);
                 var anim = BitConverter.ToUInt32(bytes, recordBase + 0x1C);
                 var visible = BitConverter.ToUInt32(bytes, recordBase + 0x20) != 0;
                 var color = BitConverter.ToUInt32(bytes, recordBase + 0x24);
@@ -833,10 +828,10 @@ public static class Hw3dReader
 
                 var flags = BitConverter.ToUInt32(bytes, recordBase + 0x00);
                 var widgetId = BitConverter.ToUInt32(bytes, recordBase + 0x04);
-                var posX = ReadFloat(bytes, recordBase + 0x08);
-                var posY = ReadFloat(bytes, recordBase + 0x0C);
-                var scaleX = ReadFloat(bytes, recordBase + 0x10);
-                var scaleY = ReadFloat(bytes, recordBase + 0x14);
+                var posX = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x08);
+                var posY = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x0C);
+                var scaleX = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x10);
+                var scaleY = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x14);
                 var anim = BitConverter.ToUInt32(bytes, recordBase + 0x18);
                 var visible = BitConverter.ToUInt32(bytes, recordBase + 0x1C) != 0;
                 var color = BitConverter.ToUInt32(bytes, recordBase + 0x20);
@@ -854,10 +849,10 @@ public static class Hw3dReader
 
                 var flags = BitConverter.ToUInt32(bytes, recordBase + 0x00);
                 var widgetId = BitConverter.ToUInt32(bytes, recordBase + 0x04);
-                var posX = ReadFloat(bytes, recordBase + 0x08);
-                var posY = ReadFloat(bytes, recordBase + 0x0C);
-                var scaleX = ReadFloat(bytes, recordBase + 0x10);
-                var scaleY = ReadFloat(bytes, recordBase + 0x14);
+                var posX = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x08);
+                var posY = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x0C);
+                var scaleX = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x10);
+                var scaleY = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x14);
                 var anim = BitConverter.ToUInt32(bytes, recordBase + 0x18);
                 var visible = BitConverter.ToUInt32(bytes, recordBase + 0x1C) != 0;
                 var color = BitConverter.ToUInt32(bytes, recordBase + 0x20);
@@ -877,10 +872,10 @@ public static class Hw3dReader
 
                 var flags = BitConverter.ToUInt32(bytes, recordBase + 0x00);
                 var widgetId = BitConverter.ToUInt32(bytes, recordBase + 0x04);
-                var posX = ReadFloat(bytes, recordBase + 0x08);
-                var posY = ReadFloat(bytes, recordBase + 0x0C);
-                var scaleX = ReadFloat(bytes, recordBase + 0x10);
-                var scaleY = ReadFloat(bytes, recordBase + 0x14);
+                var posX = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x08);
+                var posY = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x0C);
+                var scaleX = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x10);
+                var scaleY = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x14);
                 var anim = BitConverter.ToUInt32(bytes, recordBase + 0x18);
                 var visible = BitConverter.ToUInt32(bytes, recordBase + 0x1C) != 0;
                 var children = new List<ParsedNode>();
@@ -907,10 +902,10 @@ public static class Hw3dReader
 
                 var flags = BitConverter.ToUInt32(bytes, recordBase + 0x00);
                 var widgetId = BitConverter.ToUInt32(bytes, recordBase + 0x04);
-                var posX = ReadFloat(bytes, recordBase + 0x08);
-                var posY = ReadFloat(bytes, recordBase + 0x0C);
-                var scaleX = ReadFloat(bytes, recordBase + 0x10);
-                var scaleY = ReadFloat(bytes, recordBase + 0x14);
+                var posX = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x08);
+                var posY = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x0C);
+                var scaleX = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x10);
+                var scaleY = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x14);
                 var anim = BitConverter.ToUInt32(bytes, recordBase + 0x18);
                 var visible = BitConverter.ToUInt32(bytes, recordBase + 0x1C) != 0;
                 var children = new List<ParsedNode>();
@@ -929,10 +924,10 @@ public static class Hw3dReader
 
                 var flags = BitConverter.ToUInt32(bytes, recordBase + 0x00);
                 var widgetId = BitConverter.ToUInt32(bytes, recordBase + 0x04);
-                var posX = ReadFloat(bytes, recordBase + 0x08);
-                var posY = ReadFloat(bytes, recordBase + 0x0C);
-                var scaleX = ReadFloat(bytes, recordBase + 0x10);
-                var scaleY = ReadFloat(bytes, recordBase + 0x14);
+                var posX = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x08);
+                var posY = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x0C);
+                var scaleX = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x10);
+                var scaleY = BinarySpanReader.ReadSingleLittleEndian(bytes, recordBase + 0x14);
                 var anim = BitConverter.ToUInt32(bytes, recordBase + 0x18);
                 var visible = BitConverter.ToUInt32(bytes, recordBase + 0x1C) != 0;
                 var color = BitConverter.ToUInt32(bytes, recordBase + 0x20);
@@ -1243,11 +1238,6 @@ public static class Hw3dReader
     private static string FormatSvgFloat(float value)
     {
         return value.ToString("0.###", CultureInfo.InvariantCulture);
-    }
-
-    private static float ReadFloat(byte[] bytes, int offset)
-    {
-        return BitConverter.Int32BitsToSingle(unchecked((int)BitConverter.ToUInt32(bytes, offset)));
     }
 
     private static string ReadLiteral(byte[] bytes, int offset, int cap)

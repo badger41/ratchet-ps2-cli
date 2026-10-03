@@ -1,5 +1,5 @@
-using System.Buffers.Binary;
 using System.Numerics;
+using static RatchetPs2.Core.IO.BinarySpanReader;
 
 namespace RatchetPs2.Games.GC.Skyboxes;
 
@@ -42,9 +42,9 @@ public static class GcSkyRotationReader
                 return [];
             }
 
-            var address = ReadUInt32(bytes, offset);
-            var length = ReadUInt32(bytes, offset + 4);
-            var flags = ReadUInt32(bytes, offset + 8);
+            var address = ReadUInt32LittleEndian(bytes, offset);
+            var length = ReadUInt32LittleEndian(bytes, offset + 4);
+            var flags = ReadUInt32LittleEndian(bytes, offset + 8);
             if (length > int.MaxValue || (long)offset + 0x10 + length > bytes.Length)
             {
                 return [];
@@ -63,10 +63,10 @@ public static class GcSkyRotationReader
         {
             for (var offset = segment.FileOffset; offset + (RotationFunctionWordCount * 4) <= segment.EndOffset; offset += 4)
             {
-                if (ReadUInt32(bytes, offset) != 0x27BDFFC0
-                    || ReadUInt32(bytes, offset + 4) != 0x2403000C
-                    || ReadUInt32(bytes, offset + 8) != 0xFFB10018
-                    || ReadUInt32(bytes, offset + 12) != 0x00838818)
+                if (ReadUInt32LittleEndian(bytes, offset) != 0x27BDFFC0
+                    || ReadUInt32LittleEndian(bytes, offset + 4) != 0x2403000C
+                    || ReadUInt32LittleEndian(bytes, offset + 8) != 0xFFB10018
+                    || ReadUInt32LittleEndian(bytes, offset + 12) != 0x00838818)
                 {
                     continue;
                 }
@@ -95,14 +95,14 @@ public static class GcSkyRotationReader
         var storeWord = 0xAF820000u | (ushort)(short)gpOffset;
         for (var offset = segment.FileOffset; offset + 4 <= segment.EndOffset; offset += 4)
         {
-            if (ReadUInt32(bytes, offset) != storeWord)
+            if (ReadUInt32LittleEndian(bytes, offset) != storeWord)
             {
                 continue;
             }
 
             for (var addOffset = offset - 4; addOffset >= Math.Max(segment.FileOffset, offset - 48); addOffset -= 4)
             {
-                var addWord = ReadUInt32(bytes, addOffset);
+                var addWord = ReadUInt32LittleEndian(bytes, addOffset);
                 if ((addWord & 0xFFFF0000u) != 0x24420000u)
                 {
                     continue;
@@ -110,7 +110,7 @@ public static class GcSkyRotationReader
 
                 for (var luiOffset = addOffset - 4; luiOffset >= Math.Max(segment.FileOffset, addOffset - 48); luiOffset -= 4)
                 {
-                    var luiWord = ReadUInt32(bytes, luiOffset);
+                    var luiWord = ReadUInt32LittleEndian(bytes, luiOffset);
                     if ((luiWord & 0xFFFF0000u) == 0x3C020000u)
                     {
                         return ((luiWord & 0xFFFFu) << 16) + unchecked((uint)(short)addWord);
@@ -144,7 +144,7 @@ public static class GcSkyRotationReader
         for (var shell = 0; shell < ShellCount; shell++)
         {
             var offset = tableOffset + (shell * 3 * sizeof(float));
-            var velocity = new Vector3(ReadSingle(bytes, offset), ReadSingle(bytes, offset + 4), ReadSingle(bytes, offset + 8));
+            var velocity = new Vector3(ReadSingleLittleEndian(bytes, offset), ReadSingleLittleEndian(bytes, offset + 4), ReadSingleLittleEndian(bytes, offset + 8));
             if (!float.IsFinite(velocity.X)
                 || !float.IsFinite(velocity.Y)
                 || !float.IsFinite(velocity.Z)
@@ -167,24 +167,14 @@ public static class GcSkyRotationReader
 
     private static uint? ReadAbsoluteLoadAddress(byte[] bytes, int offset)
     {
-        var luiWord = ReadUInt32(bytes, offset);
-        var loadWord = ReadUInt32(bytes, offset + 4);
+        var luiWord = ReadUInt32LittleEndian(bytes, offset);
+        var loadWord = ReadUInt32LittleEndian(bytes, offset + 4);
         if ((luiWord & 0xFFFF0000u) != 0x3C020000u || (loadWord & 0xFFFF0000u) != 0x8C420000u)
         {
             return null;
         }
 
         return ((luiWord & 0xFFFFu) << 16) + unchecked((uint)(short)loadWord);
-    }
-
-    private static uint ReadUInt32(byte[] bytes, int offset)
-    {
-        return BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(offset, sizeof(uint)));
-    }
-
-    private static float ReadSingle(byte[] bytes, int offset)
-    {
-        return BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(offset, sizeof(float))));
     }
 
     private readonly record struct OverlaySegment(uint Address, int FileOffset, int Length, uint Flags)

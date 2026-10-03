@@ -13,7 +13,7 @@ public static class UyaCollisionWriter
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(collision);
-        var octants = BuildOctants(collision.SolidPieces, cancellationToken);
+        var octants = BuildOctants(collision.SolidPieces, new Dictionary<int, string>(), cancellationToken);
         var mesh = WriteSolidMesh(octants, cancellationToken);
         using var output = new MemoryStream();
         using var writer = new BinaryWriter(output);
@@ -35,74 +35,138 @@ public static class UyaCollisionWriter
         return output.ToArray();
     }
 
-    private static Dictionary<OctantKey, List<UyaCollisionSolidFace>> BuildOctants(
-        IReadOnlyList<UyaCollisionSolidPiece> pieces,
+    public static UyaCollisionAnalysis Analyze(
+        UyaMapCollision collision,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(collision);
+        return Analyze(collision, new Dictionary<int, string>(), cancellationToken);
+    }
+
+    internal static UyaCollisionAnalysis Analyze(
+        UyaMapCollision collision,
+        IReadOnlyDictionary<int, string> additionIds,
         CancellationToken cancellationToken)
     {
-        var octants = new Dictionary<OctantKey, List<UyaCollisionSolidFace>>();
-        foreach (var face in pieces.SelectMany(piece => piece.Faces))
+        ArgumentNullException.ThrowIfNull(collision);
+        ArgumentNullException.ThrowIfNull(additionIds);
+        var faces = collision.SolidPieces.SelectMany(piece => piece.Faces).ToArray();
+        var octants = BuildOctants(collision.SolidPieces, additionIds, cancellationToken);
+        var vertices = new HashSet<UyaCollisionVertex>();
+        foreach (var face in faces)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var vertices = face.IsQuad
-                ? new[] { face.A, face.B, face.C, face.D }
-                : new[] { face.A, face.B, face.C };
-            var minX = vertices.Min(vertex => vertex.X64);
-            var minY = vertices.Min(vertex => vertex.Y64);
-            var minZ = vertices.Min(vertex => vertex.Z64);
-            var maxX = vertices.Max(vertex => vertex.X64);
-            var maxY = vertices.Max(vertex => vertex.Y64);
-            var maxZ = vertices.Max(vertex => vertex.Z64);
-            var x0 = MinimumOctant(minX);
-            var y0 = MinimumOctant(minY);
-            var z0 = MinimumOctant(minZ);
-            var x1 = FloorDiv(maxX, OctantSize64);
-            var y1 = FloorDiv(maxY, OctantSize64);
-            var z1 = FloorDiv(maxZ, OctantSize64);
-            var candidateCount = checked(
-                ((long)x1 - x0 + 1)
-                * ((long)y1 - y0 + 1)
-                * ((long)z1 - z0 + 1));
-            if (candidateCount > MaximumOctants)
-            {
-                throw new InvalidDataException(
-                    $"UYA collision face spans {candidateCount} octants; maximum is {MaximumOctants}.");
-            }
+            vertices.Add(face.A);
+            vertices.Add(face.B);
+            vertices.Add(face.C);
+            if (face.IsQuad) vertices.Add(face.D);
+        }
 
-            for (var z = z0; z <= z1; z++)
+        return new(
+            faces.Length,
+            vertices.Count,
+            octants.Count,
+            checked(octants.Values.Sum(octant => octant.Faces.Length) - faces.Length),
+            octants.Values.Sum(octant => octant.Violations.Count),
+            octants.Values
+                .OrderBy(octant => octant.Key.Z)
+                .ThenBy(octant => octant.Key.Y)
+                .ThenBy(octant => octant.Key.X)
+                .Select(octant => new UyaCollisionOctantCost(
+                    octant.Key.X,
+                    octant.Key.Y,
+                    octant.Key.Z,
+                    octant.Faces.Length,
+                    octant.Vertices.Length,
+                    octant.QuadCount,
+                    octant.EncodedByteCount,
+                    octant.AdditionIds,
+                    octant.Violations))
+                .ToArray());
+    }
+
+    private static Dictionary<OctantKey, OctantData> BuildOctants(
+        IReadOnlyList<UyaCollisionSolidPiece> pieces,
+        IReadOnlyDictionary<int, string> additionIds,
+        CancellationToken cancellationToken)
+    {
+        var octants = new Dictionary<OctantKey, List<TaggedFace>>();
+        foreach (var piece in pieces)
+        {
+            additionIds.TryGetValue(piece.SourceIndex, out var additionId);
+            foreach (var face in piece.Faces)
             {
-                for (var y = y0; y <= y1; y++)
+                cancellationToken.ThrowIfCancellationRequested();
+                var vertices = face.IsQuad
+                    ? new[] { face.A, face.B, face.C, face.D }
+                    : new[] { face.A, face.B, face.C };
+                var minX = vertices.Min(vertex => vertex.X64);
+                var minY = vertices.Min(vertex => vertex.Y64);
+                var minZ = vertices.Min(vertex => vertex.Z64);
+                var maxX = vertices.Max(vertex => vertex.X64);
+                var maxY = vertices.Max(vertex => vertex.Y64);
+                var maxZ = vertices.Max(vertex => vertex.Z64);
+                var x0 = FloorDiv(minX, OctantSize64);
+                var y0 = FloorDiv(minY, OctantSize64);
+                var z0 = FloorDiv(minZ, OctantSize64);
+                var x1 = MaximumOctant(minX, maxX);
+                var y1 = MaximumOctant(minY, maxY);
+                var z1 = MaximumOctant(minZ, maxZ);
+                var candidateCount = checked(
+                    ((long)x1 - x0 + 1)
+                    * ((long)y1 - y0 + 1)
+                    * ((long)z1 - z0 + 1));
+                if (candidateCount > MaximumOctants)
                 {
-                    for (var x = x0; x <= x1; x++)
-                    {
-                        if (!Intersects(face, x, y, z))
-                        {
-                            continue;
-                        }
+                    throw new InvalidDataException(
+                        $"UYA collision face spans {candidateCount} octants; maximum is {MaximumOctants}.");
+                }
 
-                        var key = new OctantKey(x, y, z);
-                        if (!octants.TryGetValue(key, out var faces))
+                var assigned = false;
+                for (var z = z0; z <= z1; z++)
+                {
+                    for (var y = y0; y <= y1; y++)
+                    {
+                        for (var x = x0; x <= x1; x++)
                         {
-                            if (octants.Count >= MaximumOctants)
+                            if (!Intersects(face, x, y, z)
+                                || additionId is null && !CanPack(face, x, y, z))
                             {
-                                throw new InvalidDataException(
-                                    $"UYA collision exceeds the {MaximumOctants}-octant safety limit.");
+                                continue;
                             }
 
-                            faces = [];
-                            octants.Add(key, faces);
-                        }
+                            var key = new OctantKey(x, y, z);
+                            if (!octants.TryGetValue(key, out var octantFaces))
+                            {
+                                if (octants.Count >= MaximumOctants)
+                                {
+                                    throw new InvalidDataException(
+                                        $"UYA collision exceeds the {MaximumOctants}-octant safety limit.");
+                                }
 
-                        faces.Add(face);
+                                octantFaces = [];
+                                octants.Add(key, octantFaces);
+                            }
+
+                            octantFaces.Add(new(face, additionId));
+                            assigned = true;
+                        }
                     }
+                }
+                if (!assigned && additionId is null)
+                {
+                    throw new InvalidDataException(
+                        "UYA collision face cannot fit in a native octant.");
                 }
             }
         }
 
-        return octants;
+        return octants.ToDictionary(
+            item => item.Key,
+            item => BuildOctant(item.Key, item.Value));
     }
 
     private static byte[] WriteSolidMesh(
-        Dictionary<OctantKey, List<UyaCollisionSolidFace>> octants,
+        Dictionary<OctantKey, OctantData> octants,
         CancellationToken cancellationToken)
     {
         using var stream = new MemoryStream();
@@ -113,6 +177,9 @@ public static class UyaCollisionWriter
             writer.Write((ushort)0);
             return stream.ToArray();
         }
+
+        var violation = octants.Values.SelectMany(octant => octant.Violations).FirstOrDefault();
+        if (violation is not null) throw new InvalidDataException(violation);
 
         ValidateCoordinateRange(octants.Keys.Select(key => key.Z), "Z");
         var minimumZ = octants.Keys.Min(key => key.Z);
@@ -170,7 +237,7 @@ public static class UyaCollisionWriter
             }
         }
 
-        foreach (var (key, faces) in octants
+        foreach (var (key, octant) in octants
             .OrderBy(item => item.Key.Z)
             .ThenBy(item => item.Key.Y)
             .ThenBy(item => item.Key.X))
@@ -183,40 +250,36 @@ public static class UyaCollisionWriter
                 throw new InvalidDataException("UYA collision octant offset exceeds its native 24-bit range.");
             }
 
-            var bytes = WriteOctant(key, faces);
+            var bytes = WriteOctant(octant);
             writer.Write(bytes);
-            var sizeUnits = bytes.Length / 0x10;
-            if (sizeUnits is <= 0 or > byte.MaxValue)
-            {
-                throw new InvalidDataException("UYA collision octant size exceeds its native 8-bit range.");
-            }
-
+            var sizeUnits = octant.EncodedByteCount / 0x10;
             PatchUInt32(writer, xPatches[key], ((uint)offset << 8) | (uint)sizeUnits);
         }
 
         return stream.ToArray();
     }
 
-    private static byte[] WriteOctant(OctantKey key, IReadOnlyList<UyaCollisionSolidFace> sourceFaces)
+    private static OctantData BuildOctant(OctantKey key, IReadOnlyList<TaggedFace> sourceFaces)
     {
         var faces = sourceFaces
-            .OrderByDescending(face => face.IsQuad)
-            .ThenBy(face => face.Type)
-            .ThenBy(face => face.A.X64)
-            .ThenBy(face => face.A.Y64)
-            .ThenBy(face => face.A.Z64)
-            .ThenBy(face => face.B.X64)
-            .ThenBy(face => face.B.Y64)
-            .ThenBy(face => face.B.Z64)
-            .ThenBy(face => face.C.X64)
-            .ThenBy(face => face.C.Y64)
-            .ThenBy(face => face.C.Z64)
-            .ThenBy(face => face.D.X64)
-            .ThenBy(face => face.D.Y64)
-            .ThenBy(face => face.D.Z64)
+            .OrderByDescending(item => item.Face.IsQuad)
+            .ThenBy(item => item.Face.Type)
+            .ThenBy(item => item.Face.A.X64)
+            .ThenBy(item => item.Face.A.Y64)
+            .ThenBy(item => item.Face.A.Z64)
+            .ThenBy(item => item.Face.B.X64)
+            .ThenBy(item => item.Face.B.Y64)
+            .ThenBy(item => item.Face.B.Z64)
+            .ThenBy(item => item.Face.C.X64)
+            .ThenBy(item => item.Face.C.Y64)
+            .ThenBy(item => item.Face.C.Z64)
+            .ThenBy(item => item.Face.D.X64)
+            .ThenBy(item => item.Face.D.Y64)
+            .ThenBy(item => item.Face.D.Z64)
+            .Select(item => item.Face)
             .ToArray();
         var vertices = new List<UyaCollisionVertex>();
-        var vertexIndexes = new Dictionary<UyaCollisionVertex, byte>();
+        var vertexIndexes = new Dictionary<UyaCollisionVertex, int>();
         foreach (var face in faces)
         {
             AddVertex(face.A);
@@ -226,20 +289,55 @@ public static class UyaCollisionWriter
         }
 
         var quadCount = faces.Count(face => face.IsQuad);
-        if (faces.Length > ushort.MaxValue || quadCount > byte.MaxValue)
+        var encodedByteCount = checked(4 + vertices.Count * 4 + faces.Length * 4 + quadCount);
+        encodedByteCount = checked((encodedByteCount + 0x0f) & ~0x0f);
+        var violations = new List<string>();
+        if (faces.Length > ushort.MaxValue)
+            violations.Add("UYA collision octant exceeds its native face count.");
+        if (vertices.Count > byte.MaxValue)
+            violations.Add("UYA collision octant exceeds its native vertex count.");
+        if (quadCount > byte.MaxValue)
+            violations.Add("UYA collision octant exceeds its native quad count.");
+        if (encodedByteCount / 0x10 > byte.MaxValue)
+            violations.Add("UYA collision octant size exceeds its native 8-bit range.");
+
+        return new(
+            key,
+            faces,
+            vertices.ToArray(),
+            vertexIndexes,
+            quadCount,
+            encodedByteCount,
+            sourceFaces
+                .Select(item => item.AdditionId)
+                .Where(id => id is not null)
+                .Select(id => id!)
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)
+                .ToArray(),
+            violations);
+
+        void AddVertex(UyaCollisionVertex vertex)
         {
-            throw new InvalidDataException("UYA collision octant exceeds its native face or quad count.");
+            if (vertexIndexes.ContainsKey(vertex)) return;
+            vertexIndexes.Add(vertex, vertices.Count);
+            vertices.Add(vertex);
         }
+    }
+
+    private static byte[] WriteOctant(OctantData octant)
+    {
+        var faces = octant.Faces;
 
         using var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream);
         writer.Write(checked((ushort)faces.Length));
-        writer.Write(checked((byte)vertices.Count));
-        writer.Write(checked((byte)quadCount));
-        var centerX64 = checked(key.X * OctantSize64 + OctantHalfSize64);
-        var centerY64 = checked(key.Y * OctantSize64 + OctantHalfSize64);
-        var centerZ64 = checked(key.Z * OctantSize64 + OctantHalfSize64);
-        foreach (var vertex in vertices)
+        writer.Write(checked((byte)octant.Vertices.Length));
+        writer.Write(checked((byte)octant.QuadCount));
+        var centerX64 = checked(octant.Key.X * OctantSize64 + OctantHalfSize64);
+        var centerY64 = checked(octant.Key.Y * OctantSize64 + OctantHalfSize64);
+        var centerZ64 = checked(octant.Key.Z * OctantSize64 + OctantHalfSize64);
+        foreach (var vertex in octant.Vertices)
         {
             writer.Write(PackVertex(
                 checked(vertex.X64 - centerX64),
@@ -249,31 +347,25 @@ public static class UyaCollisionWriter
 
         foreach (var face in faces)
         {
-            writer.Write(vertexIndexes[face.A]);
-            writer.Write(vertexIndexes[face.B]);
-            writer.Write(vertexIndexes[face.C]);
+            writer.Write(checked((byte)octant.VertexIndexes[face.A]));
+            writer.Write(checked((byte)octant.VertexIndexes[face.B]));
+            writer.Write(checked((byte)octant.VertexIndexes[face.C]));
             writer.Write(face.Type);
         }
 
         foreach (var face in faces.Where(face => face.IsQuad))
         {
-            writer.Write(vertexIndexes[face.D]);
+            writer.Write(checked((byte)octant.VertexIndexes[face.D]));
         }
 
         Pad(stream, 0x10);
-        return stream.ToArray();
-
-        void AddVertex(UyaCollisionVertex vertex)
+        var bytes = stream.ToArray();
+        if (bytes.Length != octant.EncodedByteCount)
         {
-            if (vertexIndexes.ContainsKey(vertex)) return;
-            if (vertices.Count >= byte.MaxValue)
-            {
-                throw new InvalidDataException("UYA collision octant exceeds its native vertex count.");
-            }
-
-            vertexIndexes.Add(vertex, checked((byte)vertices.Count));
-            vertices.Add(vertex);
+            throw new InvalidDataException("UYA collision octant analysis did not match encoded size.");
         }
+
+        return bytes;
     }
 
     private static byte[] WritePlayerBarriers(
@@ -362,35 +454,62 @@ public static class UyaCollisionWriter
             checked(x * OctantSize64 + OctantHalfSize64),
             checked(y * OctantSize64 + OctantHalfSize64),
             checked(z * OctantSize64 + OctantHalfSize64));
-        return TriangleIntersects(face.A, face.B, face.C, center)
-            || face.IsQuad && TriangleIntersects(face.A, face.C, face.D, center);
+        return TriangleIntersectsBox(face.A, face.B, face.C, center, OctantHalfSize64)
+            || face.IsQuad && TriangleIntersectsBox(face.A, face.C, face.D, center, OctantHalfSize64);
     }
 
-    private static bool TriangleIntersects(
+    private static bool CanPack(UyaCollisionSolidFace face, int x, int y, int z)
+    {
+        var centerX64 = checked(x * OctantSize64 + OctantHalfSize64);
+        var centerY64 = checked(y * OctantSize64 + OctantHalfSize64);
+        var centerZ64 = checked(z * OctantSize64 + OctantHalfSize64);
+        return Vertices(face).All(vertex =>
+        {
+            var x64 = checked(vertex.X64 - centerX64);
+            var y64 = checked(vertex.Y64 - centerY64);
+            var z64 = checked(vertex.Z64 - centerZ64);
+            return (x64 & 3) == 0
+                && (y64 & 3) == 0
+                && x64 / 4 is >= -512 and <= 511
+                && y64 / 4 is >= -512 and <= 511
+                && z64 is >= -2048 and <= 2047;
+        });
+    }
+
+    private static IEnumerable<UyaCollisionVertex> Vertices(UyaCollisionSolidFace face)
+    {
+        yield return face.A;
+        yield return face.B;
+        yield return face.C;
+        if (face.IsQuad) yield return face.D;
+    }
+
+    internal static bool TriangleIntersectsBox(
         UyaCollisionVertex a,
         UyaCollisionVertex b,
         UyaCollisionVertex c,
-        Vector3 center)
+        Vector3 center,
+        float halfSize)
     {
         var vertices = new[] { ToVector(a) - center, ToVector(b) - center, ToVector(c) - center };
         var edges = new[] { vertices[1] - vertices[0], vertices[2] - vertices[1], vertices[0] - vertices[2] };
         foreach (var edge in edges)
         {
-            if (!Overlaps(Vector3.Cross(edge, new Vector3(1, 0, 0)), vertices)
-                || !Overlaps(Vector3.Cross(edge, new Vector3(0, 1, 0)), vertices)
-                || !Overlaps(Vector3.Cross(edge, new Vector3(0, 0, 1)), vertices))
+            if (!Overlaps(Vector3.Cross(edge, new Vector3(1, 0, 0)), vertices, halfSize)
+                || !Overlaps(Vector3.Cross(edge, new Vector3(0, 1, 0)), vertices, halfSize)
+                || !Overlaps(Vector3.Cross(edge, new Vector3(0, 0, 1)), vertices, halfSize))
             {
                 return false;
             }
         }
 
-        return Overlaps(new Vector3(1, 0, 0), vertices)
-            && Overlaps(new Vector3(0, 1, 0), vertices)
-            && Overlaps(new Vector3(0, 0, 1), vertices)
-            && Overlaps(Vector3.Cross(edges[0], edges[1]), vertices);
+        return Overlaps(new Vector3(1, 0, 0), vertices, halfSize)
+            && Overlaps(new Vector3(0, 1, 0), vertices, halfSize)
+            && Overlaps(new Vector3(0, 0, 1), vertices, halfSize)
+            && Overlaps(Vector3.Cross(edges[0], edges[1]), vertices, halfSize);
     }
 
-    private static bool Overlaps(Vector3 axis, IReadOnlyList<Vector3> vertices)
+    private static bool Overlaps(Vector3 axis, IReadOnlyList<Vector3> vertices, float halfSize)
     {
         if (axis.LengthSquared() < 0.0001f) return true;
         var first = Vector3.Dot(vertices[0], axis);
@@ -403,16 +522,18 @@ public static class UyaCollisionWriter
             maximum = MathF.Max(maximum, value);
         }
 
-        var radius = OctantHalfSize64 * (MathF.Abs(axis.X) + MathF.Abs(axis.Y) + MathF.Abs(axis.Z));
+        var radius = halfSize * (MathF.Abs(axis.X) + MathF.Abs(axis.Y) + MathF.Abs(axis.Z));
         return minimum <= radius && maximum >= -radius;
     }
 
     private static Vector3 ToVector(UyaCollisionVertex vertex) => new(vertex.X64, vertex.Y64, vertex.Z64);
 
-    private static int MinimumOctant(int value)
+    private static int MaximumOctant(int minimum, int maximum)
     {
-        var result = FloorDiv(value, OctantSize64);
-        return value % OctantSize64 == 0 ? checked(result - 1) : result;
+        var result = FloorDiv(maximum, OctantSize64);
+        return maximum != minimum && maximum % OctantSize64 == 0
+            ? checked(result - 1)
+            : result;
     }
 
     private static int FloorDiv(int value, int divisor)
@@ -478,5 +599,17 @@ public static class UyaCollisionWriter
     }
 
     private readonly record struct OctantKey(int X, int Y, int Z);
+
+    private readonly record struct TaggedFace(UyaCollisionSolidFace Face, string? AdditionId);
+
+    private sealed record OctantData(
+        OctantKey Key,
+        UyaCollisionSolidFace[] Faces,
+        UyaCollisionVertex[] Vertices,
+        IReadOnlyDictionary<UyaCollisionVertex, int> VertexIndexes,
+        int QuadCount,
+        int EncodedByteCount,
+        IReadOnlyList<string> AdditionIds,
+        IReadOnlyList<string> Violations);
 
 }

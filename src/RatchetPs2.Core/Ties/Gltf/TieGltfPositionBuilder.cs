@@ -6,6 +6,11 @@ namespace RatchetPs2.Core.Ties;
 internal static class TieGltfPositionBuilder
 {
     public static List<Vector3> BuildPositions(TieClass tie, TieLodTopology topology)
+        => BuildPs2Positions(tie, topology)
+            .Select(position => GltfCoordinateBasis.FromPs2Position(position.X, position.Y, position.Z))
+            .ToList();
+
+    public static List<Vector3> BuildPs2Positions(TieClass tie, TieLodTopology topology)
     {
         ArgumentNullException.ThrowIfNull(tie);
         ArgumentNullException.ThrowIfNull(topology);
@@ -19,35 +24,32 @@ internal static class TieGltfPositionBuilder
                     $"Tie LOD {topology.LodIndex} logical vertex {vertex.LogicalVertexIndex} has no decoded vertex.");
             }
 
-            positions.Add(ToGltfPosition(tie, vertex));
+            positions.Add(ToPs2Position(tie, vertex));
         }
 
         return positions;
     }
 
-    private static Vector3 ToGltfPosition(TieClass tie, TieLogicalVertex vertex)
+    private static Vector3 ToPs2Position(TieClass tie, TieLogicalVertex vertex)
     {
         if (vertex.DecodedVertex is { } decodedVertex)
         {
-            return ToGltfPosition(tie, decodedVertex.X, decodedVertex.Y, decodedVertex.Z);
+            return ToPs2Position(tie, decodedVertex.X, decodedVertex.Y, decodedVertex.Z);
         }
 
         var row = vertex.VertexRow ?? vertex.AddressRow!;
         if (TiePacketVertexRowClassifier.TrySelectPositionSlot(row, out var slot)
             && slot == TiePacketVertexPositionSlot.Second)
         {
-            return ToGltfPosition(tie, row.Data0, row.Data1, row.Data2);
+            return ToPs2Position(tie, row.Data0, row.Data1, row.Data2);
         }
 
-        return ToGltfPosition(tie, row.X, row.Y, row.Z);
+        return ToPs2Position(tie, row.X, row.Y, row.Z);
     }
 
-    private static Vector3 ToGltfPosition(TieClass tie, short sourceX, short sourceY, short sourceZ)
+    private static Vector3 ToPs2Position(TieClass tie, short sourceX, short sourceY, short sourceZ)
     {
-        return GltfCoordinateBasis.FromPs2Position(
-            sourceX,
-            sourceY,
-            sourceZ,
-            tie.Header.Scale / 1024f);
+        var scale = tie.Header.Scale / 1024f;
+        return new(sourceX * scale, sourceY * scale, sourceZ * scale);
     }
 }
