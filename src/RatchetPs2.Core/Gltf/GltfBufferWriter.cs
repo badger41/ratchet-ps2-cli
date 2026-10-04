@@ -156,6 +156,21 @@ public sealed class GltfBufferWriter
         return AddAccessor(CreateAccessor(bufferView, UnsignedByteComponentType, values.Count, "SCALAR"));
     }
 
+    public int WriteUInt32ScalarAccessor(IReadOnlyList<uint> values, int target = ArrayBufferTarget)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+
+        Align(4);
+        var byteOffset = checked((int)_writer.BaseStream.Position);
+        foreach (var value in values)
+        {
+            _writer.Write(value);
+        }
+
+        var bufferView = AddBufferView(byteOffset, values.Count * sizeof(uint), target);
+        return AddAccessor(CreateAccessor(bufferView, UnsignedIntComponentType, values.Count, "SCALAR"));
+    }
+
     public int WriteUInt32IndexAccessor(IReadOnlyList<uint> indices)
     {
         ArgumentNullException.ThrowIfNull(indices);

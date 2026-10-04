@@ -69,9 +69,11 @@ public static class UyaCollisionGltfExporter
         var barrierChildren = (List<int>)nodes[2]["children"]!;
         var meshes = new List<Dictionary<string, object>>();
 
+        var nextFaceId = 0u;
         foreach (var piece in collision.SolidPieces)
         {
-            var geometry = BuildSolidGeometry(piece, options.Palette);
+            var geometry = BuildSolidGeometry(piece, options.Palette, nextFaceId);
+            nextFaceId = checked(nextFaceId + (uint)piece.Faces.Count);
             var meshIndex = AddMesh(meshes, buffers, $"solid_collision_{piece.SourceIndex:0000}", geometry, 0);
             solidChildren.Add(nodes.Count);
             nodes.Add(new()
@@ -144,6 +146,7 @@ public static class UyaCollisionGltfExporter
         {
             attributes["_COLLISION_TYPE"] = writer.WriteByteScalarAccessor(geometry.CollisionTypes);
             attributes["_SOUND_TYPE"] = writer.WriteByteScalarAccessor(geometry.SoundTypes);
+            attributes["_COLLISION_FACE_ID"] = writer.WriteUInt32ScalarAccessor(geometry.FaceIds!);
         }
         var index = meshes.Count;
         meshes.Add(new()
@@ -165,15 +168,18 @@ public static class UyaCollisionGltfExporter
 
     private static Geometry BuildSolidGeometry(
         UyaCollisionSolidPiece piece,
-        UyaCollisionGltfPalette palette)
+        UyaCollisionGltfPalette palette,
+        uint firstFaceId)
     {
         var positions = new List<Vector3>();
         var colors = new List<Vector4>();
         var collisionTypes = new List<byte>();
         var soundTypes = new List<byte>();
+        var faceIds = new List<uint>();
         var indices = new List<uint>();
-        foreach (var face in piece.Faces)
+        for (var faceIndex = 0; faceIndex < piece.Faces.Count; faceIndex++)
         {
+            var face = piece.Faces[faceIndex];
             var baseIndex = checked((uint)positions.Count);
             positions.Add(GltfCoordinateBasis.FromPs2Position(face.A.Position.X, face.A.Position.Y, face.A.Position.Z));
             positions.Add(GltfCoordinateBasis.FromPs2Position(face.B.Position.X, face.B.Position.Y, face.B.Position.Z));
@@ -189,6 +195,7 @@ public static class UyaCollisionGltfExporter
                 colors.Add(new(color.X, color.Y, color.Z, 1f));
                 collisionTypes.Add((byte)face.CollisionType);
                 soundTypes.Add((byte)face.SoundType);
+                faceIds.Add(checked(firstFaceId + (uint)faceIndex));
             }
 
             if (face.IsQuad)
@@ -208,7 +215,7 @@ public static class UyaCollisionGltfExporter
             }
         }
 
-        return new(positions, colors, indices, collisionTypes, soundTypes);
+        return new(positions, colors, indices, collisionTypes, soundTypes, faceIds);
     }
 
     private static Geometry BuildBarrierGeometry(UyaCollisionPlayerBarrier barrier)
@@ -228,7 +235,7 @@ public static class UyaCollisionGltfExporter
             indices.Add(triangle.A);
         }
 
-        return new(positions, colors, indices, null, null);
+        return new(positions, colors, indices, null, null, null);
     }
 
     private static object BuildSolidExtras(
@@ -381,5 +388,6 @@ public static class UyaCollisionGltfExporter
         IReadOnlyList<Vector4> Colors,
         IReadOnlyList<uint> Indices,
         IReadOnlyList<byte>? CollisionTypes,
-        IReadOnlyList<byte>? SoundTypes);
+        IReadOnlyList<byte>? SoundTypes,
+        IReadOnlyList<uint>? FaceIds);
 }

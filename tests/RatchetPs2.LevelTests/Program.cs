@@ -3181,6 +3181,21 @@ static void ValidateUyaCollisionParsingAndGltf()
     Expect(materials.Length == 2, "collision glTF should contain solid and barrier materials");
     Expect(materials[1].GetProperty("alphaMode").GetString() == "BLEND", "player barriers should be translucent");
     Expect(files.BinBytes.Length > 0, "collision glTF should include geometry data");
+    var meshPrimitives = root.GetProperty("meshes").EnumerateArray()
+        .Select(mesh => mesh.GetProperty("primitives")[0]).ToArray();
+    var quadFaceIds = ReadAccessorUInt32Values(
+        root,
+        files.BinBytes,
+        meshPrimitives[0].GetProperty("attributes").GetProperty("_COLLISION_FACE_ID").GetInt32());
+    var triangleFaceIds = ReadAccessorUInt32Values(
+        root,
+        files.BinBytes,
+        meshPrimitives[1].GetProperty("attributes").GetProperty("_COLLISION_FACE_ID").GetInt32());
+    Expect(quadFaceIds.SequenceEqual([0u, 0u, 0u, 0u])
+        && triangleFaceIds.SequenceEqual([1u, 1u, 1u]),
+        "collision glTF should expose one deterministic global ID per native solid face");
+    Expect(!meshPrimitives[2].GetProperty("attributes").TryGetProperty("_COLLISION_FACE_ID", out _),
+        "player barriers should not expose editable solid face IDs");
     var repeated = CollisionConverter.ExportGltf(bytes, GameId.UYA, "collision.gltf", minify: true);
     Expect(files.GltfBytes.SequenceEqual(repeated.GltfBytes) && files.BinBytes.SequenceEqual(repeated.BinBytes), "collision glTF should be deterministic");
 
@@ -5485,6 +5500,18 @@ static byte ReadFirstAccessorByte(JsonElement gltf, byte[] buffer, int accessorI
     var offset = view.GetProperty("byteOffset").GetInt32()
         + (accessor.TryGetProperty("byteOffset", out var accessorOffset) ? accessorOffset.GetInt32() : 0);
     return buffer[offset];
+}
+
+static uint[] ReadAccessorUInt32Values(JsonElement gltf, byte[] buffer, int accessorIndex)
+{
+    var accessor = gltf.GetProperty("accessors")[accessorIndex];
+    var view = gltf.GetProperty("bufferViews")[accessor.GetProperty("bufferView").GetInt32()];
+    var offset = view.GetProperty("byteOffset").GetInt32()
+        + (accessor.TryGetProperty("byteOffset", out var accessorOffset) ? accessorOffset.GetInt32() : 0);
+    return Enumerable.Range(0, accessor.GetProperty("count").GetInt32())
+        .Select(index => BinaryPrimitives.ReadUInt32LittleEndian(
+            buffer.AsSpan(offset + index * sizeof(uint), sizeof(uint))))
+        .ToArray();
 }
 
 static byte[] CreateSyntheticUyaCollision()
