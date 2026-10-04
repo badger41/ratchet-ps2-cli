@@ -41,7 +41,9 @@ public static class UyaCollisionAdditionTransformer
     {
         ArgumentNullException.ThrowIfNull(addition);
         UyaTieCollisionGenerator.ValidateAdditionId(additionId);
-        var mirrored = matrix.GetDeterminant() < 0;
+        var mirrored = matrix.M11 * (matrix.M22 * matrix.M33 - matrix.M23 * matrix.M32)
+            - matrix.M12 * (matrix.M21 * matrix.M33 - matrix.M23 * matrix.M31)
+            + matrix.M13 * (matrix.M21 * matrix.M32 - matrix.M22 * matrix.M31) < 0;
         var faces = new List<UyaCollisionSolidFace>(addition.Faces.Count);
         for (var index = 0; index < addition.Faces.Count; index++)
         {
