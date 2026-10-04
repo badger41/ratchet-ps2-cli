@@ -14,18 +14,34 @@ public static class UyaCollisionAdditionTransformer
     {
         ArgumentNullException.ThrowIfNull(addition);
         UyaTieCollisionGenerator.ValidateAdditionId(additionId);
-        if (!Finite(position) || !Finite(rotation) || !Finite(scale))
-            throw new InvalidDataException("UYA collision instance transform must contain finite values.");
-        if (scale.X == 0 || scale.Y == 0 || scale.Z == 0)
-            throw new InvalidDataException("UYA collision instance transform scale cannot contain zero.");
-        if (rotation.LengthSquared() == 0)
-            throw new InvalidDataException("UYA collision instance transform rotation cannot be empty.");
+        return Transform(addition, additionId, Matrix(scale, rotation, position), cancellationToken);
+    }
 
-        rotation = Quaternion.Normalize(rotation);
-        var matrix = Matrix4x4.CreateScale(scale)
-            * Matrix4x4.CreateFromQuaternion(rotation)
-            * Matrix4x4.CreateTranslation(position);
-        var mirrored = scale.X * scale.Y * scale.Z < 0;
+    public static UyaCollisionSolidAddition TransformRelative(
+        UyaCollisionSolidAddition addition,
+        string additionId,
+        UyaCollisionInstanceTransform editTransform,
+        UyaCollisionInstanceTransform sourceParentTransform,
+        UyaCollisionInstanceTransform targetParentTransform,
+        CancellationToken cancellationToken = default)
+    {
+        var edit = Matrix(editTransform);
+        var source = Matrix(sourceParentTransform);
+        var target = Matrix(targetParentTransform);
+        if (!Matrix4x4.Invert(source, out var inverseSource))
+            throw new InvalidDataException("UYA collision source-parent transform is not invertible.");
+        return Transform(addition, additionId, edit * inverseSource * target, cancellationToken);
+    }
+
+    private static UyaCollisionSolidAddition Transform(
+        UyaCollisionSolidAddition addition,
+        string additionId,
+        Matrix4x4 matrix,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(addition);
+        UyaTieCollisionGenerator.ValidateAdditionId(additionId);
+        var mirrored = matrix.GetDeterminant() < 0;
         var faces = new List<UyaCollisionSolidFace>(addition.Faces.Count);
         for (var index = 0; index < addition.Faces.Count; index++)
         {
@@ -42,6 +58,22 @@ public static class UyaCollisionAdditionTransformer
             if (Representable(transformed)) faces.Add(transformed);
         }
         return new(additionId, faces);
+    }
+
+    private static Matrix4x4 Matrix(UyaCollisionInstanceTransform transform) =>
+        Matrix(transform.Scale, transform.Rotation, transform.Position);
+
+    private static Matrix4x4 Matrix(Vector3 scale, Quaternion rotation, Vector3 position)
+    {
+        if (!Finite(position) || !Finite(rotation) || !Finite(scale))
+            throw new InvalidDataException("UYA collision instance transform must contain finite values.");
+        if (scale.X == 0 || scale.Y == 0 || scale.Z == 0)
+            throw new InvalidDataException("UYA collision instance transform scale cannot contain zero.");
+        if (rotation.LengthSquared() == 0)
+            throw new InvalidDataException("UYA collision instance transform rotation cannot be empty.");
+        return Matrix4x4.CreateScale(scale)
+            * Matrix4x4.CreateFromQuaternion(Quaternion.Normalize(rotation))
+            * Matrix4x4.CreateTranslation(position);
     }
 
     private static bool Representable(UyaCollisionSolidFace face)

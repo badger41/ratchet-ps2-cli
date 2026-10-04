@@ -97,6 +97,90 @@ public static class CollisionWork
         };
     }
 
+    public static CollisionSolidAddition TransformAdditionRelative(
+        CollisionSolidAddition addition,
+        GameId gameId,
+        string additionId,
+        CollisionInstanceTransform editTransform,
+        CollisionInstanceTransform sourceParentTransform,
+        CollisionInstanceTransform targetParentTransform,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(addition);
+        return gameId switch
+        {
+            GameId.UYA => UyaCollisionAdapter.FromAddition(UyaCollisionAdditionTransformer.TransformRelative(
+                UyaCollisionAdapter.ToAddition(addition),
+                additionId,
+                UyaCollisionAdapter.ToTransform(editTransform),
+                UyaCollisionAdapter.ToTransform(sourceParentTransform),
+                UyaCollisionAdapter.ToTransform(targetParentTransform),
+                cancellationToken)),
+            _ => throw new NotSupportedException($"Relative collision transforms do not support {gameId}."),
+        };
+    }
+
+    public static CollisionSolidAddition DecodeSolidPieceAddition(
+        byte[] collisionBytes,
+        GameId gameId,
+        int sourcePieceIndex,
+        string additionId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(collisionBytes);
+        if (sourcePieceIndex < 0) throw new ArgumentOutOfRangeException(nameof(sourcePieceIndex));
+        UyaTieCollisionGenerator.ValidateAdditionId(additionId);
+        var piece = DecodeSolidPieces(collisionBytes, gameId, cancellationToken)
+            .SingleOrDefault(value => value.SourcePieceIndex == sourcePieceIndex)
+            ?? throw new ArgumentOutOfRangeException(
+                nameof(sourcePieceIndex), sourcePieceIndex, "Solid collision piece does not exist.");
+        return new(additionId, piece.Faces);
+    }
+
+    public static IReadOnlyList<CollisionSolidPiece> DecodeSolidPieces(
+        byte[] collisionBytes,
+        GameId gameId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(collisionBytes);
+        cancellationToken.ThrowIfCancellationRequested();
+        var result = gameId switch
+        {
+            GameId.UYA => UyaCollisionReader.Read(collisionBytes).SolidPieces
+                .Select(UyaCollisionAdapter.FromPiece).ToArray(),
+            _ => throw new NotSupportedException($"Collision piece extraction does not support {gameId}."),
+        };
+        cancellationToken.ThrowIfCancellationRequested();
+        return result;
+    }
+
+    public static IReadOnlyList<CollisionTiePieceCandidate> FindTieCollisionCandidates(
+        byte[] collisionBytes,
+        GameId gameId,
+        IReadOnlyList<CollisionTieGroup> groups,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(collisionBytes);
+        ArgumentNullException.ThrowIfNull(groups);
+        if (groups.Any(group => group is null || group.TieBytes is null || group.Instances is null
+            || group.Instances.Any(instance => instance is null)))
+            throw new ArgumentException("TIE collision recovery groups are invalid.", nameof(groups));
+        return gameId switch
+        {
+            GameId.UYA => UyaCollisionLinkRecovery.FindCandidates(
+                    collisionBytes,
+                    groups.Select(group => new UyaTieCollisionGroup(
+                        group.TieBytes,
+                        group.Instances.Select(value => new UyaTieCollisionInstance(
+                            value.Id,
+                            UyaCollisionAdapter.ToTransform(value.Transform))).ToArray())).ToArray(),
+                    cancellationToken)
+                .Select(value => new CollisionTiePieceCandidate(
+                    value.InstanceId, value.SourcePieceIndex, value.Confidence)).ToArray(),
+            _ => throw new NotSupportedException($"TIE collision link recovery does not support {gameId}."),
+        };
+    }
+
     public static CollisionSolidAddition DecodeSolidAddition(
         byte[] collisionBytes,
         GameId gameId,

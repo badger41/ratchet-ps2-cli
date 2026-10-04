@@ -35,6 +35,19 @@ public readonly record struct CollisionSolidFace(
 
 public sealed record CollisionSolidAddition(string Id, IReadOnlyList<CollisionSolidFace> Faces);
 
+public sealed record CollisionSolidPiece(int SourcePieceIndex, IReadOnlyList<CollisionSolidFace> Faces);
+
+public sealed record CollisionTieInstance(string Id, CollisionInstanceTransform Transform);
+
+public sealed record CollisionTieGroup(
+    byte[] TieBytes,
+    IReadOnlyList<CollisionTieInstance> Instances);
+
+public sealed record CollisionTiePieceCandidate(
+    string InstanceId,
+    int SourcePieceIndex,
+    float Confidence);
+
 public readonly record struct CollisionRotation(float X, float Y, float Z, float W);
 
 public readonly record struct CollisionInstanceTransform(

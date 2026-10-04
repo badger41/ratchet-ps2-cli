@@ -66,6 +66,22 @@ public sealed record UyaCollisionSolidAddition(
     string Id,
     IReadOnlyList<UyaCollisionSolidFace> Faces);
 
+public readonly record struct UyaCollisionInstanceTransform(
+    Vector3 Position,
+    Quaternion Rotation,
+    Vector3 Scale);
+
+public sealed record UyaTieCollisionInstance(string Id, UyaCollisionInstanceTransform Transform);
+
+public sealed record UyaTieCollisionGroup(
+    byte[] TieBytes,
+    IReadOnlyList<UyaTieCollisionInstance> Instances);
+
+public sealed record UyaTieCollisionPieceCandidate(
+    string InstanceId,
+    int SourcePieceIndex,
+    float Confidence);
+
 public sealed record UyaCollisionOctantCost(
     int X,
     int Y,

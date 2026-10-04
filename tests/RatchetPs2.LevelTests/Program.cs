@@ -2936,6 +2936,15 @@ static void ValidateUyaCollisionParsingAndGltf()
         && mirroredAddition.Faces.Single().B == new CollisionVertex(10, 10, 10)
         && mirroredAddition.Faces.Single().C == new CollisionVertex(10, 11, 10),
         "mirrored collision addition transforms should reverse winding");
+    var relativeAddition = CollisionWork.TransformAdditionRelative(
+        addition,
+        GameId.UYA,
+        "entity:relative",
+        new(new(0, 0, 0), new(0, 0, 0, 1), new(1, 1, 1)),
+        new(new(10, 0, 0), new(0, 0, 0, 1), new(1, 1, 1)),
+        new(new(20, 0, 0), new(0, 0, 0, 1), new(1, 1, 1)));
+    Expect(relativeAddition.Faces.Single().A == new CollisionVertex(21, 10, 10),
+        "relative collision transforms should follow the parent transform delta");
     var fineAddition = new CollisionSolidAddition("tie:fine",
     [
         new(0x31, new(-10 / 16f, -10 / 16f, 0), new(-10 / 16f, -9 / 16f, 0),
@@ -2961,6 +2970,13 @@ static void ValidateUyaCollisionParsingAndGltf()
         && decodedStandalone is { Id: "decoded:proxy", Faces.Count: 1 }
         && decodedStandalone.Faces.Single().RawType == 0x31,
         "standalone collision encoding should write and verify SDK additions");
+    var decodedPiece = CollisionWork.DecodeSolidPieceAddition(
+        standalone.Bytes, GameId.UYA, 0, "decoded:piece");
+    var decodedPieces = CollisionWork.DecodeSolidPieces(standalone.Bytes, GameId.UYA);
+    Expect(decodedPiece.Faces.SequenceEqual(decodedStandalone.Faces)
+        && decodedPieces is [{ SourcePieceIndex: 0 }]
+        && decodedPieces[0].Faces.SequenceEqual(decodedStandalone.Faces),
+        "single and bulk collision piece extraction should retain exact authored faces");
     var addedFace = UyaCollisionReader.Read(withAddition.Bytes).SolidPieces
         .SelectMany(piece => piece.Faces)
         .Single(face => face.Type == 0x31);
@@ -3294,6 +3310,24 @@ static void ValidateUyaTieCollisionSurfaceGeneration()
         0));
     Expect(UyaCollisionReader.Read(encoded).SolidPieces.SelectMany(piece => piece.Faces).Single().IsQuad,
         "generated TIE collision quads should survive native write and re-read");
+    var placed = UyaCollisionAdditionTransformer.Transform(
+        candidate.Addition,
+        "tie:placed",
+        new(10, 20, 30),
+        Quaternion.Identity,
+        Vector3.One);
+    var recovered = UyaCollisionLinkRecovery.FindCandidates(
+        tie,
+        new([new(0, placed.Faces)], [], 0, 0, 0),
+        [
+            new("matching", new(new(10, 20, 30), Quaternion.Identity, Vector3.One)),
+            new("overlapping", new(new(10.1f, 20, 30), Quaternion.Identity, Vector3.One)),
+            new("distant", new(new(100, 200, 300), Quaternion.Identity, Vector3.One)),
+        ]);
+    Expect(recovered.Count == 2
+        && recovered.Single(value => value.InstanceId == "matching").Confidence
+            > recovered.Single(value => value.InstanceId == "overlapping").Confidence,
+        "TIE collision recovery should reject distant pieces and rank the centered overlap first");
     var repeated = UyaTieCollisionGenerator.GenerateSurface(tie, "tie:synthetic", 0, 0x31);
     Expect(candidate.Addition.Faces.SequenceEqual(repeated.Addition.Faces),
         "TIE surface collision generation should be deterministic");

@@ -70,13 +70,16 @@ internal static class UyaCollisionAdapter
 
     public static CollisionSolidAddition FromAddition(UyaCollisionSolidAddition addition) => new(
         addition.Id,
-        addition.Faces.Select(face => new CollisionSolidFace(
-            face.Type,
-            FromVertex(face.A),
-            FromVertex(face.B),
-            FromVertex(face.C),
-            face.IsQuad ? FromVertex(face.D) : default,
-            face.IsQuad)).ToArray());
+        addition.Faces.Select(FromFace).ToArray());
+
+    public static CollisionSolidPiece FromPiece(UyaCollisionSolidPiece piece) => new(
+        piece.SourceIndex,
+        piece.Faces.Select(FromFace).ToArray());
+
+    public static UyaCollisionInstanceTransform ToTransform(CollisionInstanceTransform transform) => new(
+        new(transform.Position.X, transform.Position.Y, transform.Position.Z),
+        new(transform.Rotation.X, transform.Rotation.Y, transform.Rotation.Z, transform.Rotation.W),
+        new(transform.Scale.X, transform.Scale.Y, transform.Scale.Z));
 
     public static CollisionAnalysis FromAnalysis(UyaCollisionAnalysis analysis) => new(
         analysis.LogicalFaceCount,
@@ -142,6 +145,14 @@ internal static class UyaCollisionAdapter
 
     private static CollisionVertex FromVertex(UyaCollisionVertex vertex) =>
         new(vertex.X64 / 64f, vertex.Y64 / 64f, vertex.Z64 / 64f);
+
+    private static CollisionSolidFace FromFace(UyaCollisionSolidFace face) => new(
+        face.Type,
+        FromVertex(face.A),
+        FromVertex(face.B),
+        FromVertex(face.C),
+        face.IsQuad ? FromVertex(face.D) : default,
+        face.IsQuad);
 
     private static int CountVertices(UyaCollisionSolidPiece piece)
     {
