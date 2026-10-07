@@ -34,6 +34,28 @@ Top-level commands:
 - `tie`: Work with tie static world geometry files.
 - `wad`: Work with WAD-compressed files.
 
+## Deadlocked executable export
+
+```bash
+ratchet-ps2 map export-executables --game DL --input deadlocked.iso --output exports/dl-executables
+```
+
+Reconstruct `boot.elf` and `levels/<four-digit ID>/code/overlay.elf`,
+and write `config.ini`. Optional `--boot-elf <file>` and `--output-iso <file>` select
+the compiler output and ISO destination to store in the config.
+Requires an empty output directory and currently supports US retail revision 1.00.
+This exports executables only; use `map extract` for level assets. See
+[DL executable export](DL_EXECUTABLES.md) for scope, library APIs, and validation.
+
+```bash
+ratchet-ps2 map build-boot --config exports/dl-executables/config.ini
+```
+
+Build a Deadlocked ISO with the current compiled boot ELF selected by the config.
+All config paths resolve relative to the config file. The original game assets
+are preserved; only the boot ELF is replaced. A successful build verifies the
+installed boot bytes, but does not establish emulator/gameplay compatibility.
+
 ## Game IDs
 
 Commands that accept `--game` currently support:
