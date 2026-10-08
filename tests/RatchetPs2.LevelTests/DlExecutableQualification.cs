@@ -38,7 +38,7 @@ internal static class DlExecutableQualification
         };
         Reject(() => Elf32Writer.Write(new(0x100000, 0, overlapping)));
         using var truncatedDisc = new MemoryStream(new byte[16 * 2048 + 20]);
-        Reject(() => Iso9660RootReader.ReadFile(truncatedDisc, "SCUS_974.65"));
+        Reject(() => Iso9660RootReader.ReadFile(truncatedDisc, DlExecutableReader.BootFileName));
         Console.WriteLine("DL executable reconstruction unit checks passed.");
     }
 

@@ -5,10 +5,12 @@ namespace RatchetPs2.Games.DL.Executables;
 
 public static class DlExecutableReader
 {
+    public const string BootFileName = "SCUS_974.65";
+
     public static byte[] ReadBootElf(Stream isoStream)
     {
         ValidateProfile(isoStream);
-        return DlElfBuilder.BuildBoot(Iso9660RootReader.ReadFile(isoStream, "SCUS_974.65"));
+        return DlElfBuilder.BuildBoot(Iso9660RootReader.ReadFile(isoStream, BootFileName));
     }
 
     private static void ValidateProfile(Stream isoStream)

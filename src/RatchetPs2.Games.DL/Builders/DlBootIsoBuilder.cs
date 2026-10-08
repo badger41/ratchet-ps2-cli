@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using RatchetPs2.Core.Disc;
+using RatchetPs2.Games.DL.Executables;
 
 namespace RatchetPs2.Games.DL.Builders;
 
@@ -7,7 +8,6 @@ namespace RatchetPs2.Games.DL.Builders;
 public static class DlBootIsoBuilder
 {
     private const int SectorSize = 2048;
-    private const string BootName = "SCUS_974.65";
 
     public static void Build(Stream source, Stream destination, ReadOnlySpan<byte> bootElf)
     {
@@ -22,7 +22,7 @@ public static class DlBootIsoBuilder
             throw new NotSupportedException("Boot ISO builds currently support Deadlocked SCUS-97465 revision 1.00.");
         if (source.Length % SectorSize != 0)
             throw new InvalidDataException("Source ISO must contain complete sectors.");
-        var entry = Iso9660RootReader.FindFile(source, BootName);
+        var entry = Iso9660RootReader.FindFile(source, DlExecutableReader.BootFileName);
         if ((long)entry.Sector * SectorSize + entry.Length > source.Length)
             throw new InvalidDataException("Source boot extent is outside the ISO.");
         var descriptorOffsets = FindVolumeDescriptors(source);
@@ -41,7 +41,7 @@ public static class DlBootIsoBuilder
         foreach (var offset in descriptorOffsets) WriteBothEndian(destination, offset + 80, outputSectors);
         destination.Flush();
 
-        var installed = Iso9660RootReader.ReadFile(destination, BootName);
+        var installed = Iso9660RootReader.ReadFile(destination, DlExecutableReader.BootFileName);
         if (!bootElf.SequenceEqual(installed))
             throw new IOException("Installed boot ELF failed byte-for-byte verification.");
     }

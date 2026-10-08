@@ -3,6 +3,7 @@ using System.Text;
 using RatchetPs2.Core.Disc;
 using RatchetPs2.Core.Executables;
 using RatchetPs2.Games.DL.Builders;
+using RatchetPs2.Games.DL.Executables;
 
 internal static class DlBootIsoQualification
 {
@@ -46,11 +47,11 @@ internal static class DlBootIsoQualification
 
     private static void Compare(Stream source, Stream output, byte[] elf)
     {
-        var entry = Iso9660RootReader.FindFile(source, "SCUS_974.65");
-        var installed = Iso9660RootReader.FindFile(output, "SCUS_974.65");
+        var entry = Iso9660RootReader.FindFile(source, DlExecutableReader.BootFileName);
+        var installed = Iso9660RootReader.FindFile(output, DlExecutableReader.BootFileName);
         Require(installed.Sector * 2048L == source.Length, "appended boot location");
         Require(installed.Length == elf.Length, "installed ELF size");
-        Require(Iso9660RootReader.ReadFile(output, "SCUS_974.65").AsSpan().SequenceEqual(elf), "installed ELF payload");
+        Require(Iso9660RootReader.ReadFile(output, DlExecutableReader.BootFileName).AsSpan().SequenceEqual(elf), "installed ELF payload");
         Require(output.Length == source.Length + ((elf.Length + 2047L) / 2048) * 2048, "output length");
         var volume = new byte[8];
         output.Position = 16 * 2048 + 80;
@@ -90,10 +91,10 @@ internal static class DlBootIsoQualification
         pvd[181] = 2;
         data[17 * 2048] = 255;
         "CD001"u8.CopyTo(data.AsSpan(17 * 2048 + 1));
-        var config = Encoding.ASCII.GetBytes("BOOT2 = cdrom0:\\SCUS_974.65;1\r\nVER = 1.00\r\nVMODE = NTSC\r\n");
+        var config = Encoding.ASCII.GetBytes($"BOOT2 = cdrom0:\\{DlExecutableReader.BootFileName};1\r\nVER = 1.00\r\nVMODE = NTSC\r\n");
         var root = data.AsSpan(20 * 2048, 2048);
         var count = WriteRecord(root, "SYSTEM.CNF;1", 21, (uint)config.Length);
-        WriteRecord(root[count..], "SCUS_974.65;1", 22, 52);
+        WriteRecord(root[count..], $"{DlExecutableReader.BootFileName};1", 22, 52);
         config.CopyTo(data.AsSpan(21 * 2048));
         return new MemoryStream(data, writable: false);
     }
