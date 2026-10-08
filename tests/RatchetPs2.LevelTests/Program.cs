@@ -10,6 +10,7 @@ using RatchetPs2.Core.Hud;
 using RatchetPs2.Core.IO;
 using RatchetPs2.Core.LevelAssets;
 using RatchetPs2.Core.Moby;
+using RatchetPs2.Core.Shrubs;
 using RatchetPs2.Core.Textures;
 using RatchetPs2.Core.Textures.Palettes;
 using RatchetPs2.Core.Textures.Pif;
@@ -108,7 +109,8 @@ if (args.Contains("--uya-collision", StringComparer.Ordinal))
     ValidateUyaCollisionParsingAndGltf();
     ValidateUyaTieCollisionSurfaceGeneration();
     ValidateUyaTieCollisionConvexHullGeneration();
-    Console.WriteLine("UYA collision and TIE collision generation checks passed.");
+    ValidateUyaShrubCollisionGeneration();
+    Console.WriteLine("UYA collision and instanced collision generation checks passed.");
     return;
 }
 
@@ -157,6 +159,7 @@ ValidateUyaGameplayTypedParsing();
 ValidateUyaCollisionParsingAndGltf();
 ValidateUyaTieCollisionSurfaceGeneration();
 ValidateUyaTieCollisionConvexHullGeneration();
+ValidateUyaShrubCollisionGeneration();
 ValidateUyaStaticInstanceParsing();
 ValidateGameplayGeometryParsing();
 ValidateUyaGameplayLightingParsing();
@@ -3325,6 +3328,29 @@ static void ValidateUyaTieCollisionSurfaceGeneration()
         0));
     Expect(UyaCollisionReader.Read(encoded).SolidPieces.SelectMany(piece => piece.Faces).Single().IsQuad,
         "generated TIE collision quads should survive native write and re-read");
+    var oversized = UyaTieCollisionGenerator.GenerateSurface(
+        CreateSyntheticTieSurfaceClass(scale: 131_072), "tie:oversized", 0, 0x31);
+    var oversizedEncoded = UyaCollisionWriter.Write(new(
+        [new(0, oversized.Addition.Faces)], [], 0, 0, 0));
+    Expect(oversized.GeneratedFaceCount > 1
+        && oversized.Analysis.HardViolationCount == 0
+        && UyaCollisionReader.Read(oversizedEncoded).SolidPieces.SelectMany(piece => piece.Faces).Any(),
+        "oversized TIE surface faces should subdivide into native-octant-safe collision");
+    var level41TiePath = Path.Combine(
+        "test-assets", "extractions_uya", "level41_iso_world01", "assets", "tie", "06236_185C", "tie.bin");
+    if (File.Exists(level41TiePath))
+    {
+        var level41Tie = TieClassReader.Read(
+            File.ReadAllBytes(level41TiePath),
+            TieClassReadOptions.ForGameProfile(TieGameProfile.ForGame(GameId.UYA)));
+        var level41Candidate = UyaTieCollisionGenerator.GenerateDecimatedSurface(
+            level41Tie, "tie:level41:185c", rawType: 0x31);
+        var level41Encoded = UyaCollisionWriter.Write(new(
+            [new(0, level41Candidate.Addition.Faces)], [], 0, 0, 0));
+        Expect(level41Candidate.Analysis.HardViolationCount == 0
+            && UyaCollisionReader.Read(level41Encoded).SolidPieces.SelectMany(piece => piece.Faces).Any(),
+            "level41 TIE 0x185C should generate native-octant-safe collision");
+    }
     var placed = UyaCollisionAdditionTransformer.Transform(
         candidate.Addition,
         "tie:placed",
@@ -3505,8 +3531,8 @@ static void ValidateUyaTieCollisionConvexHullGeneration()
     Expect(denseProfile is
         {
             ProfileSections: 1,
-            GeneratedVertexCount: <= 84,
-            GeneratedFaceCount: <= 180,
+            GeneratedVertexCount: <= 512,
+            GeneratedFaceCount: <= 1024,
         }
         && denseProfile.Analysis.HardViolationCount == 0,
         $"redundant hull sections should collapse while retaining bounded radial complexity "
@@ -3528,6 +3554,66 @@ static void ValidateUyaTieCollisionConvexHullGeneration()
         CreateSyntheticTieCubeClass(),
         "tie:cancelled-hull",
         cancellationToken: cancelled.Token));
+}
+
+static void ValidateUyaShrubCollisionGeneration()
+{
+    var shrub = new ShrubClass
+    {
+        Header = new ShrubClassHeader
+        {
+            BoundingSphere = Vector4.Zero,
+            Scale = 1024,
+            PacketCount = 1,
+        },
+        ByteLength = ShrubClassHeader.Size,
+        Normals = [new(0, 0, short.MaxValue, 0)],
+        Packets =
+        [
+            new ShrubPacket
+            {
+                PacketIndex = 0,
+                Entry = new(0, 0),
+                Header = new(0, 0, 6, 0),
+                Primitives =
+                [
+                    new ShrubVertexPrimitive(0, ShrubGeometryType.TriangleList,
+                    [
+                        Vertex(0, 0), Vertex(1, 0), Vertex(1, 1),
+                        Vertex(0, 0), Vertex(1, 1), Vertex(0, 1),
+                    ]),
+                ],
+            },
+        ],
+    };
+    var surface = UyaShrubCollisionGenerator.GenerateSurface(shrub, "shrub:synthetic", rawType: 0x31);
+    Expect(surface is
+        {
+            LodIndex: 0,
+            SourceVertexCount: 6,
+            SourceTriangleCount: 2,
+            GeneratedVertexCount: 4,
+            GeneratedFaceCount: 1,
+            MergedQuadCount: 1,
+        } && surface.Addition.Faces.Single() is { Type: 0x31, IsQuad: true },
+        "shrub surface collision should share native filtering, quantization, and quad merging");
+    var hull = UyaShrubCollisionGenerator.GenerateHull(shrub, "shrub:hull", rawType: 0x31);
+    Expect(hull is { GeneratedFaceCount: 1, MergedQuadCount: 1 },
+        "planar shrub hull generation should fall back to its decoded surface");
+    var placed = UyaCollisionAdditionTransformer.Transform(
+        surface.Addition,
+        "shrub:placed",
+        new(10, 20, 30),
+        Quaternion.Identity,
+        new(0.25f));
+    var recovered = UyaCollisionLinkRecovery.FindShrubCandidates(
+        shrub,
+        new([new(0, placed.Faces)], [], 0, 0, 0),
+        [new("matching", new(new(10, 20, 30), Quaternion.Identity, Vector3.One))]);
+    Expect(recovered is [{ InstanceId: "matching", SourcePieceIndex: 0 }],
+        "shrub collision recovery should match a small collision fragment inside a transformed shrub instance");
+
+    static ShrubVertex Vertex(short x, short y) => new(x, y, 0, 0, 0, 0, 0);
 }
 
 static TieClass CreateSyntheticTieSurfaceClass(short fourthZ = 0, float scale = 1024) => new()

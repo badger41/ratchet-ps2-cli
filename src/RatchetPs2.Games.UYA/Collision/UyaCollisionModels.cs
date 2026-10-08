@@ -71,13 +71,17 @@ public readonly record struct UyaCollisionInstanceTransform(
     Quaternion Rotation,
     Vector3 Scale);
 
-public sealed record UyaTieCollisionInstance(string Id, UyaCollisionInstanceTransform Transform);
+public sealed record UyaCollisionInstance(string Id, UyaCollisionInstanceTransform Transform);
 
 public sealed record UyaTieCollisionGroup(
     byte[] TieBytes,
-    IReadOnlyList<UyaTieCollisionInstance> Instances);
+    IReadOnlyList<UyaCollisionInstance> Instances);
 
-public sealed record UyaTieCollisionPieceCandidate(
+public sealed record UyaShrubCollisionGroup(
+    byte[] ShrubBytes,
+    IReadOnlyList<UyaCollisionInstance> Instances);
+
+public sealed record UyaCollisionPieceCandidate(
     string InstanceId,
     int SourcePieceIndex,
     float Confidence);

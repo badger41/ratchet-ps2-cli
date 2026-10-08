@@ -33,7 +33,7 @@ public static class CollisionConverter
         return CollisionWork.AnalyzeComposition(collisionBytes, gameId, edits, additions);
     }
 
-    public static TieCollisionCandidate GenerateTieSurfaceCandidate(
+    public static InstancedCollisionCandidate GenerateTieSurfaceCandidate(
         byte[] tieBytes,
         GameId gameId,
         string additionId,
@@ -42,13 +42,21 @@ public static class CollisionConverter
         int maximumFaces = CollisionWork.DefaultMaximumFaces) => CollisionWork.GenerateTieSurfaceCandidate(
             tieBytes, gameId, additionId, lodIndex, rawType, maximumFaces);
 
-    public static TieCollisionCandidate GenerateTieDecimatedCandidate(
+    public static InstancedCollisionCandidate GenerateTieDecimatedCandidate(
         byte[] tieBytes,
         GameId gameId,
         string additionId,
         byte rawType = 0,
         int maximumFaces = CollisionWork.DefaultMaximumFaces) => CollisionWork.GenerateTieDecimatedCandidate(
             tieBytes, gameId, additionId, rawType, maximumFaces);
+
+    public static InstancedCollisionCandidate GenerateShrubSurfaceCandidate(
+        byte[] shrubBytes,
+        GameId gameId,
+        string additionId,
+        byte rawType = 0,
+        int maximumFaces = CollisionWork.DefaultMaximumFaces) => CollisionWork.GenerateShrubSurfaceCandidate(
+            shrubBytes, gameId, additionId, rawType, maximumFaces);
 
     public static CollisionComposition Compose(
         byte[] collisionBytes,

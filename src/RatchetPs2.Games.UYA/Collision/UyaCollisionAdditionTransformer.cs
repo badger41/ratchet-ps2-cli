@@ -13,7 +13,7 @@ public static class UyaCollisionAdditionTransformer
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(addition);
-        UyaTieCollisionGenerator.ValidateAdditionId(additionId);
+        UyaInstancedCollisionSurfaceGenerator.ValidateAdditionId(additionId);
         return Transform(addition, additionId, Matrix(scale, rotation, position), cancellationToken);
     }
 
@@ -40,7 +40,7 @@ public static class UyaCollisionAdditionTransformer
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(addition);
-        UyaTieCollisionGenerator.ValidateAdditionId(additionId);
+        UyaInstancedCollisionSurfaceGenerator.ValidateAdditionId(additionId);
         var mirrored = matrix.M11 * (matrix.M22 * matrix.M33 - matrix.M23 * matrix.M32)
             - matrix.M12 * (matrix.M21 * matrix.M33 - matrix.M23 * matrix.M31)
             + matrix.M13 * (matrix.M21 * matrix.M32 - matrix.M22 * matrix.M31) < 0;
@@ -91,7 +91,7 @@ public static class UyaCollisionAdditionTransformer
     }
 
     private static UyaCollisionVertex TransformVertex(UyaCollisionVertex value, Matrix4x4 matrix) =>
-        UyaTieCollisionGenerator.Quantize(Vector3.Transform(value.Position, matrix));
+        UyaInstancedCollisionSurfaceGenerator.Quantize(Vector3.Transform(value.Position, matrix));
 
     private static bool Finite(Vector3 value) =>
         float.IsFinite(value.X) && float.IsFinite(value.Y) && float.IsFinite(value.Z);

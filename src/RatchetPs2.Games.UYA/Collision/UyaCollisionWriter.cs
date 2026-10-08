@@ -300,6 +300,8 @@ public static class UyaCollisionWriter
             violations.Add("UYA collision octant exceeds its native quad count.");
         if (encodedByteCount / 0x10 > byte.MaxValue)
             violations.Add("UYA collision octant size exceeds its native 8-bit range.");
+        if (faces.Any(face => !CanPack(face, key.X, key.Y, key.Z)))
+            violations.Add("UYA collision octant contains a face outside its native packed coordinate range.");
 
         return new(
             key,
@@ -474,6 +476,25 @@ public static class UyaCollisionWriter
                 && y64 / 4 is >= -512 and <= 511
                 && z64 is >= -2048 and <= 2047;
         });
+    }
+
+    internal static bool CanFitNativeOctant(UyaCollisionSolidFace face)
+    {
+        var vertices = Vertices(face).ToArray();
+        var x0 = FloorDiv(vertices.Min(vertex => vertex.X64), OctantSize64);
+        var y0 = FloorDiv(vertices.Min(vertex => vertex.Y64), OctantSize64);
+        var z0 = FloorDiv(vertices.Min(vertex => vertex.Z64), OctantSize64);
+        var x1 = MaximumOctant(vertices.Min(vertex => vertex.X64), vertices.Max(vertex => vertex.X64));
+        var y1 = MaximumOctant(vertices.Min(vertex => vertex.Y64), vertices.Max(vertex => vertex.Y64));
+        var z1 = MaximumOctant(vertices.Min(vertex => vertex.Z64), vertices.Max(vertex => vertex.Z64));
+        var candidateCount = checked(
+            ((long)x1 - x0 + 1) * ((long)y1 - y0 + 1) * ((long)z1 - z0 + 1));
+        if (candidateCount > MaximumOctants) return false;
+        for (var z = z0; z <= z1; z++)
+        for (var y = y0; y <= y1; y++)
+        for (var x = x0; x <= x1; x++)
+            if (Intersects(face, x, y, z) && CanPack(face, x, y, z)) return true;
+        return false;
     }
 
     private static IEnumerable<UyaCollisionVertex> Vertices(UyaCollisionSolidFace face)

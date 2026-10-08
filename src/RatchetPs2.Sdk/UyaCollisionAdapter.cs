@@ -98,8 +98,8 @@ internal static class UyaCollisionAdapter
             octant.AdditionIds,
             octant.Violations)).ToArray());
 
-    public static TieCollisionCandidate FromCandidate(UyaTieCollisionSurfaceCandidate candidate) => new(
-        new(TieCollisionCandidateKind.Surface, UyaTieCollisionGenerator.SurfaceGeneratorVersion,
+    public static InstancedCollisionCandidate FromCandidate(UyaInstancedCollisionSurfaceCandidate candidate) => new(
+        new(InstancedCollisionCandidateKind.Surface, candidate.GeneratorVersion,
             candidate.LodIndex, candidate.RawType, candidate.MaximumFaces),
         FromAddition(candidate.Addition),
         candidate.SourceVertexCount,
@@ -112,8 +112,8 @@ internal static class UyaCollisionAdapter
         candidate.MaximumVertexDeviation,
         FromAnalysis(candidate.Analysis));
 
-    public static TieCollisionCandidate FromCandidate(UyaTieCollisionHullCandidate candidate) => new(
-        new(TieCollisionCandidateKind.ConvexHull, UyaTieCollisionHullGenerator.GeneratorVersion,
+    public static InstancedCollisionCandidate FromCandidate(UyaInstancedCollisionHullCandidate candidate) => new(
+        new(InstancedCollisionCandidateKind.ConvexHull, candidate.GeneratorVersion,
             candidate.LodIndex, candidate.RawType, candidate.MaximumFaces, candidate.ProfileSections),
         FromAddition(candidate.Addition),
         candidate.SourceVertexCount,

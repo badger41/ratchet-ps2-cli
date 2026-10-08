@@ -1,5 +1,6 @@
 using System.Numerics;
 using RatchetPs2.Core.Games;
+using RatchetPs2.Core.Shrubs;
 using RatchetPs2.Core.Ties;
 
 namespace RatchetPs2.Games.UYA.Collision;
@@ -8,9 +9,11 @@ public static class UyaCollisionLinkRecovery
 {
     private const int MaximumInstances = 100_000;
     private const float MinimumContainment = 0.95f;
-    private const float MinimumAxisCoverage = 0.5f;
+    private const float TieMinimumAxisCoverage = 0.5f;
+    // Retail shrub collision often covers only the trunk inside a much wider foliage mesh.
+    private const float ShrubMinimumAxisCoverage = 0.15f;
 
-    public static IReadOnlyList<UyaTieCollisionPieceCandidate> FindCandidates(
+    public static IReadOnlyList<UyaCollisionPieceCandidate> FindCandidates(
         byte[] collisionBytes,
         IReadOnlyList<UyaTieCollisionGroup> groups,
         CancellationToken cancellationToken = default)
@@ -19,7 +22,7 @@ public static class UyaCollisionLinkRecovery
         ArgumentNullException.ThrowIfNull(groups);
         var collision = UyaCollisionReader.Read(collisionBytes);
         var pieces = PreparePieces(collision, cancellationToken);
-        var result = new List<UyaTieCollisionPieceCandidate>();
+        var result = new List<UyaCollisionPieceCandidate>();
         foreach (var group in groups)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -27,9 +30,9 @@ public static class UyaCollisionLinkRecovery
                 throw new ArgumentException("UYA TIE collision recovery groups cannot contain null values.", nameof(groups));
             if (group.TieBytes is null
                 || group.TieBytes.Length == 0
-                || group.TieBytes.Length > UyaTieCollisionGenerator.MaximumTieBytes)
+                || group.TieBytes.Length > UyaInstancedCollisionSurfaceGenerator.MaximumSourceBytes)
                 throw new ArgumentException(
-                    $"UYA TIE input must contain 1 through {UyaTieCollisionGenerator.MaximumTieBytes} bytes.",
+                    $"UYA TIE input must contain 1 through {UyaInstancedCollisionSurfaceGenerator.MaximumSourceBytes} bytes.",
                     nameof(groups));
             if (group.Instances is null)
                 throw new ArgumentException("UYA TIE collision recovery instances cannot be null.", nameof(groups));
@@ -44,10 +47,34 @@ public static class UyaCollisionLinkRecovery
         return result;
     }
 
-    public static IReadOnlyList<UyaTieCollisionPieceCandidate> FindCandidates(
+    public static IReadOnlyList<UyaCollisionPieceCandidate> FindShrubCandidates(
+        byte[] collisionBytes,
+        IReadOnlyList<UyaShrubCollisionGroup> groups,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(collisionBytes);
+        ArgumentNullException.ThrowIfNull(groups);
+        var pieces = PreparePieces(UyaCollisionReader.Read(collisionBytes), cancellationToken);
+        var result = new List<UyaCollisionPieceCandidate>();
+        foreach (var group in groups)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (group is null || group.ShrubBytes is null
+                || group.ShrubBytes.Length == 0
+                || group.ShrubBytes.Length > UyaInstancedCollisionSurfaceGenerator.MaximumSourceBytes
+                || group.Instances is null)
+                throw new ArgumentException("UYA shrub collision recovery groups are invalid.", nameof(groups));
+            var mesh = UyaShrubCollisionGenerator.ReadMesh(group.ShrubBytes, cancellationToken);
+            result.AddRange(FindCandidates(
+                mesh.Positions, pieces, group.Instances, "shrub", ShrubMinimumAxisCoverage, cancellationToken));
+        }
+        return result;
+    }
+
+    public static IReadOnlyList<UyaCollisionPieceCandidate> FindCandidates(
         TieClass tie,
         UyaMapCollision collision,
-        IReadOnlyList<UyaTieCollisionInstance> instances,
+        IReadOnlyList<UyaCollisionInstance> instances,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(tie);
@@ -56,34 +83,59 @@ public static class UyaCollisionLinkRecovery
         return FindCandidates(tie, PreparePieces(collision, cancellationToken), instances, cancellationToken);
     }
 
-    private static IReadOnlyList<UyaTieCollisionPieceCandidate> FindCandidates(
+    public static IReadOnlyList<UyaCollisionPieceCandidate> FindShrubCandidates(
+        ShrubClass shrub,
+        UyaMapCollision collision,
+        IReadOnlyList<UyaCollisionInstance> instances,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(shrub);
+        ArgumentNullException.ThrowIfNull(collision);
+        ArgumentNullException.ThrowIfNull(instances);
+        var positions = ShrubSurfaceMeshExtractor.Extract(shrub).Positions;
+        return FindCandidates(
+            positions, PreparePieces(collision, cancellationToken), instances,
+            "shrub", ShrubMinimumAxisCoverage, cancellationToken);
+    }
+
+    private static IReadOnlyList<UyaCollisionPieceCandidate> FindCandidates(
         TieClass tie,
         IReadOnlyList<PreparedPiece> pieces,
-        IReadOnlyList<UyaTieCollisionInstance> instances,
+        IReadOnlyList<UyaCollisionInstance> instances,
         CancellationToken cancellationToken)
     {
-        if (instances.Count > MaximumInstances)
-            throw new ArgumentException($"UYA TIE collision recovery exceeds {MaximumInstances} instances.", nameof(instances));
-        if (instances.Any(value => value is null || string.IsNullOrWhiteSpace(value.Id))
-            || instances.Select(value => value.Id).Distinct(StringComparer.Ordinal).Count() != instances.Count)
-            throw new ArgumentException("UYA TIE collision recovery instance IDs must be unique and non-empty.", nameof(instances));
-
         var lod = tie.LodTopologies
             .Where(value => value.TriangleCount > 0 && value.UnresolvedLogicalVertexCount == 0)
             .OrderByDescending(value => value.LodIndex)
             .FirstOrDefault()
             ?? throw new InvalidDataException("TIE contains no usable decoded surface LOD.");
         var positions = TieSurfaceMeshExtractor.Extract(tie, lod.LodIndex).Positions;
+        return FindCandidates(positions, pieces, instances, "TIE", TieMinimumAxisCoverage, cancellationToken);
+    }
+
+    private static IReadOnlyList<UyaCollisionPieceCandidate> FindCandidates(
+        IReadOnlyList<Vector3> positions,
+        IReadOnlyList<PreparedPiece> pieces,
+        IReadOnlyList<UyaCollisionInstance> instances,
+        string sourceKind,
+        float minimumAxisCoverage,
+        CancellationToken cancellationToken)
+    {
+        if (instances.Count > MaximumInstances)
+            throw new ArgumentException($"UYA {sourceKind} collision recovery exceeds {MaximumInstances} instances.", nameof(instances));
+        if (instances.Any(value => value is null || string.IsNullOrWhiteSpace(value.Id))
+            || instances.Select(value => value.Id).Distinct(StringComparer.Ordinal).Count() != instances.Count)
+            throw new ArgumentException($"UYA {sourceKind} collision recovery instance IDs must be unique and non-empty.", nameof(instances));
         if (positions.Count == 0) return [];
-        var tieMin = positions.Aggregate(new Vector3(float.PositiveInfinity), Vector3.Min);
-        var tieMax = positions.Aggregate(new Vector3(float.NegativeInfinity), Vector3.Max);
-        var tieSize = tieMax - tieMin;
-        var padding = MathF.Max(0.25f, MathF.Max(tieSize.X, MathF.Max(tieSize.Y, tieSize.Z)) * 0.05f);
-        var expandedMin = tieMin - new Vector3(padding);
-        var expandedMax = tieMax + new Vector3(padding);
-        var tieCenter = (tieMin + tieMax) / 2;
-        var tieRadius = MathF.Max(tieSize.Length() / 2, 0.001f);
-        var result = new List<UyaTieCollisionPieceCandidate>();
+        var sourceMin = positions.Aggregate(new Vector3(float.PositiveInfinity), Vector3.Min);
+        var sourceMax = positions.Aggregate(new Vector3(float.NegativeInfinity), Vector3.Max);
+        var sourceSize = sourceMax - sourceMin;
+        var padding = MathF.Max(0.25f, MathF.Max(sourceSize.X, MathF.Max(sourceSize.Y, sourceSize.Z)) * 0.05f);
+        var expandedMin = sourceMin - new Vector3(padding);
+        var expandedMax = sourceMax + new Vector3(padding);
+        var sourceCenter = (sourceMin + sourceMax) / 2;
+        var sourceRadius = MathF.Max(sourceSize.Length() / 2, 0.001f);
+        var result = new List<UyaCollisionPieceCandidate>();
 
         foreach (var instance in instances)
         {
@@ -110,15 +162,15 @@ public static class UyaCollisionLinkRecovery
                 var center = (pieceMin + pieceMax) / 2;
                 if (!Inside(center, expandedMin, expandedMax)) continue;
                 var pieceSize = pieceMax - pieceMin;
-                var coverageX = AxisCoverage(pieceSize.X, tieSize.X);
-                var coverageY = AxisCoverage(pieceSize.Y, tieSize.Y);
-                var coverageZ = AxisCoverage(pieceSize.Z, tieSize.Z);
-                if ((coverageX >= MinimumAxisCoverage ? 1 : 0)
-                    + (coverageY >= MinimumAxisCoverage ? 1 : 0)
-                    + (coverageZ >= MinimumAxisCoverage ? 1 : 0) < 2) continue;
+                var coverageX = AxisCoverage(pieceSize.X, sourceSize.X);
+                var coverageY = AxisCoverage(pieceSize.Y, sourceSize.Y);
+                var coverageZ = AxisCoverage(pieceSize.Z, sourceSize.Z);
+                if ((coverageX >= minimumAxisCoverage ? 1 : 0)
+                    + (coverageY >= minimumAxisCoverage ? 1 : 0)
+                    + (coverageZ >= minimumAxisCoverage ? 1 : 0) < 2) continue;
                 var topCoverage = (coverageX + coverageY + coverageZ
                     - MathF.Min(coverageX, MathF.Min(coverageY, coverageZ))) / 2;
-                var centerFit = 1 - Math.Clamp(Vector3.Distance(center, tieCenter) / tieRadius, 0, 1);
+                var centerFit = 1 - Math.Clamp(Vector3.Distance(center, sourceCenter) / sourceRadius, 0, 1);
                 result.Add(new(
                     instance.Id,
                     piece.SourceIndex,
@@ -180,7 +232,7 @@ public static class UyaCollisionLinkRecovery
         if (!Finite(transform.Position) || !Finite(transform.Rotation) || !Finite(transform.Scale)
             || transform.Rotation.LengthSquared() == 0
             || transform.Scale.X == 0 || transform.Scale.Y == 0 || transform.Scale.Z == 0)
-            throw new InvalidDataException("UYA TIE collision recovery transform is invalid.");
+            throw new InvalidDataException("UYA instanced collision recovery transform is invalid.");
         return Matrix4x4.CreateScale(transform.Scale)
             * Matrix4x4.CreateFromQuaternion(Quaternion.Normalize(transform.Rotation))
             * Matrix4x4.CreateTranslation(transform.Position);
@@ -191,8 +243,8 @@ public static class UyaCollisionLinkRecovery
         && value.Y >= minimum.Y && value.Y <= maximum.Y
         && value.Z >= minimum.Z && value.Z <= maximum.Z;
 
-    private static float AxisCoverage(float piece, float tie) =>
-        tie <= 0.001f ? piece <= 0.5f ? 1 : 0 : Math.Clamp(piece / tie, 0, 1);
+    private static float AxisCoverage(float piece, float source) =>
+        source <= 0.001f ? piece <= 0.5f ? 1 : 0 : Math.Clamp(piece / source, 0, 1);
 
     private static bool Finite(Vector3 value) =>
         float.IsFinite(value.X) && float.IsFinite(value.Y) && float.IsFinite(value.Z);

@@ -37,13 +37,17 @@ public sealed record CollisionSolidAddition(string Id, IReadOnlyList<CollisionSo
 
 public sealed record CollisionSolidPiece(int SourcePieceIndex, IReadOnlyList<CollisionSolidFace> Faces);
 
-public sealed record CollisionTieInstance(string Id, CollisionInstanceTransform Transform);
+public sealed record CollisionInstance(string Id, CollisionInstanceTransform Transform);
 
 public sealed record CollisionTieGroup(
     byte[] TieBytes,
-    IReadOnlyList<CollisionTieInstance> Instances);
+    IReadOnlyList<CollisionInstance> Instances);
 
-public sealed record CollisionTiePieceCandidate(
+public sealed record CollisionShrubGroup(
+    byte[] ShrubBytes,
+    IReadOnlyList<CollisionInstance> Instances);
+
+public sealed record CollisionInstancePieceCandidate(
     string InstanceId,
     int SourcePieceIndex,
     float Confidence);
@@ -55,22 +59,22 @@ public readonly record struct CollisionInstanceTransform(
     CollisionRotation Rotation,
     CollisionVertex Scale);
 
-public enum TieCollisionCandidateKind
+public enum InstancedCollisionCandidateKind
 {
     Surface = 1,
     ConvexHull = 2,
 }
 
-public sealed record TieCollisionRecipe(
-    TieCollisionCandidateKind Kind,
+public sealed record InstancedCollisionRecipe(
+    InstancedCollisionCandidateKind Kind,
     int Version,
     int LodIndex,
     byte RawType,
     int MaximumFaces,
     int ProfileSections = 0);
 
-public sealed record TieCollisionCandidate(
-    TieCollisionRecipe Recipe,
+public sealed record InstancedCollisionCandidate(
+    InstancedCollisionRecipe Recipe,
     CollisionSolidAddition Addition,
     int SourceVertexCount,
     int SourceTriangleCount,

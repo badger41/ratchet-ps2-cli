@@ -8,7 +8,7 @@ public static class CollisionWork
     public const int DefaultMaximumFaces = 100_000;
     public const int DefaultProfileSections = 6;
 
-    public static TieCollisionCandidate GenerateTieSurfaceCandidate(
+    public static InstancedCollisionCandidate GenerateTieSurfaceCandidate(
         byte[] tieBytes,
         GameId gameId,
         string additionId,
@@ -26,7 +26,7 @@ public static class CollisionWork
         };
     }
 
-    public static TieCollisionCandidate GenerateTieDecimatedCandidate(
+    public static InstancedCollisionCandidate GenerateTieDecimatedCandidate(
         byte[] tieBytes,
         GameId gameId,
         string additionId,
@@ -43,7 +43,7 @@ public static class CollisionWork
         };
     }
 
-    public static TieCollisionCandidate GenerateTieConvexHullCandidate(
+    public static InstancedCollisionCandidate GenerateTieConvexHullCandidate(
         byte[] tieBytes,
         GameId gameId,
         string additionId,
@@ -59,6 +59,41 @@ public static class CollisionWork
             GameId.UYA => UyaCollisionAdapter.FromCandidate(UyaTieCollisionHullGenerator.Generate(
                 tieBytes, additionId, lodIndex, rawType, profileSections, maximumFaces, cancellationToken)),
             _ => throw new NotSupportedException($"Tie collision convex hull generation does not support {gameId}."),
+        };
+    }
+
+    public static InstancedCollisionCandidate GenerateShrubSurfaceCandidate(
+        byte[] shrubBytes,
+        GameId gameId,
+        string additionId,
+        byte rawType = 0,
+        int maximumFaces = DefaultMaximumFaces,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(shrubBytes);
+        return gameId switch
+        {
+            GameId.UYA => UyaCollisionAdapter.FromCandidate(UyaShrubCollisionGenerator.GenerateSurface(
+                shrubBytes, additionId, rawType, maximumFaces, cancellationToken)),
+            _ => throw new NotSupportedException($"Shrub collision generation does not support {gameId}."),
+        };
+    }
+
+    public static InstancedCollisionCandidate GenerateShrubConvexHullCandidate(
+        byte[] shrubBytes,
+        GameId gameId,
+        string additionId,
+        byte rawType = 0,
+        int profileSections = DefaultProfileSections,
+        int maximumFaces = DefaultMaximumFaces,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(shrubBytes);
+        return gameId switch
+        {
+            GameId.UYA => UyaCollisionAdapter.FromCandidate(UyaShrubCollisionGenerator.GenerateHull(
+                shrubBytes, additionId, rawType, profileSections, maximumFaces, cancellationToken)),
+            _ => throw new NotSupportedException($"Shrub collision convex hull generation does not support {gameId}."),
         };
     }
 
@@ -129,7 +164,7 @@ public static class CollisionWork
     {
         ArgumentNullException.ThrowIfNull(collisionBytes);
         if (sourcePieceIndex < 0) throw new ArgumentOutOfRangeException(nameof(sourcePieceIndex));
-        UyaTieCollisionGenerator.ValidateAdditionId(additionId);
+        UyaInstancedCollisionSurfaceGenerator.ValidateAdditionId(additionId);
         var piece = DecodeSolidPieces(collisionBytes, gameId, cancellationToken)
             .SingleOrDefault(value => value.SourcePieceIndex == sourcePieceIndex)
             ?? throw new ArgumentOutOfRangeException(
@@ -154,7 +189,7 @@ public static class CollisionWork
         return result;
     }
 
-    public static IReadOnlyList<CollisionTiePieceCandidate> FindTieCollisionCandidates(
+    public static IReadOnlyList<CollisionInstancePieceCandidate> FindTieCollisionCandidates(
         byte[] collisionBytes,
         GameId gameId,
         IReadOnlyList<CollisionTieGroup> groups,
@@ -171,13 +206,40 @@ public static class CollisionWork
                     collisionBytes,
                     groups.Select(group => new UyaTieCollisionGroup(
                         group.TieBytes,
-                        group.Instances.Select(value => new UyaTieCollisionInstance(
+                        group.Instances.Select(value => new UyaCollisionInstance(
                             value.Id,
                             UyaCollisionAdapter.ToTransform(value.Transform))).ToArray())).ToArray(),
                     cancellationToken)
-                .Select(value => new CollisionTiePieceCandidate(
+                .Select(value => new CollisionInstancePieceCandidate(
                     value.InstanceId, value.SourcePieceIndex, value.Confidence)).ToArray(),
             _ => throw new NotSupportedException($"TIE collision link recovery does not support {gameId}."),
+        };
+    }
+
+    public static IReadOnlyList<CollisionInstancePieceCandidate> FindShrubCollisionCandidates(
+        byte[] collisionBytes,
+        GameId gameId,
+        IReadOnlyList<CollisionShrubGroup> groups,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(collisionBytes);
+        ArgumentNullException.ThrowIfNull(groups);
+        if (groups.Any(group => group is null || group.ShrubBytes is null || group.Instances is null
+            || group.Instances.Any(instance => instance is null)))
+            throw new ArgumentException("Shrub collision recovery groups are invalid.", nameof(groups));
+        return gameId switch
+        {
+            GameId.UYA => UyaCollisionLinkRecovery.FindShrubCandidates(
+                    collisionBytes,
+                    groups.Select(group => new UyaShrubCollisionGroup(
+                        group.ShrubBytes,
+                        group.Instances.Select(value => new UyaCollisionInstance(
+                            value.Id,
+                            UyaCollisionAdapter.ToTransform(value.Transform))).ToArray())).ToArray(),
+                    cancellationToken)
+                .Select(value => new CollisionInstancePieceCandidate(
+                    value.InstanceId, value.SourcePieceIndex, value.Confidence)).ToArray(),
+            _ => throw new NotSupportedException($"Shrub collision link recovery does not support {gameId}."),
         };
     }
 
