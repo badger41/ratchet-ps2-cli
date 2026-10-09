@@ -71,6 +71,7 @@ internal static class UyaLevelAssetComposer
         AddReplacement(replacementByOffset, "occlusion", header.OcclusionOffset, replacements.Occlusion, assetWadLength);
         AddReplacement(replacementByOffset, "sky", header.SkyOffset, replacements.Sky, assetWadLength);
         AddReplacement(replacementByOffset, "collision", header.CollisionOffset, replacements.Collision, assetWadLength);
+        AddReplacement(replacementByOffset, "FX textures", header.FxTextureDataOffset, replacements.Fx, assetWadLength);
         if (replacementByOffset.Count == 0)
             return new(headerBytes.ToArray(), assetWadBytes.ToArray());
 
@@ -111,6 +112,31 @@ internal static class UyaLevelAssetComposer
         RelocateSequenceTable(composedHeader, header, sceneViewSize, assetWadLength);
         ValidateComposition(composedHeader, composedAsset, replacements);
         return new(composedHeader, composedAsset);
+    }
+
+    internal static int FindPayloadEnd(
+        ReadOnlySpan<byte> headerBytes,
+        ReadOnlySpan<byte> assetWadBytes,
+        int payloadOffset)
+    {
+        var assetWadLength = assetWadBytes.Length;
+        var header = LevelAssetReader.ReadHeader(headerBytes);
+        var mobys = LevelAssetReader.ReadModelDefinitions(
+            headerBytes, header.MobyModelOffset, header.MobyModelCount);
+        var ties = LevelAssetReader.ReadModelDefinitions(
+            headerBytes, header.TieModelOffset, header.TieModelCount);
+        var shrubs = LevelAssetReader.ReadShrubDefinitions(
+            headerBytes, header.ShrubModelOffset, header.ShrubModelCount);
+        var end = CollectReferences(header, mobys, ties, shrubs, assetWadLength)
+            .Select(value => value.AssetOffset)
+            .Append(header.SceneViewSize)
+            .Append(assetWadLength)
+            .Where(value => value > payloadOffset && value <= assetWadLength)
+            .DefaultIfEmpty(-1)
+            .Min();
+        if (payloadOffset <= 0 || payloadOffset >= assetWadLength || end <= payloadOffset)
+            throw new InvalidDataException("UYA asset payload has no valid end boundary.");
+        return end;
     }
 
     public static byte[] ComposeTfragChunk(
@@ -255,6 +281,7 @@ internal static class UyaLevelAssetComposer
         Verify("occlusion", replacements.Occlusion, header.OcclusionOffset, assetBytes, offsets);
         Verify("sky", replacements.Sky, header.SkyOffset, assetBytes, offsets);
         Verify("collision", replacements.Collision, header.CollisionOffset, assetBytes, offsets);
+        Verify("FX textures", replacements.Fx, header.FxTextureDataOffset, assetBytes, offsets);
     }
 
     private static void Verify(

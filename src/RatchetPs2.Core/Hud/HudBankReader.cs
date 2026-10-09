@@ -7,6 +7,11 @@ public static class HudBankReader
     public const int HeaderFixedLength = 0xb4;
     public const int BankCount = 5;
     public const int PaletteLength = 0x400;
+    public const int MaximumIconMappings = 1024;
+    public const int CpuBankAlignment = 0x10;
+    public const int DmaBankAlignment = 0x40;
+    public const uint IconMappingTerminator = 0x0000ffff;
+    public const uint SerializedPayloadOffsetMask = 0x7fffffff;
 
     public static HudBankSet Read(
         ReadOnlySpan<byte> headerBytes,
@@ -23,12 +28,22 @@ public static class HudBankReader
             .Select(index => index < bankBytes.Count ? bankBytes[index] : [])
             .ToArray();
         var header = ReadHeader(headerBytes);
-        var icons = ReadIcons(headerBytes, header);
+        ValidateCumulativeCounts(header.PaletteCumulativeCounts, "palette");
+        ValidateCumulativeCounts(header.TextureCumulativeCounts, "texture");
+        var (icons, iconTerminatorOffset) = ReadIcons(headerBytes, header);
+        ValidateTableRange(headerBytes, header.FrameListOffset, header.FrameCount, 4, "HUD frame table");
+        ValidateTableRange(
+            headerBytes, header.PaletteListOffset, GetFinalCount(header.PaletteCumulativeCounts), 8,
+            "HUD palette table");
+        ValidateTableRange(
+            headerBytes, header.TextureListOffset, GetFinalCount(header.TextureCumulativeCounts), 8,
+            "HUD texture table");
         var frames = ReadFrames(headerBytes, header);
+        ValidateIconFrameRanges(icons, frames.Count);
         var palettes = ReadPalettes(headerBytes, banks, header);
         var textures = ReadTextures(headerBytes, banks, header);
 
-        return new HudBankSet(header, icons, frames, palettes, textures);
+        return new HudBankSet(header, icons, frames, palettes, textures, iconTerminatorOffset);
     }
 
     public static bool TryGetPalette(HudBankSet hud, int paletteId, out HudPaletteEntry palette)
@@ -62,22 +77,47 @@ public static class HudBankReader
             data.Slice(0x68, HeaderFixedLength - 0x68).ToArray());
     }
 
-    private static IReadOnlyList<HudIconEntry> ReadIcons(ReadOnlySpan<byte> headerBytes, HudHeader header)
+    private static (IReadOnlyList<HudIconEntry> Icons, int TerminatorOffset) ReadIcons(
+        ReadOnlySpan<byte> headerBytes,
+        HudHeader header)
     {
-        var icons = new List<HudIconEntry>(header.IconCount);
-        for (var i = 0; i < header.IconCount; i++)
+        if (header.IconCount is 0 or > MaximumIconMappings + 1)
+        {
+            throw new InvalidDataException(
+                $"HUD icon record count must include one terminator and at most {MaximumIconMappings} mappings.");
+        }
+
+        var mappingCount = header.IconCount - 1;
+        var icons = new List<HudIconEntry>(mappingCount);
+        var spriteIds = new HashSet<ushort>();
+        for (var i = 0; i < mappingCount; i++)
         {
             var offset = checked(header.IconListOffset + (i * 8));
             ValidateHeaderRange(headerBytes, offset, 8, "HUD icon entry");
-            icons.Add(new HudIconEntry(
+            var icon = new HudIconEntry(
                 i,
                 ReadUInt16LittleEndian(headerBytes, offset),
                 ReadUInt16LittleEndian(headerBytes, offset + 2),
                 ReadUInt16LittleEndian(headerBytes, offset + 4),
-                ReadUInt16LittleEndian(headerBytes, offset + 6)));
+                ReadUInt16LittleEndian(headerBytes, offset + 6));
+            if (!spriteIds.Add(icon.IconId))
+            {
+                throw new InvalidDataException($"HUD sprite ID 0x{icon.IconId:X4} is duplicated.");
+            }
+
+            icons.Add(icon);
         }
 
-        return icons;
+        var terminatorOffset = checked(header.IconListOffset + (mappingCount * 8));
+        ValidateHeaderRange(headerBytes, terminatorOffset, 4, "HUD icon terminator");
+        var terminator = ReadUInt32LittleEndian(headerBytes, terminatorOffset);
+        if (terminator != IconMappingTerminator)
+        {
+            throw new InvalidDataException(
+                $"HUD icon table has terminator 0x{terminator:X8}; expected 0x{IconMappingTerminator:X8}.");
+        }
+
+        return (icons, terminatorOffset);
     }
 
     private static IReadOnlyList<HudFrameEntry> ReadFrames(ReadOnlySpan<byte> headerBytes, HudHeader header)
@@ -217,7 +257,35 @@ public static class HudBankReader
 
     private static int DecodePayloadOffset(uint encodedOffset)
     {
-        return checked((int)(encodedOffset & 0x7fffffff));
+        return checked((int)(encodedOffset & SerializedPayloadOffsetMask));
+    }
+
+    private static void ValidateCumulativeCounts(IReadOnlyList<int> counts, string label)
+    {
+        var previous = 0;
+        for (var bank = 0; bank < counts.Count; bank++)
+        {
+            var count = counts[bank];
+            if (count < previous)
+            {
+                throw new InvalidDataException(
+                    $"HUD {label} cumulative count decreases at bank {bank}: {count} < {previous}.");
+            }
+
+            previous = count;
+        }
+    }
+
+    private static void ValidateIconFrameRanges(IReadOnlyList<HudIconEntry> icons, int frameCount)
+    {
+        foreach (var icon in icons)
+        {
+            if ((long)icon.FirstFrameIndex + icon.FrameCount > frameCount)
+            {
+                throw new InvalidDataException(
+                    $"HUD sprite ID 0x{icon.IconId:X4} references frames outside the frame table.");
+            }
+        }
     }
 
     private static bool IsPayloadRangeValid(ReadOnlySpan<byte> data, int offset, int length)
@@ -233,6 +301,19 @@ public static class HudBankReader
         }
     }
 
+    private static void ValidateTableRange(
+        ReadOnlySpan<byte> data,
+        int offset,
+        int count,
+        int recordLength,
+        string label)
+    {
+        var length = (long)count * recordLength;
+        if (count < 0 || offset < 0 || length > int.MaxValue
+            || (long)offset + length > data.Length)
+            throw new InvalidDataException($"{label} points outside the HUD header.");
+    }
+
 }
 
 public sealed record HudBankSet(
@@ -240,7 +321,8 @@ public sealed record HudBankSet(
     IReadOnlyList<HudIconEntry> Icons,
     IReadOnlyList<HudFrameEntry> Frames,
     IReadOnlyList<HudPaletteEntry> Palettes,
-    IReadOnlyList<HudTextureEntry> Textures);
+    IReadOnlyList<HudTextureEntry> Textures,
+    int IconTerminatorOffset);
 
 public sealed record HudHeader(
     ushort IconCount,
@@ -254,7 +336,10 @@ public sealed record HudHeader(
     IReadOnlyList<int> TextureCumulativeCounts,
     IReadOnlyList<int> UnknownCounts48,
     IReadOnlyList<int> BankSizes,
-    byte[] RuntimePointerArea);
+    byte[] RuntimePointerArea)
+{
+    public int IconMappingCount => IconCount - 1;
+}
 
 public sealed record HudIconEntry(
     int Index,

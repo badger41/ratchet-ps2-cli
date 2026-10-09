@@ -1,9 +1,11 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.IO.Compression;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
+using RatchetPs2.Core.Fx;
 using RatchetPs2.Core.Games;
 using RatchetPs2.Core.Gameplay;
 using RatchetPs2.Core.Hud;
@@ -21,6 +23,7 @@ using RatchetPs2.Core.Wad;
 using RatchetPs2.Core.Wad.Models;
 using RatchetPs2.Games.DL.Armor;
 using RatchetPs2.Games.DL.Gameplay;
+using RatchetPs2.Games.DL.Hud;
 using RatchetPs2.Games.DL.Level;
 using RatchetPs2.Games.DL.Moby;
 using RatchetPs2.Games.DL.Online;
@@ -32,6 +35,7 @@ using RatchetPs2.Games.RC1.Level;
 using RatchetPs2.Games.RC1.Ties;
 using RatchetPs2.Games.UYA.Collision;
 using RatchetPs2.Games.UYA.Gameplay;
+using RatchetPs2.Games.UYA.Hud;
 using RatchetPs2.Games.UYA.Level;
 using RatchetPs2.Sdk;
 
@@ -115,6 +119,37 @@ if (args.Contains("--uya-texture-inventory", StringComparer.Ordinal))
     return;
 }
 
+if (args.Contains("--alpha-aware-kmeans", StringComparer.Ordinal))
+{
+    ValidateAlphaAwareKMeans();
+    Console.WriteLine("Alpha-aware K-means compatibility tests passed.");
+    return;
+}
+
+if (args.Contains("--joint-palette", StringComparer.Ordinal))
+{
+    ValidateJointPaletteOptimization();
+    Console.WriteLine("Joint imported/custom palette optimization tests passed.");
+    return;
+}
+
+if (args.Contains("--hud-contract", StringComparer.Ordinal))
+{
+    ValidateHudBankParsing();
+    ValidateHudSpriteIds();
+    ValidateHudBankComposition();
+    Console.WriteLine("HUD bank, sprite-ID, and composition contract tests passed.");
+    return;
+}
+
+if (args.Contains("--fx-contract", StringComparer.Ordinal))
+{
+    ValidateFxTextureCatalog();
+    ValidateFxTextureComposition();
+    Console.WriteLine("FX texture inventory, label, and composition contract tests passed.");
+    return;
+}
+
 if (args.Contains("--uya-static-instances", StringComparer.Ordinal))
 {
     ValidateUyaGameplayTypedParsing();
@@ -174,6 +209,8 @@ ValidateUyaLevelArchiveBuilder();
 ValidateUyaLevelAssetComposer();
 ValidateIsoPatchPlanning();
 ValidateTextureInventory();
+ValidateAlphaAwareKMeans();
+ValidateJointPaletteOptimization();
 ValidatePaletteOptimization();
 ValidateUyaStaticAssetComposition();
 ValidateUyaArchiveQualificationCorpus();
@@ -206,6 +243,10 @@ ValidateGameplayLevelSettingsParsing();
 ValidateGameplayMobyInstancesParsing();
 ValidateCodeSegmentParsing();
 ValidateHudBankParsing();
+ValidateHudSpriteIds();
+ValidateHudBankComposition();
+ValidateFxTextureCatalog();
+ValidateFxTextureComposition();
 ValidateWorldInstanceParsing();
 ValidateAssetSlicing();
 ValidateEnvironmentTextureRenderPackage();
@@ -886,6 +927,17 @@ static void ValidateUyaLevelWadParsing()
 
 static void ValidateUyaLevelWadInventory()
 {
+    var expectedHeader = new byte[0x90];
+    expectedHeader[0x20] = 0x55;
+    var repackedHeader = expectedHeader.Concat(new byte[16]).ToArray();
+    WriteInt32(repackedHeader, 0x88, 0x1234);
+    WriteInt32(repackedHeader, 0x8c, 0x5678);
+    Expect(UyaLevelWadValidator.EquivalentAssetHeader(expectedHeader, repackedHeader),
+        "UYA asset-header comparison should allow recalculated size fields and alignment padding");
+    repackedHeader[0x20] ^= 0xff;
+    Expect(!UyaLevelWadValidator.EquivalentAssetHeader(expectedHeader, repackedHeader),
+        "UYA asset-header comparison should reject changes outside recalculated size fields");
+
     var bytes = CreateSyntheticUyaLooseLevelWad(payloadBaseSector: 0x1234);
     bytes[0x100] = 0xE1;
     bytes[(3 * UyaLevelConstants.SectorSize) + 0x60] = 0xE2;
@@ -1495,6 +1547,86 @@ static void ValidateTextureInventory()
     ExpectThrows<OperationCanceledException>(() => TextureInventoryBuilder.Build(inputs, cancellation.Token));
 }
 
+static void ValidateAlphaAwareKMeans()
+{
+    // Captured from deadlocked-level-packer's MIT-licensed PngQuantizer baseline.
+    var pixels = new[]
+    {
+        new TextureColor(240, 30, 20, 255),
+        new TextureColor(240, 30, 20, 255),
+        new TextureColor(240, 30, 20, 255),
+        new TextureColor(220, 50, 30, 224),
+        new TextureColor(20, 220, 40, 255),
+        new TextureColor(20, 220, 40, 255),
+        new TextureColor(40, 200, 60, 160),
+        new TextureColor(30, 40, 230, 255),
+        new TextureColor(30, 40, 230, 255),
+        new TextureColor(60, 70, 210, 96),
+        new TextureColor(250, 240, 30, 192),
+        new TextureColor(210, 180, 50, 128),
+        new TextureColor(200, 20, 210, 64),
+        new TextureColor(10, 240, 230, 32),
+        new TextureColor(255, 255, 255, 8),
+        new TextureColor(255, 0, 0, 0),
+        new TextureColor(0, 255, 0, 0),
+        new TextureColor(0, 0, 0, 0),
+    };
+    var expectedPalette = new[]
+    {
+        new TextureColor(20, 220, 40, 255),
+        new TextureColor(70, 93, 177, 125),
+        new TextureColor(238, 68, 24, 236),
+        new TextureColor(0, 0, 0, 0),
+    };
+    var expectedIndices = new[] { 2, 2, 2, 2, 0, 0, 1, 1, 1, 1, 2, 1, 1, 3, 3, 3, 3, 3 };
+
+    var quantized = AlphaAwareKMeans.Quantize(pixels, 4);
+    Expect(quantized.Palette.SequenceEqual(expectedPalette)
+        && quantized.Indices.SequenceEqual(expectedIndices),
+        "alpha-aware K-means should match the deadlocked-level-packer golden output");
+    for (var iteration = 0; iteration < 10; iteration++)
+    {
+        var repeated = AlphaAwareKMeans.Quantize(pixels, 4);
+        Expect(repeated.Palette.SequenceEqual(expectedPalette)
+            && repeated.Indices.SequenceEqual(expectedIndices),
+            "alpha-aware K-means should be deterministic");
+    }
+
+    var exact = AlphaAwareKMeans.Quantize([
+        new(10, 20, 30, 255),
+        new(1, 2, 3, 0),
+        new(40, 50, 60, 128),
+    ], 4);
+    Expect(exact.Palette.SequenceEqual([
+            new(10, 20, 30, 255),
+            new(40, 50, 60, 128),
+            new(0, 0, 0, 0),
+            new(0, 0, 0, 0),
+        ])
+        && exact.Indices.SequenceEqual([0, 2, 1]),
+        "alpha-aware K-means should reserve transparent and sort padded entries last");
+
+    var oneColor = AlphaAwareKMeans.Quantize([new(200, 100, 50, 0)], 1);
+    Expect(oneColor.Palette.SequenceEqual([new TextureColor(200, 100, 50, 0)])
+        && oneColor.Indices.SequenceEqual([0]),
+        "a one-entry baseline palette should retain its transparent RGB value");
+    var empty = AlphaAwareKMeans.Quantize([], 2);
+    Expect(empty.Palette.SequenceEqual([new TextureColor(0, 0, 0, 0), new(0, 0, 0, 0)])
+        && empty.Indices.Count == 0,
+        "empty input should produce a padded empty palette");
+    ExpectThrows<ArgumentOutOfRangeException>(() => AlphaAwareKMeans.Quantize(pixels, 0));
+    using var cancellation = new CancellationTokenSource();
+    cancellation.Cancel();
+    ExpectThrows<OperationCanceledException>(() =>
+        AlphaAwareKMeans.Quantize(pixels, 4, cancellation.Token));
+
+    var pif = PifWriter.Write(PifWriter.CreateIndexed8(2, 2, new byte[0x400], [0, 1, 2, 3]));
+    var imported = Indexed8PifImporter.Convert("pif", pif, 4, "test");
+    Expect(imported is { Width: 2, Height: 2 } && imported.PifBytes.SequenceEqual(pif),
+        "indexed-8 PIF import should canonicalize an eligible PIF without changing its pixels");
+    ExpectThrows<InvalidDataException>(() => Indexed8PifImporter.Convert("pif", pif, 1, "test"));
+}
+
 static void ValidatePaletteOptimization()
 {
     var sizes = new[] { 10, 8, 5, 3, 3, 3 };
@@ -1567,6 +1699,117 @@ static void ValidatePaletteOptimization()
     using var cancellation = new CancellationTokenSource();
     cancellation.Cancel();
     ExpectThrows<OperationCanceledException>(() => PaletteOptimizer.Optimize(inventory, cancellation.Token));
+}
+
+static void ValidateJointPaletteOptimization()
+{
+    var importedRed = new TextureColor(255, 0, 0, 255);
+    var importedTexture = SyntheticInventoryTexture("imported-red", [importedRed], capacity: 4);
+    var imported = new TextureInventory(1, [importedTexture], 1);
+    var nearRed = new TextureColor(254, 0, 0, 255);
+    var customPixels = new[]
+    {
+        nearRed, nearRed, nearRed,
+        new TextureColor(0, 255, 0, 255),
+        new TextureColor(0, 0, 255, 255),
+        new TextureColor(255, 255, 0, 255),
+    };
+    var custom = new CustomTexturePaletteInput(
+        "custom", PifTextureEncoding.Indexed4, 0, 0, 4, customPixels);
+
+    var fidelity = PaletteOptimizer.Optimize(
+        imported, [custom], new(PaletteOptimizationProfile.CurrentMappingVersion, 0));
+    Expect(fidelity.ReuseThreshold == 0
+        && fidelity.Palettes.Count == 2
+        && fidelity.CustomAssignments.Single() is
+        {
+            PaletteIndex: 1,
+            MeanSquaredError: 0,
+            MaximumSquaredError: 0,
+            ReusedImportedColorCount: 0,
+            ReusedImportedTexelCount: 0,
+        }, "visual-fidelity strength should allocate an exact custom palette when fixed slots are insufficient");
+
+    var reuse = PaletteOptimizer.Optimize(
+        imported, [custom], new(PaletteOptimizationProfile.CurrentMappingVersion, 100));
+    var customAssignment = reuse.CustomAssignments.Single();
+    Expect(reuse.ReuseThreshold == PaletteOptimizationProfile.MaximumError
+        && reuse.Palettes.Count == 1
+        && customAssignment.PaletteIndex == 0
+        && customAssignment.ReusedImportedColorCount == 1
+        && customAssignment.ReusedImportedTexelCount == 3
+        && customAssignment.NewPaletteEntryCount == 3
+        && customAssignment.MeanSquaredError > 0
+        && customAssignment.MaximumSquaredError <= reuse.ReuseThreshold,
+        "VRAM-savings strength should reuse a sufficiently close imported centroid");
+    Expect(reuse.Palettes[0].Entries.Single(value => value.Color == importedRed).Color == importedRed
+        && reuse.ImportedAssignments.Single().IndexRemaps.Single().Color == importedRed,
+        "joint optimization must preserve imported colors and remaps exactly");
+    Expect(reuse.CustomAssignments.Single().PixelIndices.Take(3).All(value =>
+            reuse.Palettes[0].Entries.Single(entry => entry.PaletteIndex == value).Color == importedRed),
+        "custom texels should remap to the selected fixed imported color");
+    Expect(reuse.CustomAssignments.Single().PixelIndices.Count == customPixels.Length,
+        "selected palette evaluation should materialize one index per custom texel");
+
+    var middle = new PaletteOptimizationProfile(PaletteOptimizationProfile.CurrentMappingVersion, 50);
+    Expect(Math.Abs(middle.ReuseThreshold - 0.0125) < 1e-12,
+        "paletteOptimization.v1 strength should use the documented quadratic threshold");
+
+    var manyColors = Enumerable.Range(0, 32)
+        .Select(value => new TextureColor((byte)(value * 7), (byte)(255 - value * 3), (byte)(value * 5), 255))
+        .ToArray();
+    var quantizedInput = new CustomTexturePaletteInput(
+        "quantized", PifTextureEncoding.Indexed4, 0, 0, 4, manyColors);
+    var quantized = PaletteOptimizer.Optimize(
+        new TextureInventory(1, [], 0), [quantizedInput], PaletteOptimizationProfile.Default);
+    var repeated = PaletteOptimizer.Optimize(
+        new TextureInventory(1, [], 0), [quantizedInput], PaletteOptimizationProfile.Default);
+    Expect(quantized.Palettes.Single().Entries.Count <= 4
+        && quantized.CustomAssignments.Single().OutputDistinctColorCount <= 4
+        && quantized.CustomAssignments.Single().MaximumSquaredError > 0,
+        "custom textures above capacity should use bounded alpha-aware quantization");
+    Expect(JsonSerializer.SerializeToUtf8Bytes(quantized)
+            .SequenceEqual(JsonSerializer.SerializeToUtf8Bytes(repeated)),
+        "joint custom palette optimization should be deterministic");
+
+    var orderedCustom = new CustomTexturePaletteInput(
+        "z-custom", PifTextureEncoding.Indexed4, 0, 0, 4, [new(120, 40, 200, 255)]);
+    var forward = PaletteOptimizer.Optimize(imported, [custom, orderedCustom], PaletteOptimizationProfile.Default);
+    var reverse = PaletteOptimizer.Optimize(imported, [orderedCustom, custom], PaletteOptimizationProfile.Default);
+    Expect(JsonSerializer.SerializeToUtf8Bytes(forward)
+            .SequenceEqual(JsonSerializer.SerializeToUtf8Bytes(reverse)),
+        "joint custom palette optimization should be independent of input order");
+
+    var warningInput = new CustomTexturePaletteInput(
+        "warning", PifTextureEncoding.Indexed4, 0, 0, 1,
+        [new(0, 0, 0, 255), new(255, 255, 255, 255)]);
+    var warning = PaletteOptimizer.Optimize(
+        new TextureInventory(1, [], 0), [warningInput], PaletteOptimizationProfile.Default);
+    Expect(warning.CustomAssignments.Single().MaximumSquaredError
+            >= PaletteOptimizationProfile.MaximumError
+        && warning.Warnings.Single().Contains("warning", StringComparison.Ordinal),
+        "joint optimization should warn when quantization reaches the maximum error bound");
+
+    var transparent = new TextureColor(0, 0, 0, 0);
+    var reservedInput = new CustomTexturePaletteInput(
+        "reserved", PifTextureEncoding.Indexed4, 0, 0, 4,
+        [transparent, new(20, 30, 40, 255)],
+        [new OptimizedPaletteEntry(3, transparent, true)]);
+    var reserved = PaletteOptimizer.Optimize(
+        new TextureInventory(1, [], 0), [reservedInput], PaletteOptimizationProfile.Default);
+    Expect(reserved.Palettes.Single().Entries.Single(value => value.PaletteIndex == 3) is
+        { Color.Alpha: 0, Reserved: true }
+        && reserved.CustomAssignments.Single().PixelIndices[0] == 3,
+        "joint optimization should preserve required transparent indexes");
+
+    ExpectThrows<ArgumentException>(() => PaletteOptimizer.Optimize(
+        imported, [custom], new("paletteOptimization.v2", 50)));
+    ExpectThrows<ArgumentOutOfRangeException>(() => PaletteOptimizer.Optimize(
+        imported, [custom], new(PaletteOptimizationProfile.CurrentMappingVersion, 101)));
+    using var cancellation = new CancellationTokenSource();
+    cancellation.Cancel();
+    ExpectThrows<OperationCanceledException>(() => PaletteOptimizer.Optimize(
+        imported, [custom], PaletteOptimizationProfile.Default, cancellation.Token));
 }
 
 static TextureInventoryEntry SyntheticInventoryTexture(
@@ -2432,6 +2675,38 @@ static void ValidateUyaGameplayTypedParsing()
 
 static void ValidateUyaStaticInstanceParsing()
 {
+    var tieTemplate = UyaGameplayInstanceTemplates.CreateTie(0x1200, 7);
+    var placedTie = UyaTieInstancesReader.ReadInstance(tieTemplate);
+    Expect(placedTie is { ClassId: 0x1200, OcclusionId: 7 }
+        && BinaryPrimitives.ReadInt32LittleEndian(tieTemplate.AsSpan(4))
+            == UyaGameplayInstanceTemplates.DefaultTieDrawDistance,
+        "UYA tie templates should expose their semantic identifier and use the retail draw-distance encoding");
+    WriteSingle(tieTemplate, 4, UyaGameplayInstanceTemplates.DefaultTieDrawDistance);
+    var normalizedTie = UyaGameplayInstanceTemplates.NormalizePlacedTie(tieTemplate);
+    Expect(BinaryPrimitives.ReadInt32LittleEndian(normalizedTie.AsSpan(4))
+            == UyaGameplayInstanceTemplates.DefaultTieDrawDistance,
+        "UYA tie template normalization should repair the legacy float draw-distance encoding");
+
+    var shrubTemplate = UyaGameplayInstanceTemplates.CreateShrub(0x1300);
+    Expect(BinaryPrimitives.ReadSingleLittleEndian(shrubTemplate.AsSpan(4))
+            == UyaGameplayInstanceTemplates.DefaultShrubDrawDistance
+        && BinaryPrimitives.ReadInt32LittleEndian(shrubTemplate.AsSpan(0x50)) == 255,
+        "UYA shrub templates should contain safe draw-distance and neutral-light defaults");
+    var mobyTemplate = UyaGameplayInstanceTemplates.CreateMoby(0x1400, 9);
+    Expect(UyaMobyInstancesReader.ReadInstance(mobyTemplate) is { ClassId: 0x1400, Uid: 9 },
+        "UYA moby templates should expose their assigned UID");
+    Expect(UyaGameplayInstanceTemplates.CreateNeutralTieAmbient(4)
+            .SequenceEqual(new byte[] { 0x80, 0x80, 0x80, 0 }),
+        "UYA neutral tie ambient data should retain its retail word layout");
+
+    var definitionA = Enumerable.Range(0, 0x20).Select(value => (byte)value).ToArray();
+    var definitionB = definitionA.ToArray();
+    definitionB.AsSpan(0, 8).Fill(0xaa);
+    definitionB.AsSpan(0x10).Fill(0xbb);
+    Expect(UyaLevelAssetCanonicalizer.NormalizeDefinition(definitionA)
+            .SequenceEqual(UyaLevelAssetCanonicalizer.NormalizeDefinition(definitionB)),
+        "UYA asset definition canonicalization should ignore placement-specific fields");
+
     var cameras = new byte[UyaCameraInstancesReader.HeaderSize + UyaCameraInstancesReader.RecordSize];
     WriteInt32(cameras, 0, 1);
     WriteInt32(cameras, 0x10, 7);
@@ -4566,10 +4841,12 @@ static void ValidateHudBankParsing()
 
     var hud = HudBankReader.Read(header, [bank0, bank1]);
     Expect(hud.Header.IconCount == 2, "DL HUD icon count should be parsed");
+    Expect(hud.Header.IconMappingCount == 1, "DL HUD icon count should exclude the terminator");
     Expect(hud.Header.FrameCount == 1, "DL HUD frame count should be parsed");
     Expect(hud.Icons[0].IconId == 0x1234, "DL HUD icon id should be parsed");
     Expect(hud.Icons[0].FrameCount == 1 && hud.Icons[0].FirstFrameIndex == 0, "DL HUD icon frame range should be parsed");
-    Expect(hud.Icons[1].IconId == 0xffff, "DL HUD icon terminator should be preserved");
+    Expect(hud.Icons.Count == 1, "DL HUD icon terminator should not be exposed as a mapping");
+    Expect(hud.IconTerminatorOffset == 0xbc, "DL HUD icon terminator offset should be preserved");
     Expect(hud.Frames[0].PaletteIndex == 0 && hud.Frames[0].TextureIndex == 0, "DL HUD frame palette/texture handles should be parsed");
     Expect(HudBankReader.TryGetPalette(hud, 0, out var palette), "HUD palette should be addressable by id");
     Expect(HudBankReader.TryGetTexture(hud, 0, out var texture), "HUD texture should be addressable by id");
@@ -4597,6 +4874,647 @@ static void ValidateHudBankParsing()
         _ => []);
     Expect(rc1Files.Any(file => file.Path == "hud/manifest.json"), "RC1 render package should include the shared HUD manifest");
     Expect(rc1Files.Any(file => file.Path == "hud/bank_0/tex.0000.png"), "RC1 render package should include HUD frame PNGs");
+
+    var fiveBankHeader = new byte[0x11c];
+    WriteUInt16(fiveBankHeader, 0x00, 1);
+    WriteUInt16(fiveBankHeader, 0x02, 5);
+    WriteInt32(fiveBankHeader, 0x04, 0xb4);
+    WriteInt32(fiveBankHeader, 0x08, 0xb8);
+    WriteInt32(fiveBankHeader, 0x0c, 0xcc);
+    WriteInt32(fiveBankHeader, 0x10, 0xf4);
+    WriteUInt32(fiveBankHeader, 0xb4, HudBankReader.IconMappingTerminator);
+    var fiveBanks = new byte[HudBankReader.BankCount][];
+    for (var bankIndex = 0; bankIndex < HudBankReader.BankCount; bankIndex++)
+    {
+        WriteInt32(fiveBankHeader, 0x14 + bankIndex * 4, bankIndex + 1);
+        WriteInt32(fiveBankHeader, 0x34 + bankIndex * 4, bankIndex + 1);
+        WriteInt32(fiveBankHeader, 0x54 + bankIndex * 4, 0x440);
+        WriteInt16(fiveBankHeader, 0xb8 + bankIndex * 4, (short)bankIndex);
+        WriteInt16(fiveBankHeader, 0xba + bankIndex * 4, (short)bankIndex);
+        WriteUInt32(fiveBankHeader, 0xcc + bankIndex * 8, 0x80000000);
+        WriteUInt32(fiveBankHeader, 0xf4 + bankIndex * 8, 0x80000400);
+        fiveBankHeader[0xfa + bankIndex * 8] = 3;
+        fiveBankHeader[0xfb + bankIndex * 8] = 3;
+        fiveBanks[bankIndex] = Enumerable.Repeat((byte)(bankIndex + 1), 0x440).ToArray();
+    }
+
+    var fiveBankHud = HudBankReader.Read(fiveBankHeader, fiveBanks);
+    for (var bankIndex = 0; bankIndex < HudBankReader.BankCount; bankIndex++)
+    {
+        Expect(fiveBankHud.Palettes[bankIndex].BankIndex == bankIndex,
+            $"HUD palette {bankIndex} should route to physical bank {bankIndex}");
+        Expect(fiveBankHud.Textures[bankIndex].BankIndex == bankIndex,
+            $"HUD texture {bankIndex} should route to physical bank {bankIndex}");
+        Expect(fiveBankHud.Textures[bankIndex].PixelBytes.All(value => value == bankIndex + 1),
+            $"HUD texture {bankIndex} should read bytes from physical bank {bankIndex}");
+    }
+
+    var invalidTerminatorHeader = fiveBankHeader.ToArray();
+    WriteUInt32(invalidTerminatorHeader, 0xb4, 0);
+    ExpectThrows<InvalidDataException>(() => HudBankReader.Read(invalidTerminatorHeader, fiveBanks));
+
+    var oversizedTableHeader = fiveBankHeader.ToArray();
+    WriteInt32(oversizedTableHeader, 0x24, int.MaxValue);
+    ExpectThrows<InvalidDataException>(() => HudBankReader.Read(oversizedTableHeader, fiveBanks));
+}
+
+static void ValidateHudSpriteIds()
+{
+    Expect(UyaHudSpriteId.TryParse("ed1b", out var uyaId) && uyaId == 0xed1b,
+        "UYA HUD sprite IDs should parse case-insensitive four-digit hexadecimal text");
+    Expect(UyaHudSpriteId.Format(uyaId) == "ED1B", "UYA HUD sprite IDs should format canonically");
+    Expect(UyaHudSpriteId.IsValidCustomValue(0xe000) && UyaHudSpriteId.IsValidCustomValue(0xefff),
+        "UYA HUD custom sprite-ID boundaries should be valid");
+    Expect(!UyaHudSpriteId.IsValidCustomValue(0xdfff) && !UyaHudSpriteId.IsValidCustomValue(0xf000),
+        "UYA HUD sprite IDs outside Exxx should be invalid for new mappings");
+    Expect(!UyaHudSpriteId.TryParse("0xE000", out _),
+        "HUD sprite-ID input should not accept a non-canonical 0x prefix");
+    Expect(UyaHudSpriteId.IsReserved(0xffff, []), "the HUD icon terminator should be reserved in UYA");
+    Expect(!UyaHudSpriteId.IsAvailable(0xe123, [0xe123]),
+        "an occupied UYA HUD sprite ID should not be available");
+    Expect(UyaHudSpriteId.IsAvailable(0xe124, [0xe123]),
+        "an unoccupied UYA HUD sprite ID should be available");
+
+    Expect(DlHudSpriteId.TryParse("759D", out var dlId) && dlId == 0x759d,
+        "DL HUD sprite IDs should parse four-digit hexadecimal text");
+    Expect(DlHudSpriteId.Format(dlId) == "759D", "DL HUD sprite IDs should format canonically");
+    Expect(DlHudSpriteId.IsValidCustomValue(0x7500) && DlHudSpriteId.IsValidCustomValue(0x75ff),
+        "DL HUD custom sprite-ID boundaries should be valid");
+    Expect(!DlHudSpriteId.IsValidCustomValue(0x74ff) && !DlHudSpriteId.IsValidCustomValue(0x7600),
+        "DL HUD sprite IDs outside 75xx should be invalid for new mappings");
+    Expect(DlHudSpriteId.IsReserved(0xffff, []), "the HUD icon terminator should be reserved in DL");
+    Expect(!DlHudSpriteId.IsAvailable(0x759d, [0x759d]),
+        "an occupied DL HUD sprite ID should not be available");
+    Expect(DlHudSpriteId.IsAvailable(0x759e, [0x759d]),
+        "an unoccupied DL HUD sprite ID should be available");
+}
+
+static void ValidateHudBankComposition()
+{
+    ValidateHudNoEditCorpusWhenAvailable();
+    var fixture = CreateHudCompositionFixture();
+    var noEdit = HudComposer.Compose(GameId.UYA, fixture.Header, fixture.Banks, [], []);
+    Expect(noEdit.IsBasePassThrough, "no-edit HUD composition should identify the byte-preserving path");
+    Expect(noEdit.HeaderBytes.SequenceEqual(fixture.Header),
+        "no-edit HUD composition should preserve the header byte-for-byte");
+    Expect(noEdit.BankBytes.Select((bytes, index) => bytes.SequenceEqual(fixture.Banks[index])).All(value => value),
+        "no-edit HUD composition should preserve every stored bank byte-for-byte");
+
+    var replacementTexture = CreateHudIndexedTexture(8, 8, 0x81);
+    var replaced = HudComposer.Compose(
+        GameId.UYA,
+        fixture.Header,
+        fixture.Banks,
+        [new HudTextureReplacement(0, replacementTexture)],
+        []);
+    var replacedHud = ReadComposedHud(replaced);
+    var sourceBanks = ReadHudBanks(fixture.Banks);
+    var replacedBanks = ReadHudBanks(replaced.BankBytes);
+    Expect(!replaced.IsBasePassThrough, "edited HUD composition should not report pass-through");
+    Expect(BinaryMagic.IsWad(replaced.BankBytes[0]) && !BinaryMagic.IsWad(replaced.BankBytes[1]),
+        "HUD composition should preserve each changed bank's compressed or raw storage mode");
+    Expect(replacedBanks[0].AsSpan(0, sourceBanks[0].Length).SequenceEqual(sourceBanks[0])
+        && replacedBanks[1].AsSpan(0, sourceBanks[1].Length).SequenceEqual(sourceBanks[1]),
+        "HUD replacement should preserve original bank bytes as immutable prefixes");
+    Expect(replaced.HeaderBytes[0x68] == fixture.Header[0x68]
+        && replacedHud.Icons[0].IconId == 0xed1b
+        && replacedHud.Frames[0].PaletteIndex == 1
+        && replacedHud.Frames[0].TextureIndex == 1,
+        "HUD replacement should preserve opaque header state and remap only the edited frame");
+    Expect(replacedHud.Textures[1].Width == 8 && replacedHud.Textures[1].Height == 8
+        && replacedHud.Palettes[1].PaletteBytes.SequenceEqual(replacementTexture.PaletteBytes.ToArray())
+        && replacedHud.Textures[1].PixelBytes.SequenceEqual(replacementTexture.PixelBytes.ToArray()),
+        "HUD replacement should reread from isolated appended palette and texture records");
+    Expect(replacedHud.Palettes[0].GsRam == 0x1234
+        && replacedHud.Palettes[0].Padding == 0xbeef
+        && replacedHud.Textures[0].GsRam == 0x5678
+        && replacedHud.Palettes[1].GsRam == 0
+        && replacedHud.Textures[1].GsRam == 0,
+        "HUD replacement should preserve source runtime metadata and clear new runtime scratch");
+    Expect(replaced.BankBytes.Skip(2).Select((bytes, index) => bytes.SequenceEqual(fixture.Banks[index + 2])).All(value => value),
+        "HUD replacement should preserve unaffected stored banks byte-for-byte");
+
+    var sharedFixture = CreateSharedHudCompositionFixture();
+    var sharedSource = ReadComposedHud(new(sharedFixture.Header, sharedFixture.Banks, true));
+    var isolated = ReadComposedHud(HudComposer.Compose(
+        GameId.UYA,
+        sharedFixture.Header,
+        sharedFixture.Banks,
+        [new HudTextureReplacement(0, replacementTexture)],
+        []));
+    Expect(isolated.Frames[0].PaletteIndex == 1 && isolated.Frames[0].TextureIndex == 1
+        && isolated.Frames[1] == sharedSource.Frames[1]
+        && isolated.Palettes[0].PaletteBytes.SequenceEqual(sharedSource.Palettes[0].PaletteBytes)
+        && isolated.Textures[0].PixelBytes.SequenceEqual(sharedSource.Textures[0].PixelBytes),
+        "HUD replacement should isolate a frame that shares both source records with another frame");
+
+    var appendedTexture = CreateHudIndexedTexture(4, 4, 0x42);
+    var addition = new HudIconAddition(0xefff, 2, appendedTexture);
+    var appended = HudComposer.Compose(GameId.UYA, fixture.Header, fixture.Banks, [], [addition]);
+    var appendedAgain = HudComposer.Compose(GameId.UYA, fixture.Header, fixture.Banks, [], [addition]);
+    var appendedHud = ReadComposedHud(appended);
+    Expect(appended.HeaderBytes.SequenceEqual(appendedAgain.HeaderBytes)
+        && appended.BankBytes.Select((bytes, index) => bytes.SequenceEqual(appendedAgain.BankBytes[index])).All(value => value),
+        "HUD append placement and serialization should be deterministic");
+    Expect(appendedHud.Icons.Count == 2 && appendedHud.Frames.Count == 2
+        && appendedHud.Palettes.Count == 2 && appendedHud.Textures.Count == 2,
+        "HUD append should add one complete icon/frame/palette/texture chain");
+    Expect(appendedHud.Icons[0].IconId == 0xed1b
+        && appendedHud.Icons[1].IconId == 0xefff
+        && appendedHud.Icons[1].FirstFrameIndex == 1
+        && appendedHud.Frames[1].PaletteIndex == 1
+        && appendedHud.Frames[1].TextureIndex == 1,
+        "HUD append should retain existing indexes and assign stable new indexes");
+    Expect(appendedHud.Palettes[1].BankIndex == 2 && appendedHud.Textures[1].BankIndex == 2
+        && appendedHud.Palettes[1].PaletteBytes.SequenceEqual(appendedTexture.PaletteBytes.ToArray())
+        && appendedHud.Textures[1].PixelBytes.SequenceEqual(appendedTexture.PixelBytes.ToArray()),
+        "HUD append should route and reread the new payload from its requested bank");
+    Expect(appended.HeaderBytes.AsSpan(0x68, HudBankReader.HeaderFixedLength - 0x68)
+            .SequenceEqual(fixture.Header.AsSpan(0x68, HudBankReader.HeaderFixedLength - 0x68)),
+        "HUD append should preserve the opaque runtime-pointer region");
+    Expect(ReadHudBanks(appended.BankBytes)[2].Length == 0x410,
+        "HUD append should place an aligned palette and indexed-8 pixels without hidden padding");
+
+    ExpectThrows<InvalidDataException>(() => HudComposer.Compose(
+        GameId.UYA, fixture.Header, fixture.Banks, [],
+        [new HudIconAddition(0x759d, 2, appendedTexture)]));
+    ExpectThrows<InvalidDataException>(() => HudComposer.Compose(
+        GameId.UYA, fixture.Header, fixture.Banks, [],
+        [new HudIconAddition(0xed1b, 2, appendedTexture)]));
+    ExpectThrows<InvalidDataException>(() => HudComposer.Compose(
+        GameId.UYA, fixture.Header, fixture.Banks, [],
+        [new HudIconAddition(0xe123, 0, appendedTexture)]));
+    ExpectThrows<InvalidDataException>(() => HudComposer.Compose(
+        GameId.UYA, fixture.Header, fixture.Banks,
+        [new HudTextureReplacement(0, new HudIndexedTexture(4, 4, new byte[1], new byte[16]))], []));
+    ExpectThrows<NotSupportedException>(() => HudComposer.Compose(
+        GameId.DL, fixture.Header, fixture.Banks, [], []));
+
+    var capacityOptions = new HudBankCompositionOptions(
+        MaximumDecompressedBankBytes: 0x1000,
+        BankCapacities: [0x1000, 0x1000, 0x200, 0x1000, 0x1000]);
+    try
+    {
+        HudComposer.Compose(
+            GameId.UYA, fixture.Header, fixture.Banks, [],
+            [new HudIconAddition(0xe123, 2, appendedTexture)], capacityOptions);
+        throw new InvalidOperationException("Expected a HUD bank capacity failure.");
+    }
+    catch (InvalidDataException exception)
+    {
+        Expect(exception.Message.Contains("HUD addition 0 palette", StringComparison.Ordinal)
+            && exception.Message.Contains("bank 2", StringComparison.Ordinal),
+            "HUD capacity diagnostics should identify the failing entry and bank");
+    }
+
+    using (var cancellation = new CancellationTokenSource())
+    {
+        cancellation.Cancel();
+        ExpectThrows<OperationCanceledException>(() => HudComposer.Compose(
+            GameId.UYA, fixture.Header, fixture.Banks, [], [addition], cancellationToken: cancellation.Token));
+    }
+
+    const int largeDimension = 2048;
+    const int largePixelLength = largeDimension * largeDimension;
+    const int largeBankLength = HudBankReader.PaletteLength + largePixelLength;
+    var largeTexture = new HudIndexedTexture(
+        largeDimension,
+        largeDimension,
+        new byte[HudBankReader.PaletteLength],
+        new byte[largePixelLength]);
+    var largeOptions = new HudBankCompositionOptions(
+        MaximumDecompressedBankBytes: largeBankLength,
+        BankCapacities: [0x40, 0x400, largeBankLength, 0, 0]);
+    var stopwatch = Stopwatch.StartNew();
+    var large = HudComposer.Compose(
+        GameId.UYA, fixture.Header, fixture.Banks, [],
+        [new HudIconAddition(0xeffe, 2, largeTexture)], largeOptions);
+    stopwatch.Stop();
+    Expect(ReadHudBanks(large.BankBytes)[2].Length == largeBankLength,
+        "HUD composition should fill an explicitly bounded large bank without over-allocation");
+    Expect(stopwatch.Elapsed < TimeSpan.FromSeconds(10),
+        "bounded 4 MiB HUD composition should complete without pathological throughput");
+}
+
+static void ValidateHudNoEditCorpusWhenAvailable()
+{
+    var corpusRoot = Path.Combine("test-assets", "extractions_uya");
+    if (!Directory.Exists(corpusRoot)) return;
+
+    foreach (var hudDirectory in Directory.EnumerateDirectories(corpusRoot, "hud", SearchOption.AllDirectories)
+                 .Order(StringComparer.Ordinal))
+    {
+        var headerPath = Path.Combine(hudDirectory, "header.bin");
+        var bankPaths = Enumerable.Range(0, HudBankReader.BankCount)
+            .Select(bank => Path.Combine(hudDirectory, $"bank{bank}.bin"))
+            .ToArray();
+        if (!File.Exists(headerPath) || bankPaths.Any(path => !File.Exists(path))) continue;
+
+        var header = File.ReadAllBytes(headerPath);
+        var banks = bankPaths.Select(File.ReadAllBytes).ToArray();
+        var source = HudBankReader.Read(header, ReadHudBanks(banks));
+        var composed = HudComposer.Compose(GameId.UYA, header, banks, [], []);
+        var reread = ReadComposedHud(composed);
+        var fixtureName = Path.GetFileName(Path.GetDirectoryName(hudDirectory));
+        Expect(composed.IsBasePassThrough
+            && composed.HeaderBytes.SequenceEqual(header)
+            && composed.BankBytes.Select((bytes, index) => bytes.SequenceEqual(banks[index])).All(value => value),
+            $"UYA HUD fixture {fixtureName} should preserve every no-edit stored byte");
+        Expect(reread.Icons.Select(icon => (icon.IconId, icon.FrameCount, icon.FirstFrameIndex))
+                .SequenceEqual(source.Icons.Select(icon => (icon.IconId, icon.FrameCount, icon.FirstFrameIndex)))
+            && reread.Frames.Select(frame => (frame.PaletteIndex, frame.TextureIndex))
+                .SequenceEqual(source.Frames.Select(frame => (frame.PaletteIndex, frame.TextureIndex)))
+            && reread.Palettes.Count == source.Palettes.Count
+            && reread.Textures.Count == source.Textures.Count,
+            $"UYA HUD fixture {fixtureName} should preserve no-edit table semantics");
+    }
+}
+
+static (byte[] Header, byte[][] Banks) CreateHudCompositionFixture()
+{
+    var header = new byte[0xd8];
+    WriteUInt16(header, 0x00, 2);
+    WriteUInt16(header, 0x02, 1);
+    WriteInt32(header, 0x04, 0xb4);
+    WriteInt32(header, 0x08, 0xc4);
+    WriteInt32(header, 0x0c, 0xc8);
+    WriteInt32(header, 0x10, 0xd0);
+    WriteInt32(header, 0x18, 1);
+    WriteInt32(header, 0x1c, 1);
+    WriteInt32(header, 0x20, 1);
+    WriteInt32(header, 0x24, 1);
+    for (var bank = 0; bank < HudBankReader.BankCount; bank++)
+        WriteInt32(header, 0x34 + bank * 4, 1);
+    WriteInt32(header, 0x54, 0x40);
+    WriteInt32(header, 0x58, 0x400);
+    header[0x68] = 0xa5;
+
+    WriteUInt16(header, 0xb4, 0xed1b);
+    WriteUInt16(header, 0xb6, 1);
+    WriteUInt16(header, 0xb8, 0);
+    WriteUInt32(header, 0xbc, HudBankReader.IconMappingTerminator);
+    WriteInt16(header, 0xc4, 0);
+    WriteInt16(header, 0xc6, 0);
+    WriteUInt32(header, 0xc8, 0x80000000);
+    WriteUInt16(header, 0xcc, 0x1234);
+    WriteUInt16(header, 0xce, 0xbeef);
+    WriteUInt32(header, 0xd0, 0x80000000);
+    WriteUInt16(header, 0xd4, 0x5678);
+    header[0xd6] = 2;
+    header[0xd7] = 2;
+
+    var bank0 = Enumerable.Range(0, 0x40).Select(value => (byte)value).ToArray();
+    var bank1 = CreatePalette();
+    return (header, [WadCompression.CompressVerified(bank0).CompressedBytes, bank1, [], [], []]);
+}
+
+static (byte[] Header, byte[][] Banks) CreateSharedHudCompositionFixture()
+{
+    var header = new byte[0xe0];
+    WriteUInt16(header, 0x00, 3);
+    WriteUInt16(header, 0x02, 2);
+    WriteInt32(header, 0x04, 0xb4);
+    WriteInt32(header, 0x08, 0xc8);
+    WriteInt32(header, 0x0c, 0xd0);
+    WriteInt32(header, 0x10, 0xd8);
+    for (var bank = 1; bank < HudBankReader.BankCount; bank++)
+        WriteInt32(header, 0x14 + bank * 4, 1);
+    for (var bank = 0; bank < HudBankReader.BankCount; bank++)
+        WriteInt32(header, 0x34 + bank * 4, 1);
+    WriteInt32(header, 0x54, 0x40);
+    WriteInt32(header, 0x58, 0x400);
+
+    WriteUInt16(header, 0xb4, 0xed1b);
+    WriteUInt16(header, 0xb6, 1);
+    WriteUInt16(header, 0xb8, 0);
+    WriteUInt16(header, 0xbc, 0xed1c);
+    WriteUInt16(header, 0xbe, 1);
+    WriteUInt16(header, 0xc0, 1);
+    WriteUInt32(header, 0xc4, HudBankReader.IconMappingTerminator);
+    WriteInt16(header, 0xc8, 0);
+    WriteInt16(header, 0xca, 0);
+    WriteInt16(header, 0xcc, 0);
+    WriteInt16(header, 0xce, 0);
+    WriteUInt32(header, 0xd0, 0x80000000);
+    WriteUInt32(header, 0xd8, 0x80000000);
+    header[0xde] = 2;
+    header[0xdf] = 2;
+
+    var bank0 = Enumerable.Range(0, 0x40).Select(value => (byte)value).ToArray();
+    return (header, [WadCompression.CompressVerified(bank0).CompressedBytes, CreatePalette(), [], [], []]);
+}
+
+static HudIndexedTexture CreateHudIndexedTexture(int width, int height, byte marker)
+{
+    var palette = Enumerable.Range(0, HudBankReader.PaletteLength)
+        .Select(index => unchecked((byte)(marker + index))).ToArray();
+    var pixels = Enumerable.Range(0, checked(width * height))
+        .Select(index => unchecked((byte)(marker ^ index))).ToArray();
+    return new HudIndexedTexture(width, height, palette, pixels);
+}
+
+static byte[][] ReadHudBanks(IReadOnlyList<byte[]> banks) => banks
+    .Select(bytes => BinaryMagic.IsWad(bytes) ? WadCompression.Decompress(bytes) : bytes.ToArray())
+    .ToArray();
+
+static HudBankSet ReadComposedHud(HudBankComposition composition) =>
+    HudBankReader.Read(composition.HeaderBytes, ReadHudBanks(composition.BankBytes));
+
+static void ValidateFxTextureCatalog()
+{
+    var uyaLabels = string.Join('\n', Enumerable.Range(0, 124)
+        .Select(index => FxTextureCatalog.GetLabel(GameId.UYA, index)));
+    var dlLabels = string.Join('\n', Enumerable.Range(0, 124)
+        .Select(index => FxTextureCatalog.GetLabel(GameId.DL, index)));
+    Expect(Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(uyaLabels))).ToLowerInvariant()
+            == "6909e759f081ddcf05fa705dd87deacab7f5ef8aff1b674015dc0d90402e9e9f",
+        "UYA FX labels should match the reviewed map-o-matic catalog snapshot");
+    Expect(Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(dlLabels))).ToLowerInvariant()
+            == "8fb06efcf2937703a9ec7fbad1fc2f2cd78a9512c789feea098524a12bd2b311",
+        "DL FX labels should match the reviewed map-o-matic catalog snapshot");
+    Expect(FxTextureCatalog.GetLabel(GameId.UYA, -8) == "FX_BACK_ALPHA_CLUT"
+        && FxTextureCatalog.GetLabel(GameId.DL, -1) == "FX_BACK_BUFFER_COPY",
+        "special negative FX labels should be shared across adapters");
+    Expect(FxTextureCatalog.GetLabel(GameId.UYA, 500) == "FX_TEXTURE_500",
+        "unknown FX indexes should use a deterministic fallback");
+    ExpectThrows<NotSupportedException>(() => FxTextureCatalog.GetLabel(GameId.RC1, 0));
+
+    var fixture = CreateFxTextureFixture();
+    var uya = FxTextureCatalog.Read(GameId.UYA, fixture.Header, fixture.Asset);
+    Expect(uya.Entries.Count == 2 && uya.Entries.All(entry => entry.IsValid),
+        "UYA FX inventory should retain valid ordered definitions");
+    Expect(uya.Entries[0].Label == "FX_LAME_SHADOW"
+        && uya.Entries[1].Label == "FX_CLOUDY_CIRCLE_1",
+        "UYA FX inventory should attach game-owned labels by stable source index");
+    Expect(uya.Entries[0] is
+        {
+            Width: 4, Height: 4, PixelFormat: "Indexed8", PaletteFormat: "Rgba32",
+            PaletteOffset: 0, PaletteLength: 0x400, PixelOffset: 0x400, PixelLength: 16,
+            IsSwizzled: false,
+        }, "UYA FX inventory should expose dimensions, formats, offsets, lengths, and swizzle state");
+    var normalized = PifReader.Read(uya.Entries[0].CanonicalTextureBytes);
+    Expect(!normalized.Header.IsSwizzled
+        && normalized.PaletteData.SequenceEqual(fixture.Asset.AsSpan(0, 0x400).ToArray())
+        && normalized.PixelData.SequenceEqual(fixture.Asset.AsSpan(0x400, 16).ToArray()),
+        "UYA FX canonical preview should preserve source palette and indexed pixels");
+    Expect(uya.Capabilities is
+        { CanRead: true, CanReplace: true, CanAppend: true, AuthoringDisabledReason: null },
+        "UYA FX inventory should advertise writer capabilities");
+
+    var compressed = WadCompression.CompressVerified(fixture.Asset).CompressedBytes;
+    var fromCompressed = FxTextureCatalog.Read(GameId.UYA, fixture.Header, compressed);
+    Expect(fromCompressed.Entries.Select(entry => entry.CanonicalTextureBytes)
+        .Zip(uya.Entries.Select(entry => entry.CanonicalTextureBytes))
+        .All(pair => pair.First.SequenceEqual(pair.Second)),
+        "FX inventory should normalize compressed and raw asset payloads identically");
+
+    var dl = FxTextureCatalog.Read(GameId.DL, fixture.Header, fixture.Asset);
+    Expect(dl.Entries[1].Label == "FX_GROUND_OUTER_RETICULE"
+        && dl.Entries.All(entry => entry.IsSwizzled)
+        && PifReader.Read(dl.Entries[0].CanonicalTextureBytes).Header.IsSwizzled,
+        "DL FX inventory should apply DL labels and swizzled preview metadata");
+    Expect(dl.Capabilities is
+        { CanRead: true, CanReplace: false, CanAppend: false, AuthoringDisabledReason: not null },
+        "DL FX inventory should remain read-only until its project pipeline is writable");
+
+    var malformedEntryHeader = fixture.Header.ToArray();
+    WriteInt32(malformedEntryHeader, 0xc0 + 0x10 + 8, 3);
+    var malformedEntry = FxTextureCatalog.Read(GameId.UYA, malformedEntryHeader, fixture.Asset);
+    Expect(malformedEntry.Entries[0].IsValid
+        && malformedEntry.Entries[1] is { IsValid: false, CanonicalTextureBytes.Length: 0 }
+        && malformedEntry.Entries[1].Diagnostic!.Contains("FX texture 1", StringComparison.Ordinal),
+        "malformed FX entries should remain ordered and identify their source index");
+
+    var malformedOffsetHeader = fixture.Header.ToArray();
+    WriteInt32(malformedOffsetHeader, 0xc0 + 4, 0x401);
+    var malformedOffset = FxTextureCatalog.Read(GameId.UYA, malformedOffsetHeader, fixture.Asset);
+    Expect(!malformedOffset.Entries[0].IsValid
+        && malformedOffset.Entries[0].Diagnostic!.Contains("aligned", StringComparison.Ordinal),
+        "misaligned FX offsets should produce entry diagnostics");
+
+    var badCount = fixture.Header.ToArray();
+    WriteInt32(badCount, 0x58, 4_097);
+    ExpectThrows<InvalidDataException>(() => FxTextureCatalog.Read(GameId.UYA, badCount, fixture.Asset));
+    var badTable = fixture.Header.ToArray();
+    WriteInt32(badTable, 0x5c, badTable.Length - 1);
+    ExpectThrows<InvalidDataException>(() => FxTextureCatalog.Read(GameId.UYA, badTable, fixture.Asset));
+    ExpectThrows<InvalidDataException>(() => FxTextureCatalog.Read(
+        GameId.UYA,
+        fixture.Header,
+        fixture.Asset,
+        new(MaximumStoredAssetBytes: fixture.Asset.Length - 1)));
+    ExpectThrows<NotSupportedException>(() => FxTextureCatalog.Read(GameId.RC1, fixture.Header, fixture.Asset));
+    using (var cancellation = new CancellationTokenSource())
+    {
+        cancellation.Cancel();
+        ExpectThrows<OperationCanceledException>(() => FxTextureCatalog.Read(
+            GameId.UYA, fixture.Header, fixture.Asset, cancellationToken: cancellation.Token));
+    }
+
+    ValidateFxTextureCorpusWhenAvailable();
+}
+
+static void ValidateFxTextureComposition()
+{
+    var fixture = CreateFxTextureFixture();
+    var noEdit = FxTextureCatalog.Compose(GameId.UYA, fixture.Header, fixture.Asset, [], []);
+    Expect(noEdit.IsBasePassThrough
+        && noEdit.HeaderBytes.SequenceEqual(fixture.Header)
+        && noEdit.AssetBytes.SequenceEqual(fixture.Asset),
+        "no-edit FX composition should preserve source bytes exactly");
+
+    var replacement = CreateFxIndexedTexture(8, 4, 0x31);
+    var addition = CreateFxIndexedTexture(4, 8, 0x73);
+    var composed = FxTextureCatalog.Compose(
+        GameId.UYA,
+        fixture.Header,
+        fixture.Asset,
+        [new FxTextureReplacement(0, replacement)],
+        [addition]);
+    var inventory = FxTextureCatalog.Read(GameId.UYA, composed.HeaderBytes, composed.AssetBytes);
+    Expect(!composed.IsBasePassThrough && inventory.Entries.Count == 3,
+        "edited FX composition should append one deterministic trailing index");
+    Expect(inventory.Entries.Select(value => value.Index).SequenceEqual([0, 1, 2]),
+        "FX composition should preserve source indexes and assign contiguous appended indexes");
+    Expect(PifMatches(inventory.Entries[0].CanonicalTextureBytes, replacement)
+        && PifMatches(inventory.Entries[2].CanonicalTextureBytes, addition),
+        "FX replacement and addition should semantically re-read with their exact indexed data");
+    Expect(inventory.Entries[1].CanonicalTextureBytes.SequenceEqual(
+            FxTextureCatalog.Read(GameId.UYA, fixture.Header, fixture.Asset).Entries[1].CanonicalTextureBytes),
+        "FX composition should preserve unrelated source textures");
+    var sourceModelOffset = BinaryPrimitives.ReadInt32LittleEndian(fixture.Header.AsSpan(0xe0));
+    var outputModelOffset = BinaryPrimitives.ReadInt32LittleEndian(composed.HeaderBytes.AsSpan(0xe0));
+    var outputFxBase = BinaryPrimitives.ReadInt32LittleEndian(composed.HeaderBytes.AsSpan(0x68));
+    var outputPaletteOffset = BinaryPrimitives.ReadInt32LittleEndian(composed.HeaderBytes.AsSpan(0xc0));
+    Expect(outputModelOffset > sourceModelOffset
+        && outputFxBase + outputPaletteOffset < outputModelOffset
+        && composed.AssetBytes.AsSpan(0, sourceModelOffset).SequenceEqual(fixture.Asset.AsSpan(0, sourceModelOffset))
+        && composed.AssetBytes.AsSpan(outputModelOffset, 0x20)
+            .SequenceEqual(fixture.Asset.AsSpan(sourceModelOffset, 0x20)),
+        "FX composition should expand before the model heap and relocate downstream model data unchanged");
+    Expect(BinaryPrimitives.ReadInt32LittleEndian(composed.HeaderBytes.AsSpan(0x7c)) == composed.AssetBytes.Length
+        && BinaryPrimitives.ReadInt32LittleEndian(composed.HeaderBytes.AsSpan(0x8c)) == composed.AssetBytes.Length,
+        "UYA FX composition should extend the runtime-loaded asset boundary over appended texture data");
+    Expect(inventory.Entries[0].PaletteOffset != inventory.Entries[1].PaletteOffset
+        && inventory.Entries[0].PaletteOffset != inventory.Entries[2].PaletteOffset,
+        "FX edits should own private appended palette storage");
+
+    var splitFixture = CreateFxTextureFixture(includeInterveningPayload: true);
+    var splitComposition = FxTextureCatalog.Compose(
+        GameId.UYA,
+        splitFixture.Header,
+        splitFixture.Asset,
+        [new FxTextureReplacement(0, replacement)],
+        []);
+    var splitDefinitionsOffset = BinaryPrimitives.ReadInt32LittleEndian(
+        splitComposition.HeaderBytes.AsSpan(0x5c));
+    var splitFxBase = BinaryPrimitives.ReadInt32LittleEndian(splitComposition.HeaderBytes.AsSpan(0x68));
+    var splitPaletteOffset = BinaryPrimitives.ReadInt32LittleEndian(
+        splitComposition.HeaderBytes.AsSpan(splitDefinitionsOffset));
+    var sourceHeightmapOffset = BinaryPrimitives.ReadInt32LittleEndian(splitFixture.Header.AsSpan(0xa4));
+    var outputHeightmapOffset = BinaryPrimitives.ReadInt32LittleEndian(splitComposition.HeaderBytes.AsSpan(0xa4));
+    Expect(splitFxBase + splitPaletteOffset == sourceHeightmapOffset
+        && outputHeightmapOffset > sourceHeightmapOffset
+        && splitComposition.AssetBytes.AsSpan(outputHeightmapOffset, 0x20)
+            .SequenceEqual(splitFixture.Asset.AsSpan(sourceHeightmapOffset, 0x20)),
+        "FX composition should append at the next native payload boundary without duplicating an intervening payload");
+
+    var unalignedData = CreateFxTextureFixture(0x120);
+    var unalignedComposition = FxTextureCatalog.Compose(
+        GameId.UYA,
+        unalignedData.Header,
+        unalignedData.Asset,
+        [new FxTextureReplacement(0, replacement)],
+        []);
+    Expect(PifMatches(
+            FxTextureCatalog.Read(
+                GameId.UYA, unalignedComposition.HeaderBytes, unalignedComposition.AssetBytes).Entries[0]
+                .CanonicalTextureBytes,
+            replacement),
+        "FX composition should align appended storage relative to an unaligned FX data base");
+
+    var compressed = WadCompression.CompressVerified(fixture.Asset).CompressedBytes;
+    var compressedComposition = FxTextureCatalog.Compose(
+        GameId.UYA,
+        fixture.Header,
+        compressed,
+        [new FxTextureReplacement(1, replacement)],
+        []);
+    Expect(BinaryMagic.IsWad(compressedComposition.AssetBytes)
+        && FxTextureCatalog.Read(GameId.UYA, compressedComposition.HeaderBytes, compressedComposition.AssetBytes)
+            .Entries[1].Width == replacement.Width,
+        "FX composition should retain compressed storage and verify the recompressed payload");
+
+    ExpectThrows<InvalidDataException>(() => FxTextureCatalog.Compose(
+        GameId.UYA, fixture.Header, fixture.Asset,
+        [new(0, replacement), new(0, replacement)], []));
+    ExpectThrows<InvalidDataException>(() => FxTextureCatalog.Compose(
+        GameId.UYA, fixture.Header, fixture.Asset, [new(2, replacement)], []));
+    ExpectThrows<InvalidDataException>(() => FxTextureCatalog.Compose(
+        GameId.UYA, fixture.Header, fixture.Asset, [], [new(3, 4, new byte[0x400], new byte[12])]));
+    var trailingData = fixture.Header.ToArray();
+    WriteInt32(trailingData, 0x7c, fixture.Asset.Length - 0x10);
+    ExpectThrows<InvalidDataException>(() => FxTextureCatalog.Compose(
+        GameId.UYA, trailingData, fixture.Asset, [new(0, replacement)], []));
+    ExpectThrows<NotSupportedException>(() => FxTextureCatalog.Compose(
+        GameId.DL, fixture.Header, fixture.Asset, [], []));
+    using var cancellation = new CancellationTokenSource();
+    cancellation.Cancel();
+    ExpectThrows<OperationCanceledException>(() => FxTextureCatalog.Compose(
+        GameId.UYA, fixture.Header, fixture.Asset, [], [addition], cancellationToken: cancellation.Token));
+}
+
+static FxIndexedTexture CreateFxIndexedTexture(int width, int height, byte marker) => new(
+    width,
+    height,
+    Enumerable.Range(0, FxTextureInventoryReader.PaletteLength)
+        .Select(index => unchecked((byte)(marker + index))).ToArray(),
+    Enumerable.Range(0, checked(width * height))
+        .Select(index => unchecked((byte)(marker ^ index))).ToArray());
+
+static bool PifMatches(byte[] bytes, FxIndexedTexture expected)
+{
+    var pif = PifReader.Read(bytes);
+    return pif.Header.USize == expected.Width
+        && pif.Header.VSize == expected.Height
+        && pif.PaletteData.AsSpan().SequenceEqual(expected.PaletteBytes.Span)
+        && pif.PixelData.AsSpan().SequenceEqual(expected.PixelBytes.Span);
+}
+
+static (byte[] Header, byte[] Asset) CreateFxTextureFixture(
+    int dataOffset = 0x100,
+    bool includeInterveningPayload = false)
+{
+    var header = new byte[0x100];
+    WriteInt32(header, 0x18, 1);
+    WriteInt32(header, 0x1c, 0xe0);
+    WriteInt32(header, 0x58, 2);
+    WriteInt32(header, 0x5c, 0xc0);
+    WriteInt32(header, 0x68, dataOffset);
+    WriteInt32(header, 0xc0, 0);
+    WriteInt32(header, 0xc4, 0x400);
+    WriteInt32(header, 0xc8, 4);
+    WriteInt32(header, 0xcc, 4);
+    WriteInt32(header, 0xd0, 0x500);
+    WriteInt32(header, 0xd4, 0x900);
+    WriteInt32(header, 0xd8, 4);
+    WriteInt32(header, 0xdc, 4);
+    var fxEnd = checked(dataOffset + 0xa00);
+    var modelOffset = checked(fxEnd + (includeInterveningPayload ? 0x20 : 0));
+    if (includeInterveningPayload) WriteInt32(header, 0xa4, fxEnd);
+    WriteInt32(header, 0xe0, modelOffset);
+    WriteInt32(header, 0xe4, 1);
+    var asset = new byte[checked(modelOffset + 0x20)];
+    for (var index = 0; index < asset.Length; index++) asset[index] = unchecked((byte)index);
+    WriteInt32(header, 0x7c, asset.Length);
+    WriteInt32(header, 0x8c, asset.Length);
+    return (header, asset);
+}
+
+static void ValidateFxTextureCorpusWhenAvailable()
+{
+    var root = Path.Combine("test-assets", "extractions_uya");
+    if (!Directory.Exists(root)) return;
+    foreach (var assets in Directory.EnumerateDirectories(root, "assets", SearchOption.AllDirectories)
+                 .Order(StringComparer.Ordinal))
+    {
+        var headerPath = Path.Combine(assets, "asset_header.bin");
+        var assetPath = Path.Combine(assets, "asset_wad.bin");
+        if (!File.Exists(headerPath) || !File.Exists(assetPath)) continue;
+        var header = File.ReadAllBytes(headerPath);
+        var asset = File.ReadAllBytes(assetPath);
+        var inventory = FxTextureCatalog.Read(GameId.UYA, header, asset);
+        var expectedCount = BinaryPrimitives.ReadInt32LittleEndian(header.AsSpan(0x58));
+        var fixtureName = Path.GetFileName(Path.GetDirectoryName(assets));
+        Expect(inventory.Entries.Count == expectedCount && inventory.Entries.All(entry => entry.IsValid),
+            $"UYA FX fixture {fixtureName} should expose every validated source definition");
+        Expect(inventory.Entries.Select(entry => entry.Index).SequenceEqual(Enumerable.Range(0, expectedCount)),
+            $"UYA FX fixture {fixtureName} should preserve stable source ordering");
+
+        if (inventory.Entries.Count == 0) continue;
+        var sourceHeader = LevelAssetReader.ReadHeader(header);
+        var sourceFxEnd = sourceHeader.FxTextureDataOffset + inventory.Entries.Max(entry =>
+            Math.Max(entry.PaletteOffset + entry.PaletteLength, entry.PixelOffset + entry.PixelLength));
+        if (sourceFxEnd != sourceHeader.HeightmapOffset) continue;
+        var sourceTexture = PifReader.Read(inventory.Entries[0].CanonicalTextureBytes);
+        var composition = FxTextureCatalog.Compose(
+            GameId.UYA,
+            header,
+            asset,
+            [new(0, new(
+                sourceTexture.Header.USize,
+                sourceTexture.Header.VSize,
+                sourceTexture.PaletteData,
+                sourceTexture.PixelData))],
+            []);
+        var definitionsOffset = BinaryPrimitives.ReadInt32LittleEndian(composition.HeaderBytes.AsSpan(0x5c));
+        var replacementPaletteOffset = BinaryPrimitives.ReadInt32LittleEndian(
+            composition.HeaderBytes.AsSpan(definitionsOffset));
+        var outputHeader = LevelAssetReader.ReadHeader(composition.HeaderBytes);
+        Expect(outputHeader.FxTextureDataOffset + replacementPaletteOffset == sourceHeader.HeightmapOffset
+            && outputHeader.HeightmapOffset > sourceHeader.HeightmapOffset,
+            $"UYA FX fixture {fixtureName} should expand only the native FX segment");
+    }
 }
 
 static void ValidateWorldInstanceParsing()

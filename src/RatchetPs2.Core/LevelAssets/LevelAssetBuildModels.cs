@@ -15,7 +15,8 @@ public sealed record LevelAssetWadPayloads(
     ReadOnlyMemory<byte>? Terrain = null,
     ReadOnlyMemory<byte>? Sky = null,
     ReadOnlyMemory<byte>? Collision = null,
-    ReadOnlyMemory<byte>? Occlusion = null);
+    ReadOnlyMemory<byte>? Occlusion = null,
+    ReadOnlyMemory<byte>? Fx = null);
 
 public sealed record LevelAssetWadComposition(
     byte[] HeaderBytes,

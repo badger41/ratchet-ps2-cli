@@ -40,7 +40,7 @@ public sealed record PaletteOptimizationResult(
     IReadOnlyList<TexturePaletteAssignment> Assignments,
     IReadOnlyList<PaletteOptimizationViolation> Violations);
 
-public static class PaletteOptimizer
+public static partial class PaletteOptimizer
 {
     public const int SchemaVersion = 1;
     public const string ExactMethod = "exact-branch-and-bound";

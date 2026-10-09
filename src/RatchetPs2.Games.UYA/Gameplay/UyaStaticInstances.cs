@@ -22,14 +22,21 @@ public static class UyaTieInstancesReader
     public static UyaTieInstances Read(ReadOnlySpan<byte> data)
     {
         var table = UyaStaticInstanceReader.Read(data, RecordSize, "tie");
-        return new(table.Count, table.HeaderWords, table.Records.Select(ReadInstance).ToArray(), table.TrailingBytes);
+        return new(table.Count, table.HeaderWords, table.Records.Select(value => ReadInstance(value)).ToArray(),
+            table.TrailingBytes);
     }
 
-    private static UyaTieInstance ReadInstance(byte[] bytes) => new(
-        ReadInt32LittleEndian(bytes, 0),
-        UyaStaticInstanceReader.ReadTransform(bytes),
-        bytes,
-        ReadInt32LittleEndian(bytes, 0x50));
+    public static UyaTieInstance ReadInstance(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.Length != RecordSize)
+            throw new InvalidDataException($"UYA tie instance must be 0x{RecordSize:X} bytes.");
+        return new(
+            ReadInt32LittleEndian(bytes, 0),
+            UyaStaticInstanceReader.ReadTransform(bytes),
+            bytes.ToArray(),
+            ReadInt32LittleEndian(bytes, 0x50),
+            ReadInt32LittleEndian(bytes, OcclusionIdOffset));
+    }
 }
 
 public static class UyaShrubInstancesReader
@@ -115,7 +122,8 @@ public sealed record UyaTieInstance(
     int ClassId,
     UyaInstanceTransform Transform,
     byte[] RawBytes,
-    int DirectionalLights = 0);
+    int DirectionalLights = 0,
+    int OcclusionId = 0);
 
 public sealed record UyaShrubInstance(int ClassId, float DrawDistance, UyaInstanceTransform Transform, byte[] RawBytes);
 
