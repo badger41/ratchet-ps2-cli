@@ -35,6 +35,32 @@ using RatchetPs2.Games.UYA.Gameplay;
 using RatchetPs2.Games.UYA.Level;
 using RatchetPs2.Sdk;
 
+if (args is ["--dl-boot-iso"])
+{
+    DlBootIsoQualification.RunUnitTests();
+    return;
+}
+
+if (args is ["--verify-dl-boot-iso", var bootSourceIso, var bootOutputIso, var bootElfPath])
+{
+    DlBootIsoQualification.RunUnitTests();
+    DlBootIsoQualification.VerifyFiles(bootSourceIso, bootOutputIso, bootElfPath);
+    return;
+}
+
+if (args is ["--dl-executables"])
+{
+    DlExecutableQualification.RunUnitTests();
+    return;
+}
+
+if (args is ["--qualify-dl-executables", var dlIsoPath, var dlReferencePath])
+{
+    DlExecutableQualification.RunUnitTests();
+    DlExecutableQualification.CompareReference(dlIsoPath, dlReferencePath);
+    return;
+}
+
 if (args is ["--qualify-uya-iso", var isoPath, var reportPath])
 {
     var report = UyaArchiveQualification.Run(isoPath);
@@ -122,6 +148,8 @@ if (args.Contains("--uya-inventory", StringComparer.Ordinal))
     return;
 }
 
+DlExecutableQualification.RunUnitTests();
+DlBootIsoQualification.RunUnitTests();
 ValidateLevelInfoLookup();
 ValidateLevelWadParsing();
 ValidateArmorWadParsing();
