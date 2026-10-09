@@ -129,7 +129,7 @@ FX_LEVEL_22
 FX_LEVEL_23
 """;
 
-    private static readonly string[] Names = Catalog.Split('\n');
+    private static readonly string[] Names = Catalog.Split('\n', StringSplitOptions.TrimEntries);
 
     public static string? GetKnownName(int index) =>
         (uint)index < (uint)Names.Length ? Names[index] : null;
