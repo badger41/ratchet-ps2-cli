@@ -9,6 +9,7 @@ public static class UyaCollisionLinkRecovery
 {
     private const int MaximumInstances = 100_000;
     private const float MinimumContainment = 0.95f;
+    private const float MinimumLinkContainment = 0.70f;
     private const float TieMinimumAxisCoverage = 0.5f;
     // Retail shrub collision often covers only the trunk inside a much wider foliage mesh.
     private const float ShrubMinimumAxisCoverage = 0.15f;
@@ -16,13 +17,27 @@ public static class UyaCollisionLinkRecovery
     public static IReadOnlyList<UyaCollisionPieceCandidate> FindCandidates(
         byte[] collisionBytes,
         IReadOnlyList<UyaTieCollisionGroup> groups,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        Find(collisionBytes, groups, MinimumContainment, false, cancellationToken);
+
+    public static IReadOnlyList<UyaCollisionPieceCandidate> FindLinks(
+        byte[] collisionBytes,
+        IReadOnlyList<UyaTieCollisionGroup> groups,
+        CancellationToken cancellationToken = default) =>
+        Find(collisionBytes, groups, MinimumLinkContainment, true, cancellationToken);
+
+    private static IReadOnlyList<UyaCollisionPieceCandidate> Find(
+        byte[] collisionBytes,
+        IReadOnlyList<UyaTieCollisionGroup> groups,
+        float minimumContainment,
+        bool includeUnclaimedFragments,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(collisionBytes);
         ArgumentNullException.ThrowIfNull(groups);
         var collision = UyaCollisionReader.Read(collisionBytes);
         var pieces = PreparePieces(collision, cancellationToken);
-        var result = new List<UyaCollisionPieceCandidate>();
+        var matches = new List<CandidateMatch>();
         foreach (var group in groups)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -36,15 +51,16 @@ public static class UyaCollisionLinkRecovery
                     nameof(groups));
             if (group.Instances is null)
                 throw new ArgumentException("UYA TIE collision recovery instances cannot be null.", nameof(groups));
-            result.AddRange(FindCandidates(
+            matches.AddRange(FindMatches(
                 TieClassReader.Read(
                     group.TieBytes,
                     TieClassReadOptions.ForGameProfile(TieGameProfile.ForGame(GameId.UYA))),
                 pieces,
                 group.Instances,
-                cancellationToken));
+                cancellationToken,
+                minimumContainment));
         }
-        return result;
+        return Resolve(matches, includeUnclaimedFragments);
     }
 
     public static IReadOnlyList<UyaCollisionPieceCandidate> FindShrubCandidates(
@@ -65,8 +81,8 @@ public static class UyaCollisionLinkRecovery
                 || group.Instances is null)
                 throw new ArgumentException("UYA shrub collision recovery groups are invalid.", nameof(groups));
             var mesh = UyaShrubCollisionGenerator.ReadMesh(group.ShrubBytes, cancellationToken);
-            result.AddRange(FindCandidates(
-                mesh.Positions, pieces, group.Instances, "shrub", ShrubMinimumAxisCoverage, cancellationToken));
+            result.AddRange(Resolve(FindMatches(
+                mesh.Positions, pieces, group.Instances, "shrub", ShrubMinimumAxisCoverage, cancellationToken), false));
         }
         return result;
     }
@@ -80,7 +96,23 @@ public static class UyaCollisionLinkRecovery
         ArgumentNullException.ThrowIfNull(tie);
         ArgumentNullException.ThrowIfNull(collision);
         ArgumentNullException.ThrowIfNull(instances);
-        return FindCandidates(tie, PreparePieces(collision, cancellationToken), instances, cancellationToken);
+        return Resolve(FindMatches(
+            tie, PreparePieces(collision, cancellationToken), instances,
+            cancellationToken, MinimumContainment), false);
+    }
+
+    public static IReadOnlyList<UyaCollisionPieceCandidate> FindLinks(
+        TieClass tie,
+        UyaMapCollision collision,
+        IReadOnlyList<UyaCollisionInstance> instances,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(tie);
+        ArgumentNullException.ThrowIfNull(collision);
+        ArgumentNullException.ThrowIfNull(instances);
+        return Resolve(FindMatches(
+            tie, PreparePieces(collision, cancellationToken), instances,
+            cancellationToken, MinimumLinkContainment), true);
     }
 
     public static IReadOnlyList<UyaCollisionPieceCandidate> FindShrubCandidates(
@@ -93,16 +125,17 @@ public static class UyaCollisionLinkRecovery
         ArgumentNullException.ThrowIfNull(collision);
         ArgumentNullException.ThrowIfNull(instances);
         var positions = ShrubSurfaceMeshExtractor.Extract(shrub).Positions;
-        return FindCandidates(
+        return Resolve(FindMatches(
             positions, PreparePieces(collision, cancellationToken), instances,
-            "shrub", ShrubMinimumAxisCoverage, cancellationToken);
+            "shrub", ShrubMinimumAxisCoverage, cancellationToken), false);
     }
 
-    private static IReadOnlyList<UyaCollisionPieceCandidate> FindCandidates(
+    private static IReadOnlyList<CandidateMatch> FindMatches(
         TieClass tie,
         IReadOnlyList<PreparedPiece> pieces,
         IReadOnlyList<UyaCollisionInstance> instances,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        float minimumContainment)
     {
         var lod = tie.LodTopologies
             .Where(value => value.TriangleCount > 0 && value.UnresolvedLogicalVertexCount == 0)
@@ -110,16 +143,19 @@ public static class UyaCollisionLinkRecovery
             .FirstOrDefault()
             ?? throw new InvalidDataException("TIE contains no usable decoded surface LOD.");
         var positions = TieSurfaceMeshExtractor.Extract(tie, lod.LodIndex).Positions;
-        return FindCandidates(positions, pieces, instances, "TIE", TieMinimumAxisCoverage, cancellationToken);
+        return FindMatches(
+            positions, pieces, instances, "TIE", TieMinimumAxisCoverage,
+            cancellationToken, minimumContainment);
     }
 
-    private static IReadOnlyList<UyaCollisionPieceCandidate> FindCandidates(
+    private static IReadOnlyList<CandidateMatch> FindMatches(
         IReadOnlyList<Vector3> positions,
         IReadOnlyList<PreparedPiece> pieces,
         IReadOnlyList<UyaCollisionInstance> instances,
         string sourceKind,
         float minimumAxisCoverage,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        float minimumContainment = MinimumContainment)
     {
         if (instances.Count > MaximumInstances)
             throw new ArgumentException($"UYA {sourceKind} collision recovery exceeds {MaximumInstances} instances.", nameof(instances));
@@ -135,7 +171,7 @@ public static class UyaCollisionLinkRecovery
         var expandedMax = sourceMax + new Vector3(padding);
         var sourceCenter = (sourceMin + sourceMax) / 2;
         var sourceRadius = MathF.Max(sourceSize.Length() / 2, 0.001f);
-        var result = new List<UyaCollisionPieceCandidate>();
+        var result = new List<CandidateMatch>();
 
         foreach (var instance in instances)
         {
@@ -158,27 +194,43 @@ public static class UyaCollisionLinkRecovery
                     pieceMax = Vector3.Max(pieceMax, local);
                 }
                 var contained = containedCount / (float)piece.Vertices.Length;
-                if (contained < MinimumContainment) continue;
+                if (contained < minimumContainment) continue;
                 var center = (pieceMin + pieceMax) / 2;
                 if (!Inside(center, expandedMin, expandedMax)) continue;
                 var pieceSize = pieceMax - pieceMin;
                 var coverageX = AxisCoverage(pieceSize.X, sourceSize.X);
                 var coverageY = AxisCoverage(pieceSize.Y, sourceSize.Y);
                 var coverageZ = AxisCoverage(pieceSize.Z, sourceSize.Z);
-                if ((coverageX >= minimumAxisCoverage ? 1 : 0)
+                var isContainedFragment = (coverageX >= minimumAxisCoverage ? 1 : 0)
                     + (coverageY >= minimumAxisCoverage ? 1 : 0)
-                    + (coverageZ >= minimumAxisCoverage ? 1 : 0) < 2) continue;
+                    + (coverageZ >= minimumAxisCoverage ? 1 : 0) < 2;
+                if (isContainedFragment && contained < MinimumContainment) continue;
                 var topCoverage = (coverageX + coverageY + coverageZ
                     - MathF.Min(coverageX, MathF.Min(coverageY, coverageZ))) / 2;
                 var centerFit = 1 - Math.Clamp(Vector3.Distance(center, sourceCenter) / sourceRadius, 0, 1);
-                result.Add(new(
-                    instance.Id,
-                    piece.SourceIndex,
-                    contained * 0.45f + topCoverage * 0.35f + centerFit * 0.2f));
+                result.Add(new(new(
+                        instance.Id,
+                        piece.SourceIndex,
+                        contained * 0.45f + topCoverage * 0.35f + centerFit * 0.2f),
+                    isContainedFragment));
             }
         }
-        return result.OrderBy(value => value.SourcePieceIndex)
-            .ThenBy(value => value.InstanceId, StringComparer.Ordinal).ToArray();
+        return result;
+    }
+
+    private static UyaCollisionPieceCandidate[] Resolve(
+        IReadOnlyList<CandidateMatch> matches,
+        bool includeUnclaimedFragments)
+    {
+        var claimedPieces = matches.Where(value => !value.IsContainedFragment)
+            .Select(value => value.Candidate.SourcePieceIndex).ToHashSet();
+        return matches
+            .Where(value => !value.IsContainedFragment
+                || includeUnclaimedFragments && !claimedPieces.Contains(value.Candidate.SourcePieceIndex))
+            .Select(value => value.Candidate)
+            .OrderBy(value => value.SourcePieceIndex)
+            .ThenBy(value => value.InstanceId, StringComparer.Ordinal)
+            .ToArray();
     }
 
     private static PreparedPiece[] PreparePieces(UyaMapCollision collision, CancellationToken cancellationToken) =>
@@ -258,4 +310,8 @@ public static class UyaCollisionLinkRecovery
         Vector3[] Vertices,
         Vector3 Minimum,
         Vector3 Maximum);
+
+    private sealed record CandidateMatch(
+        UyaCollisionPieceCandidate Candidate,
+        bool IsContainedFragment);
 }

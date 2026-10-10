@@ -3393,6 +3393,24 @@ static void ValidateUyaCollisionParsingAndGltf()
         "collision composition should translate player barriers");
     var repeatedComposition = CollisionConverter.Compose(bytes, GameId.UYA, edits);
     Expect(composed.Bytes.SequenceEqual(repeatedComposition.Bytes), "collision composition should be deterministic");
+    var quarterTurn = new CollisionRotation(
+        0, 0, MathF.Sin(MathF.PI / 4), MathF.Cos(MathF.PI / 4));
+    var rotatedComposition = CollisionConverter.Compose(bytes, GameId.UYA,
+    [
+        new CollisionPieceEdit(CollisionPieceKind.Solid, 0, 0, 0, 0, Rotation: quarterTurn),
+        new CollisionPieceEdit(CollisionPieceKind.PlayerBarrier, 0, 2, 0, 0, Rotation: quarterTurn),
+    ]);
+    var rotatedCollision = UyaCollisionReader.Read(rotatedComposition.Bytes);
+    var rotatedSolid = rotatedCollision.SolidPieces[0].Faces.Single();
+    Expect(new[] { rotatedSolid.A, rotatedSolid.B, rotatedSolid.C, rotatedSolid.D }
+            .Contains(new UyaCollisionVertex(-64, 64, 128)),
+        "collision composition should rotate solid pieces in place");
+    Expect(rotatedCollision.PlayerBarriers.Single().Vertices[1] == new UyaCollisionVertex(64, 128, 64),
+        "collision composition should rotate player barriers in place");
+    ExpectThrows<ArgumentOutOfRangeException>(() => CollisionConverter.Compose(bytes, GameId.UYA,
+    [
+        new CollisionPieceEdit(CollisionPieceKind.Solid, 0, 0, 0, 0, Rotation: new(0, 0, 0, 0)),
+    ]));
     var addition = new CollisionSolidAddition("tie:crate",
     [
         new(
@@ -3855,6 +3873,47 @@ static void ValidateUyaTieCollisionSurfaceGeneration()
         && recovered.Single(value => value.InstanceId == "matching").Confidence
             > recovered.Single(value => value.InstanceId == "overlapping").Confidence,
         "TIE collision recovery should reject distant pieces and rank the centered overlap first");
+    var placedFace = placed.Faces.Single();
+    var partialCollision = new UyaMapCollision(
+        [new(0,
+        [
+            placedFace with
+            {
+                D = new(11 * 64 + 32, placedFace.D.Y64, placedFace.D.Z64),
+                IsQuad = true,
+            },
+        ])], [], 0, 0, 0);
+    Expect(UyaCollisionLinkRecovery.FindCandidates(
+            tie,
+            partialCollision,
+            [new("partial", new(new(10, 20, 30), Quaternion.Identity, Vector3.One))]).Count == 0,
+        "partial TIE collision overlap should not gain transform ownership");
+    Expect(UyaCollisionLinkRecovery.FindLinks(
+            tie,
+            partialCollision,
+            [new("partial", new(new(10, 20, 30), Quaternion.Identity, Vector3.One))])
+        is [{ InstanceId: "partial", SourcePieceIndex: 0 }],
+        "partial TIE collision overlap should remain available as a semantic link");
+    var fragmentFace = placedFace with
+    {
+        A = new(10 * 64 + 16, 20 * 64 + 16, 30 * 64),
+        B = new(10 * 64 + 16, 20 * 64 + 24, 30 * 64),
+        C = new(10 * 64 + 24, 20 * 64 + 24, 30 * 64),
+        D = new(10 * 64 + 24, 20 * 64 + 16, 30 * 64),
+    };
+    var fragmentCollision = new UyaMapCollision(
+        [new(0, [fragmentFace])], [], 0, 0, 0);
+    var broadInstance = new UyaCollisionInstance(
+        "broad", new(new(10, 20, 30), Quaternion.Identity, Vector3.One));
+    Expect(UyaCollisionLinkRecovery.FindCandidates(tie, fragmentCollision, [broadInstance]).Count == 0
+        && UyaCollisionLinkRecovery.FindLinks(tie, fragmentCollision, [broadInstance])
+            is [{ InstanceId: "broad", SourcePieceIndex: 0 }],
+        "fully contained collision fragments should be semantic links, not ownership candidates");
+    var exactInstance = new UyaCollisionInstance(
+        "exact", new(new(10.25f, 20.25f, 30), Quaternion.Identity, new(0.125f)));
+    Expect(UyaCollisionLinkRecovery.FindLinks(tie, fragmentCollision, [broadInstance, exactInstance])
+        is [{ InstanceId: "exact", SourcePieceIndex: 0 }],
+        "normal TIE links should suppress fragment fallbacks for the same collision piece");
     var repeated = UyaTieCollisionGenerator.GenerateSurface(tie, "tie:synthetic", 0, 0x31);
     Expect(candidate.Addition.Faces.SequenceEqual(repeated.Addition.Faces),
         "TIE surface collision generation should be deterministic");

@@ -193,7 +193,22 @@ public static class CollisionWork
         byte[] collisionBytes,
         GameId gameId,
         IReadOnlyList<CollisionTieGroup> groups,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        FindTieCollision(collisionBytes, gameId, groups, semanticLinks: false, cancellationToken);
+
+    public static IReadOnlyList<CollisionInstancePieceCandidate> FindTieCollisionLinks(
+        byte[] collisionBytes,
+        GameId gameId,
+        IReadOnlyList<CollisionTieGroup> groups,
+        CancellationToken cancellationToken = default) =>
+        FindTieCollision(collisionBytes, gameId, groups, semanticLinks: true, cancellationToken);
+
+    private static IReadOnlyList<CollisionInstancePieceCandidate> FindTieCollision(
+        byte[] collisionBytes,
+        GameId gameId,
+        IReadOnlyList<CollisionTieGroup> groups,
+        bool semanticLinks,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(collisionBytes);
         ArgumentNullException.ThrowIfNull(groups);
@@ -202,19 +217,24 @@ public static class CollisionWork
             throw new ArgumentException("TIE collision recovery groups are invalid.", nameof(groups));
         return gameId switch
         {
-            GameId.UYA => UyaCollisionLinkRecovery.FindCandidates(
-                    collisionBytes,
-                    groups.Select(group => new UyaTieCollisionGroup(
-                        group.TieBytes,
-                        group.Instances.Select(value => new UyaCollisionInstance(
-                            value.Id,
-                            UyaCollisionAdapter.ToTransform(value.Transform))).ToArray())).ToArray(),
-                    cancellationToken)
+            GameId.UYA => (semanticLinks
+                    ? UyaCollisionLinkRecovery.FindLinks(
+                        collisionBytes, ToUyaTieGroups(groups), cancellationToken)
+                    : UyaCollisionLinkRecovery.FindCandidates(
+                        collisionBytes, ToUyaTieGroups(groups), cancellationToken))
                 .Select(value => new CollisionInstancePieceCandidate(
                     value.InstanceId, value.SourcePieceIndex, value.Confidence)).ToArray(),
             _ => throw new NotSupportedException($"TIE collision link recovery does not support {gameId}."),
         };
     }
+
+    private static UyaTieCollisionGroup[] ToUyaTieGroups(IReadOnlyList<CollisionTieGroup> groups) => groups
+        .Select(group => new UyaTieCollisionGroup(
+            group.TieBytes,
+            group.Instances.Select(value => new UyaCollisionInstance(
+                value.Id,
+                UyaCollisionAdapter.ToTransform(value.Transform))).ToArray()))
+        .ToArray();
 
     public static IReadOnlyList<CollisionInstancePieceCandidate> FindShrubCollisionCandidates(
         byte[] collisionBytes,

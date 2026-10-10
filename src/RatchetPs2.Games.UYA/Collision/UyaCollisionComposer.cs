@@ -84,9 +84,10 @@ public static class UyaCollisionComposer
         ValidateAdditions(additions, cancellationToken);
         var source = UyaCollisionReader.Read(sourceBytes);
         var byKey = new Dictionary<(UyaCollisionPieceKind Kind, int Index), UyaCollisionPieceEdit>();
-        foreach (var edit in edits)
+        foreach (var sourceEdit in edits)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var edit = Normalize(sourceEdit);
             ValidateEdit(source, edit);
             if (!byKey.TryAdd((edit.Kind, edit.SourcePieceIndex), edit))
             {
@@ -100,7 +101,8 @@ public static class UyaCollisionComposer
             .Where(edit => edit.Remove
                 || edit.TranslationX64 != 0
                 || edit.TranslationY64 != 0
-                || edit.TranslationZ64 != 0)
+                || edit.TranslationZ64 != 0
+                || edit.Rotation != Quaternion.Identity)
             .OrderBy(edit => edit.Kind)
             .ThenBy(edit => edit.SourcePieceIndex)
             .ToArray();
@@ -119,9 +121,9 @@ public static class UyaCollisionComposer
             }
             else if (!edit.Remove)
             {
-                solidPieces.Add(new(piece.SourceIndex, piece.Faces
-                    .Select(face => Translate(face, edit))
-                    .ToArray()));
+                var transform = Matrix(edit);
+                solidPieces.Add(new(piece.SourceIndex,
+                    TransformFaces(piece.Faces, transform, cancellationToken)));
             }
         }
 
@@ -146,12 +148,13 @@ public static class UyaCollisionComposer
             }
             else if (!edit.Remove)
             {
+                var transform = Matrix(edit);
                 barriers.Add(new(
                     barrier.SourceIndex,
                     new(
-                        Translate(barrier.BoundingSphere.Center, edit),
+                        Transform(barrier.BoundingSphere.Center, transform, solid: false),
                         barrier.BoundingSphere.Radius64),
-                    barrier.Vertices.Select(vertex => Translate(vertex, edit)).ToArray(),
+                    TransformVertices(barrier.Vertices, transform, cancellationToken),
                     barrier.Triangles));
             }
         }
@@ -221,6 +224,7 @@ public static class UyaCollisionComposer
 
             foreach (var face in addition.Faces)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 ValidateFace(addition.Id, face);
                 if (!faces.Add(UyaCollisionReader.Canonicalize(face)))
                 {
@@ -302,22 +306,81 @@ public static class UyaCollisionComposer
         }
     }
 
-    private static UyaCollisionSolidFace Translate(
+    private static UyaCollisionPieceEdit Normalize(UyaCollisionPieceEdit edit)
+    {
+        if (edit.Rotation == default) return edit with { Rotation = Quaternion.Identity };
+        if (!float.IsFinite(edit.Rotation.X) || !float.IsFinite(edit.Rotation.Y)
+            || !float.IsFinite(edit.Rotation.Z) || !float.IsFinite(edit.Rotation.W)
+            || edit.Rotation.LengthSquared() == 0)
+            throw new ArgumentException("Collision rotation must be a finite non-empty quaternion.", nameof(edit));
+        var rotation = Quaternion.Normalize(edit.Rotation);
+        if (rotation.W < 0) rotation = new(-rotation.X, -rotation.Y, -rotation.Z, -rotation.W);
+        return edit with { Rotation = rotation };
+    }
+
+    private static Matrix4x4 Matrix(UyaCollisionPieceEdit edit) =>
+        Matrix4x4.CreateFromQuaternion(edit.Rotation) * Matrix4x4.CreateTranslation(
+            edit.TranslationX64 / 64f,
+            edit.TranslationY64 / 64f,
+            edit.TranslationZ64 / 64f);
+
+    private static UyaCollisionSolidFace Transform(
         UyaCollisionSolidFace face,
-        UyaCollisionPieceEdit edit) => new(
+        Matrix4x4 transform,
+        bool solid) => new(
             face.Type,
-            Translate(face.A, edit),
-            Translate(face.B, edit),
-            Translate(face.C, edit),
-            face.IsQuad ? Translate(face.D, edit) : default,
+            Transform(face.A, transform, solid),
+            Transform(face.B, transform, solid),
+            Transform(face.C, transform, solid),
+            face.IsQuad ? Transform(face.D, transform, solid) : default,
             face.IsQuad);
 
-    private static UyaCollisionVertex Translate(
+    private static UyaCollisionSolidFace[] TransformFaces(
+        IReadOnlyList<UyaCollisionSolidFace> faces,
+        Matrix4x4 transform,
+        CancellationToken cancellationToken)
+    {
+        var result = new UyaCollisionSolidFace[faces.Count];
+        for (var index = 0; index < result.Length; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            result[index] = UyaCollisionReader.Canonicalize(Transform(faces[index], transform, solid: true));
+        }
+        return result;
+    }
+
+    private static UyaCollisionVertex[] TransformVertices(
+        IReadOnlyList<UyaCollisionVertex> vertices,
+        Matrix4x4 transform,
+        CancellationToken cancellationToken)
+    {
+        var result = new UyaCollisionVertex[vertices.Count];
+        for (var index = 0; index < result.Length; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            result[index] = Transform(vertices[index], transform, solid: false);
+        }
+        return result;
+    }
+
+    private static UyaCollisionVertex Transform(
         UyaCollisionVertex vertex,
-        UyaCollisionPieceEdit edit) => new(
-            checked(vertex.X64 + edit.TranslationX64),
-            checked(vertex.Y64 + edit.TranslationY64),
-            checked(vertex.Z64 + edit.TranslationZ64));
+        Matrix4x4 transform,
+        bool solid)
+    {
+        var value = Vector3.Transform(vertex.Position, transform);
+        var horizontalPrecision = solid ? 16 : 64;
+        return new(
+            Quantize(value.X, horizontalPrecision),
+            Quantize(value.Y, horizontalPrecision),
+            Quantize(value.Z, 64));
+    }
+
+    private static int Quantize(float value, int precision)
+    {
+        if (!float.IsFinite(value)) throw new InvalidDataException("Transformed collision coordinate is not finite.");
+        return checked((int)MathF.Round(value * precision) * (64 / precision));
+    }
 
     private static void Verify(UyaMapCollision expected, UyaMapCollision actual)
     {

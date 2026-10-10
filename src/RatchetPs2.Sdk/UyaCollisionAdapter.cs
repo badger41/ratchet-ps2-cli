@@ -53,7 +53,8 @@ internal static class UyaCollisionAdapter
             ToTicks(edit.TranslationX, edit.Kind == CollisionPieceKind.Solid ? 16 : 64, "translation X"),
             ToTicks(edit.TranslationY, edit.Kind == CollisionPieceKind.Solid ? 16 : 64, "translation Y"),
             ToTicks(edit.TranslationZ, 64, "translation Z"),
-            edit.Remove)).ToArray();
+            edit.Remove,
+            ToRotation(edit.Rotation))).ToArray();
 
     public static UyaCollisionSolidAddition ToAddition(CollisionSolidAddition addition)
     {
@@ -135,7 +136,10 @@ internal static class UyaCollisionAdapter
             edit.TranslationX64 / 64f,
             edit.TranslationY64 / 64f,
             edit.TranslationZ64 / 64f,
-            edit.Remove)).ToArray(),
+            edit.Remove,
+            edit.Rotation == System.Numerics.Quaternion.Identity
+                ? null
+                : new(edit.Rotation.X, edit.Rotation.Y, edit.Rotation.Z, edit.Rotation.W))).ToArray(),
         composed.Analysis is null ? null : FromAnalysis(composed.Analysis));
 
     private static UyaCollisionVertex ToVertex(CollisionVertex vertex, string additionId) => new(
@@ -145,6 +149,17 @@ internal static class UyaCollisionAdapter
 
     private static CollisionVertex FromVertex(UyaCollisionVertex vertex) =>
         new(vertex.X64 / 64f, vertex.Y64 / 64f, vertex.Z64 / 64f);
+
+    private static System.Numerics.Quaternion ToRotation(CollisionRotation? value)
+    {
+        if (value is not { } rotation) return System.Numerics.Quaternion.Identity;
+        var result = new System.Numerics.Quaternion(rotation.X, rotation.Y, rotation.Z, rotation.W);
+        if (!float.IsFinite(result.X) || !float.IsFinite(result.Y)
+            || !float.IsFinite(result.Z) || !float.IsFinite(result.W)
+            || result.LengthSquared() == 0)
+            throw new ArgumentOutOfRangeException(nameof(value), "Collision rotation must be finite and non-empty.");
+        return result;
+    }
 
     private static CollisionSolidFace FromFace(UyaCollisionSolidFace face) => new(
         face.Type,

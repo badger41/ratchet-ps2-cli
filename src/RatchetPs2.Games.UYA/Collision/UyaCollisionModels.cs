@@ -60,7 +60,8 @@ public readonly record struct UyaCollisionPieceEdit(
     int TranslationX64,
     int TranslationY64,
     int TranslationZ64,
-    bool Remove = false);
+    bool Remove = false,
+    Quaternion Rotation = default);
 
 public sealed record UyaCollisionSolidAddition(
     string Id,

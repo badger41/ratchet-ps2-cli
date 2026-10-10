@@ -21,7 +21,8 @@ public readonly record struct CollisionPieceEdit(
     float TranslationX,
     float TranslationY,
     float TranslationZ,
-    bool Remove = false);
+    bool Remove = false,
+    CollisionRotation? Rotation = null);
 
 public readonly record struct CollisionVertex(float X, float Y, float Z);
 
