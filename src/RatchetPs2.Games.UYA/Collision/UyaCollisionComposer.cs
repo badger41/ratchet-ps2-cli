@@ -319,10 +319,10 @@ public static class UyaCollisionComposer
     }
 
     private static Matrix4x4 Matrix(UyaCollisionPieceEdit edit) =>
-        Matrix4x4.CreateFromQuaternion(edit.Rotation) * Matrix4x4.CreateTranslation(
+        Matrix4x4.CreateFromQuaternion(edit.Rotation) * Matrix4x4.CreateTranslation(new Vector3(
             edit.TranslationX64 / 64f,
             edit.TranslationY64 / 64f,
-            edit.TranslationZ64 / 64f);
+            edit.TranslationZ64 / 64f));
 
     private static UyaCollisionSolidFace Transform(
         UyaCollisionSolidFace face,
