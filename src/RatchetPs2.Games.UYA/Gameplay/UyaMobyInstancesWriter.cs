@@ -5,21 +5,101 @@ namespace RatchetPs2.Games.UYA.Gameplay;
 
 public static class UyaMobyInstancesWriter
 {
+    public static byte[] WriteField(
+        ReadOnlySpan<byte> source,
+        int expectedClassId,
+        UyaMobyInstanceFieldEdit edit)
+    {
+        var parsed = UyaMobyInstancesReader.ReadInstance(source);
+        if (parsed.ClassId != expectedClassId)
+            throw new InvalidDataException(
+                $"UYA moby OClass changed from the expected value {expectedClassId} to {parsed.ClassId}.");
+        UyaMobyInstanceFieldLimits.Validate(edit);
+
+        var output = source[..UyaMobyInstancesReader.RecordSize].ToArray();
+        var (offset, length) = edit.Field switch
+        {
+            UyaMobyInstanceField.Mission => (0x04, 4),
+            UyaMobyInstanceField.Bolts => (0x14, 4),
+            UyaMobyInstanceField.DrawDistance => (0x30, 4),
+            UyaMobyInstanceField.UpdateDistance => (0x34, 4),
+            UyaMobyInstanceField.IsRooted => (0x5c, 4),
+            UyaMobyInstanceField.RootedDistance => (0x60, 4),
+            UyaMobyInstanceField.Color => (0x74, 12),
+            _ => throw new ArgumentOutOfRangeException(nameof(edit)),
+        };
+        switch (edit.Value.Kind)
+        {
+            case UyaMobyInstanceFieldValueKind.Integer:
+                BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(offset), edit.Value.Integer!.Value);
+                break;
+            case UyaMobyInstanceFieldValueKind.Float:
+                BinaryPrimitives.WriteSingleLittleEndian(output.AsSpan(offset), edit.Value.Float!.Value);
+                break;
+            case UyaMobyInstanceFieldValueKind.Boolean:
+                BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(offset), edit.Value.Boolean!.Value ? 1 : 0);
+                break;
+            case UyaMobyInstanceFieldValueKind.Color:
+                var color = edit.Value.Color!.Value;
+                BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(offset), color.Red);
+                BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(offset + 4), color.Green);
+                BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(offset + 8), color.Blue);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(edit));
+        }
+
+        var reread = UyaMobyInstancesReader.ReadInstance(output);
+        if (reread.ClassId != expectedClassId)
+            throw new InvalidDataException("UYA moby property edit changed the OClass.");
+        var written = UyaMobyInstanceFieldLimits.Read(reread, edit.Field);
+        if (written != edit.Value)
+            throw new InvalidDataException($"UYA moby field {edit.Field} failed semantic re-read validation.");
+        for (var index = 0; index < output.Length; index++)
+            if ((index < offset || index >= offset + length) && output[index] != source[index])
+                throw new InvalidDataException("UYA moby property edit changed an unowned record byte.");
+        return output;
+    }
+
+    public static byte[] Write(UyaMobyInstances source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        var output = CreateOutput(source, source.Instances.Count);
+        for (var index = 0; index < source.Instances.Count; index++)
+        {
+            var bytes = source.Instances[index]?.RawBytes
+                ?? throw new InvalidDataException("UYA moby instance raw bytes are missing.");
+            if (bytes.Length != UyaMobyInstancesReader.RecordSize
+                || BinaryPrimitives.ReadInt32LittleEndian(bytes) != UyaMobyInstancesReader.RecordSize)
+                throw new InvalidDataException(
+                    $"UYA moby instance must retain a valid 0x{UyaMobyInstancesReader.RecordSize:X}-byte record.");
+            bytes.CopyTo(output.AsSpan(
+                UyaMobyInstancesReader.HeaderSize + index * UyaMobyInstancesReader.RecordSize));
+        }
+        return output;
+    }
+
     public static byte[] Write(
         UyaMobyInstances source,
         IReadOnlyList<UyaMobyInstanceEdit> instances)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(instances);
-        var recordsLength = checked(instances.Count * UyaMobyInstancesReader.RecordSize);
-        var output = new byte[checked(UyaMobyInstancesReader.HeaderSize + recordsLength + source.TrailingBytes.Length)];
-        BinaryPrimitives.WriteInt32LittleEndian(output, instances.Count);
-        BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(4), source.SpawnableMobyCount);
-        BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(8), source.Pad8);
-        BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(12), source.PadC);
+        var output = CreateOutput(source, instances.Count);
         for (var index = 0; index < instances.Count; index++)
             WriteRecord(output.AsSpan(UyaMobyInstancesReader.HeaderSize
                 + index * UyaMobyInstancesReader.RecordSize), instances[index]);
+        return output;
+    }
+
+    private static byte[] CreateOutput(UyaMobyInstances source, int count)
+    {
+        var recordsLength = checked(count * UyaMobyInstancesReader.RecordSize);
+        var output = new byte[checked(UyaMobyInstancesReader.HeaderSize + recordsLength + source.TrailingBytes.Length)];
+        BinaryPrimitives.WriteInt32LittleEndian(output, count);
+        BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(4), source.SpawnableMobyCount);
+        BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(8), source.Pad8);
+        BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(12), source.PadC);
         source.TrailingBytes.CopyTo(output.AsSpan(UyaMobyInstancesReader.HeaderSize + recordsLength));
         return output;
     }

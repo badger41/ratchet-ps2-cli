@@ -9,7 +9,7 @@ public static class UyaMobyInstancesReader
 
     public static bool TryRead(ReadOnlySpan<byte> data, out UyaMobyInstances? mobyInstances)
     {
-        if (data.Length < HeaderSize)
+        if (data.Length < HeaderSize || !HasCompleteRecords(data))
         {
             mobyInstances = null;
             return false;
@@ -17,6 +17,13 @@ public static class UyaMobyInstancesReader
 
         mobyInstances = Read(data);
         return true;
+    }
+
+    private static bool HasCompleteRecords(ReadOnlySpan<byte> data)
+    {
+        var staticCount = ReadInt32LittleEndian(data, 0x00);
+        if (staticCount < 0) return false;
+        return (long)staticCount * RecordSize <= data.Length - HeaderSize;
     }
 
     public static UyaMobyInstances Read(ReadOnlySpan<byte> data)
@@ -56,8 +63,12 @@ public static class UyaMobyInstancesReader
 
     private static UyaMobyInstance ReadInstanceAt(ReadOnlySpan<byte> data, int offset)
     {
+        var bytes = data.Slice(offset, RecordSize);
+        var size = ReadInt32LittleEndian(bytes, 0);
+        if (size != RecordSize)
+            throw new InvalidDataException($"UYA moby instance size must be 0x{RecordSize:X} bytes.");
         return new UyaMobyInstance(
-            ReadInt32LittleEndian(data, offset),
+            size,
             ReadInt32LittleEndian(data, offset + 0x04),
             ReadInt32LittleEndian(data, offset + 0x08),
             ReadInt32LittleEndian(data, offset + 0x0c),
@@ -84,7 +95,8 @@ public static class UyaMobyInstancesReader
             ReadInt32LittleEndian(data, offset + 0x70),
             ReadRgb(data, offset + 0x74),
             ReadInt32LittleEndian(data, offset + 0x80),
-            ReadInt32LittleEndian(data, offset + 0x84));
+            ReadInt32LittleEndian(data, offset + 0x84),
+            bytes.ToArray());
     }
 
     private static UyaVector3 ReadVector3(ReadOnlySpan<byte> data, int offset)
@@ -140,4 +152,5 @@ public sealed record UyaMobyInstance(
     int ModeBits,
     UyaRgb96 Color,
     int Light,
-    int Unknown84);
+    int Unknown84,
+    byte[] RawBytes);

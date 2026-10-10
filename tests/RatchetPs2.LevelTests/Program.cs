@@ -153,6 +153,9 @@ if (args.Contains("--fx-contract", StringComparer.Ordinal))
 if (args.Contains("--uya-static-instances", StringComparer.Ordinal))
 {
     ValidateUyaGameplayTypedParsing();
+    ValidateGameplayPvarTables();
+    ValidateGameplayPvarTablesWhenAvailable();
+    ValidateUyaMobyInstanceContract();
     ValidateUyaStaticInstanceParsing();
     Console.WriteLine("UYA instance writer round-trip tests passed.");
     return;
@@ -221,6 +224,9 @@ ValidateUyaStandaloneLevelDataUnpacking();
 ValidateUyaStandaloneGameplayUnpacking();
 ValidateUyaCustomMapZipUnpacking();
 ValidateUyaGameplayTypedParsing();
+ValidateGameplayPvarTables();
+ValidateGameplayPvarTablesWhenAvailable();
+ValidateUyaMobyInstanceContract();
 ValidateUyaCollisionParsingAndGltf();
 ValidateUyaTieCollisionSurfaceGeneration();
 ValidateUyaTieCollisionConvexHullGeneration();
@@ -2448,6 +2454,73 @@ static void ValidateUyaCustomMapZipUnpacking()
     Expect(package.Files.Count == package.LevelDataFiles.Count + package.GameplayFiles.Count, "UYA custom map zip package should combine level-data and gameplay files");
 }
 
+static void ValidateGameplayPvarTables()
+{
+    var first = new byte[8];
+    WriteInt32(first, 0, 1);
+    WriteInt32(first, 4, 4);
+    var written = GameplayPvarTableWriter.Write([
+        new(first, [0], [4]),
+        new([0xaa, 0xbb, 0xcc, 0xdd], [], []),
+    ]);
+    var reread = GameplayPvarTableReader.Read(PvarBlocks(written), "test")
+        ?? throw new InvalidOperationException("Pvar writer produced empty tables.");
+    Expect(reread.Entries.Count == 2
+        && reread.Entries[0].Data.SequenceEqual(first)
+        && reread.Entries[1].Data.SequenceEqual(new byte[] { 0xaa, 0xbb, 0xcc, 0xdd }),
+        "Pvar writer should round-trip entry boundaries and opaque bytes");
+    Expect(reread.MobyLinks.SequenceEqual([new GameplayPvarRelativePointer(0, 0)]),
+        "Pvar writer should round-trip moby fixups");
+    Expect(reread.RelativePointers.SequenceEqual([new GameplayPvarRelativePointer(0, 4)]),
+        "Pvar writer should round-trip relative-pointer fixups");
+    Expect(written.MobyLinksBytes.AsSpan(^8).SequenceEqual(new byte[] {
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        }) && written.RelativePointerBytes.AsSpan(^8).SequenceEqual(new byte[] {
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        }),
+        "Pvar writer should terminate native fixup tables");
+    Expect(GameplayPvarTableWriter.Write([
+            new(first, [0], [4]),
+            new([0xaa, 0xbb, 0xcc, 0xdd], [], []),
+        ]).DataBytes.SequenceEqual(written.DataBytes),
+        "Pvar writer should be deterministic");
+
+    var malformedFixup = written with { MobyLinksBytes = written.MobyLinksBytes.ToArray() };
+    WriteInt32(malformedFixup.MobyLinksBytes, 0, 2);
+    ExpectThrows<InvalidDataException>(() => GameplayPvarTableReader.Read(PvarBlocks(malformedFixup), "test"));
+    var malformedTable = written with { TableBytes = new byte[7] };
+    ExpectThrows<InvalidDataException>(() => GameplayPvarTableReader.Read(PvarBlocks(malformedTable), "test"));
+
+    static GameplayRawBlock[] PvarBlocks(GameplayPvarTables tables) =>
+    [
+        new(0, 0, 0, "pvar_moby_links", tables.MobyLinksBytes),
+        new(1, 0, 0, "pvar_table", tables.TableBytes),
+        new(2, 0, 0, "pvar_data", tables.DataBytes),
+        new(3, 0, 0, "pvar_relative_pointers", tables.RelativePointerBytes),
+    ];
+}
+
+static void ValidateGameplayPvarTablesWhenAvailable()
+{
+    var directory = Path.Combine("test-assets", "extractions_uya");
+    if (!Directory.Exists(directory)) return;
+    foreach (var path in Directory.EnumerateFiles(directory, "level*.wad", SearchOption.TopDirectoryOnly)
+        .Order(StringComparer.Ordinal))
+    {
+        UyaLevelWadPackage package;
+        try
+        {
+            package = UyaLevelWadUnpacker.Unpack(File.ReadAllBytes(path));
+        }
+        catch (InvalidDataException exception)
+        {
+            throw new InvalidDataException($"{Path.GetFileName(path)} has invalid gameplay PVar tables.", exception);
+        }
+        var gameplay = package.Files.Single(value => value.Path == "gameplay/gameplay_core.bin");
+        _ = UyaGameplayBlockReader.ReadCore(gameplay.Bytes);
+    }
+}
+
 static void ValidateUyaGameplayTypedParsing()
 {
     var levelSettingsBytes = new byte[UyaLevelSettingsReader.MinimumSize + 2];
@@ -2538,10 +2611,10 @@ static void ValidateUyaGameplayTypedParsing()
         UyaGameplayBlockReader.CoreHeaderSize,
         (0x00, levelSettingsBytes),
         (0x4c, mobyBytes),
-        (0x58, [0x01, 0x02]),
+        (0x58, [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
         (0x5c, [0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00]),
         (0x60, [0xde, 0xad, 0xbe, 0xef]),
-        (0x64, [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]),
+        (0x64, [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
         (0x88, cameraCollisionBytes)));
     var settings = gameplay.Blocks.Single(block => block.SemanticName == "level_settings").LevelSettings;
     var mobyInstances = gameplay.Blocks.Single(block => block.SemanticName == "moby_instances").MobyInstances;
@@ -2577,6 +2650,11 @@ static void ValidateUyaGameplayTypedParsing()
     Expect(mobyInstances.Pad8 == 8 && mobyInstances.PadC == 9, "UYA moby instance header padding should be parsed");
 
     var moby = mobyInstances.Instances.Single();
+    Expect(moby.RawBytes.SequenceEqual(mobyBytes.AsSpan(
+            UyaMobyInstancesReader.HeaderSize, UyaMobyInstancesReader.RecordSize).ToArray()),
+        "UYA moby instance raw bytes should be retained");
+    Expect(UyaMobyInstancesWriter.Write(mobyInstances).SequenceEqual(mobyBytes),
+        "UYA moby no-edit writes should be byte-identical");
     Expect(moby.Size == UyaMobyInstancesReader.RecordSize, "UYA moby instance size field should be parsed");
     Expect(moby.Mission == -1, "UYA moby instance mission should be parsed");
     Expect(moby.Uid == 0x78, "UYA moby instance uid should be parsed");
@@ -2672,6 +2750,111 @@ static void ValidateUyaGameplayTypedParsing()
     Expect(gcSettings.BackgroundColor == new GcRgb96(57, 65, 50), "GC level settings background color should be parsed");
     Expect(gcSettings.FogFarDistance == 179200, "GC level settings fog distance should be parsed");
 }
+
+static void ValidateUyaMobyInstanceContract()
+{
+    var bytes = new byte[UyaMobyInstancesReader.HeaderSize + UyaMobyInstancesReader.RecordSize + 3];
+    WriteInt32(bytes, 0x00, 1);
+    WriteInt32(bytes, 0x04, int.MaxValue);
+    WriteInt32(bytes, 0x08, int.MinValue);
+    WriteInt32(bytes, 0x0c, int.MaxValue);
+    var record = bytes.AsSpan(UyaMobyInstancesReader.HeaderSize, UyaMobyInstancesReader.RecordSize);
+    for (var index = 0; index < record.Length; index++) record[index] = unchecked((byte)(index * 37));
+    BinaryPrimitives.WriteInt32LittleEndian(record, UyaMobyInstancesReader.RecordSize);
+    BinaryPrimitives.WriteSingleLittleEndian(record[0x2c..], float.Epsilon);
+    BinaryPrimitives.WriteSingleLittleEndian(record[0x40..], float.MinValue);
+    BinaryPrimitives.WriteSingleLittleEndian(record[0x44..], 0);
+    BinaryPrimitives.WriteSingleLittleEndian(record[0x48..], float.MaxValue);
+    bytes[^3] = 0xaa;
+    bytes[^2] = 0xbb;
+    bytes[^1] = 0xcc;
+
+    var parsed = UyaMobyInstancesReader.Read(bytes);
+    Expect(parsed.Instances.Single().RawBytes.SequenceEqual(record.ToArray())
+        && parsed.TrailingBytes.SequenceEqual(new byte[] { 0xaa, 0xbb, 0xcc }),
+        "UYA moby boundary records should retain every source byte");
+    Expect(UyaMobyInstancesWriter.Write(parsed).SequenceEqual(bytes),
+        "UYA moby boundary no-edit writes should be byte-identical");
+    Expect(!UyaMobyInstancesReader.TryRead(bytes.AsSpan(0, bytes.Length - 4), out _),
+        "UYA moby TryRead should reject truncated records without throwing");
+
+    var impossibleCount = new byte[UyaMobyInstancesReader.HeaderSize];
+    WriteInt32(impossibleCount, 0, int.MaxValue);
+    Expect(!UyaMobyInstancesReader.TryRead(impossibleCount, out _),
+        "UYA moby TryRead should reject record counts larger than the payload");
+    var invalidSize = bytes.ToArray();
+    WriteInt32(invalidSize, UyaMobyInstancesReader.HeaderSize, UyaMobyInstancesReader.RecordSize - 4);
+    ExpectThrows<InvalidDataException>(() => UyaMobyInstancesReader.Read(invalidSize));
+    var missingRawBytes = parsed with
+    {
+        Instances = [parsed.Instances.Single() with { RawBytes = new byte[UyaMobyInstancesReader.RecordSize - 1] }],
+    };
+    ExpectThrows<InvalidDataException>(() => UyaMobyInstancesWriter.Write(missingRawBytes));
+    var invalidRawSize = parsed.Instances.Single().RawBytes.ToArray();
+    BinaryPrimitives.WriteInt32LittleEndian(invalidRawSize, UyaMobyInstancesReader.RecordSize - 4);
+    ExpectThrows<InvalidDataException>(() => UyaMobyInstancesWriter.Write(parsed with
+    {
+        Instances = [parsed.Instances.Single() with { RawBytes = invalidRawSize }],
+    }));
+
+    ValidateUyaMobyPropertyContract(parsed.Instances.Single().RawBytes, parsed.Instances.Single().ClassId);
+}
+
+static void ValidateUyaMobyPropertyContract(byte[] source, int classId)
+{
+    var cases = new (UyaMobyInstanceField Field, UyaMobyInstanceFieldValue Value, int Offset, int Length)[]
+    {
+        (UyaMobyInstanceField.Mission, UyaMobyInstanceFieldValue.FromInteger(-1), 0x04, 4),
+        (UyaMobyInstanceField.Mission, UyaMobyInstanceFieldValue.FromInteger(sbyte.MaxValue), 0x04, 4),
+        (UyaMobyInstanceField.Bolts, UyaMobyInstanceFieldValue.FromInteger(0), 0x14, 4),
+        (UyaMobyInstanceField.Bolts, UyaMobyInstanceFieldValue.FromInteger(int.MaxValue), 0x14, 4),
+        (UyaMobyInstanceField.DrawDistance, UyaMobyInstanceFieldValue.FromInteger(0), 0x30, 4),
+        (UyaMobyInstanceField.UpdateDistance, UyaMobyInstanceFieldValue.FromInteger(int.MaxValue), 0x34, 4),
+        (UyaMobyInstanceField.IsRooted, UyaMobyInstanceFieldValue.FromBoolean(false), 0x5c, 4),
+        (UyaMobyInstanceField.IsRooted, UyaMobyInstanceFieldValue.FromBoolean(true), 0x5c, 4),
+        (UyaMobyInstanceField.RootedDistance, UyaMobyInstanceFieldValue.FromFloat(-1), 0x60, 4),
+        (UyaMobyInstanceField.RootedDistance, UyaMobyInstanceFieldValue.FromFloat(float.MaxValue), 0x60, 4),
+        (UyaMobyInstanceField.Color, UyaMobyInstanceFieldValue.FromColor(new(0, 127, 255)), 0x74, 12),
+    };
+    foreach (var test in cases)
+    {
+        var edited = UyaMobyInstancesWriter.WriteField(source, classId, new(test.Field, test.Value));
+        var reread = UyaMobyInstancesReader.ReadInstance(edited);
+        Expect(edited.Where((value, index) => index < test.Offset || index >= test.Offset + test.Length)
+                .SequenceEqual(source.Where((value, index) => index < test.Offset || index >= test.Offset + test.Length)),
+            $"UYA moby field {test.Field} should preserve every non-owned byte");
+        Expect(ReadUyaMobyField(reread, test.Field) == test.Value,
+            $"UYA moby field {test.Field} should round-trip its typed value");
+    }
+
+    ExpectThrows<ArgumentOutOfRangeException>(() => UyaMobyInstancesWriter.WriteField(
+        source, classId, new((UyaMobyInstanceField)(-1), UyaMobyInstanceFieldValue.FromInteger(1))));
+    ExpectThrows<ArgumentOutOfRangeException>(() => UyaMobyInstancesWriter.WriteField(
+        source, classId, new(UyaMobyInstanceField.Bolts, UyaMobyInstanceFieldValue.FromBoolean(true))));
+    ExpectThrows<ArgumentOutOfRangeException>(() => UyaMobyInstancesWriter.WriteField(
+        source, classId, new(UyaMobyInstanceField.Mission, UyaMobyInstanceFieldValue.FromInteger(128))));
+    ExpectThrows<ArgumentOutOfRangeException>(() => UyaMobyInstancesWriter.WriteField(
+        source, classId, new(UyaMobyInstanceField.RootedDistance,
+            UyaMobyInstanceFieldValue.FromFloat(float.NaN))));
+    ExpectThrows<ArgumentOutOfRangeException>(() => UyaMobyInstancesWriter.WriteField(
+        source, classId, new(UyaMobyInstanceField.Color,
+            UyaMobyInstanceFieldValue.FromColor(new(0, 0, 256)))));
+    ExpectThrows<InvalidDataException>(() => UyaMobyInstancesWriter.WriteField(
+        source, classId + 1, new(UyaMobyInstanceField.Bolts,
+            UyaMobyInstanceFieldValue.FromInteger(1))));
+}
+
+static UyaMobyInstanceFieldValue ReadUyaMobyField(UyaMobyInstance instance, UyaMobyInstanceField field) => field switch
+{
+    UyaMobyInstanceField.Mission => UyaMobyInstanceFieldValue.FromInteger(instance.Mission),
+    UyaMobyInstanceField.Bolts => UyaMobyInstanceFieldValue.FromInteger(instance.Bolts),
+    UyaMobyInstanceField.DrawDistance => UyaMobyInstanceFieldValue.FromInteger(instance.DrawDistance),
+    UyaMobyInstanceField.UpdateDistance => UyaMobyInstanceFieldValue.FromInteger(instance.UpdateDistance),
+    UyaMobyInstanceField.IsRooted => UyaMobyInstanceFieldValue.FromBoolean(instance.IsRooted != 0),
+    UyaMobyInstanceField.RootedDistance => UyaMobyInstanceFieldValue.FromFloat(instance.RootedDistance),
+    UyaMobyInstanceField.Color => UyaMobyInstanceFieldValue.FromColor(instance.Color),
+    _ => throw new ArgumentOutOfRangeException(nameof(field)),
+};
 
 static void ValidateUyaStaticInstanceParsing()
 {
