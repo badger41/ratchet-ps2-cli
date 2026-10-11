@@ -2632,8 +2632,25 @@ static void ValidateUyaGameplayTypedParsing()
     Expect(settings.Rac3ThirdPart == 1234, "UYA level settings R&C3 tail field should be parsed");
     Expect(settings.TrailingBytes.SequenceEqual(new byte[] { 0xaa, 0xbb }), "UYA level settings trailing bytes should be preserved");
 
+    var noEditSettings = new UyaLevelSettingsEdit(
+        settings.BackgroundColor, settings.FogColor,
+        settings.FogNearDistance, settings.FogFarDistance,
+        settings.FogNearIntensity, settings.FogFarIntensity,
+        settings.DeathHeight, settings.IsSphericalWorld,
+        settings.SphereCenter, settings.ShipPosition, settings.ShipRotationZ,
+        settings.ShipPath, settings.ShipCameraCuboidStart, settings.ShipCameraCuboidEnd);
+    Expect(UyaLevelSettingsWriter.Write(levelSettingsBytes, noEditSettings).SequenceEqual(levelSettingsBytes),
+        "UYA level settings no-edit write should be byte-identical");
+    var deathHeightOnly = UyaLevelSettingsWriter.Write(
+        levelSettingsBytes, noEditSettings with { DeathHeight = settings.DeathHeight - 1 });
+    Expect(Enumerable.Range(0, levelSettingsBytes.Length)
+            .Where(index => index is < 0x28 or >= 0x2c)
+            .All(index => deathHeightOnly[index] == levelSettingsBytes[index]),
+        "UYA death-height edit should only write its verified four-byte field");
+
     var editedSettingsBytes = UyaLevelSettingsWriter.Write(levelSettingsBytes, new(
-        new(1, 2, 3), new(4, 5, 6), 1024, 2048, 127.5f, 32));
+        new(1, 2, 3), new(4, 5, 6), 1024, 2048, 127.5f, 32,
+        -8192, false, new(7, 8, 9), new(10, 11, 12), 1.25f, 4, 5, 6));
     var editedSettings = UyaLevelSettingsReader.Read(editedSettingsBytes);
     Expect(editedSettings.BackgroundColor == new UyaRgb96(1, 2, 3), "UYA level settings background color should serialize");
     Expect(editedSettings.FogColor == new UyaRgb96(4, 5, 6), "UYA level settings fog color should serialize");
@@ -2641,7 +2658,16 @@ static void ValidateUyaGameplayTypedParsing()
         "UYA level settings fog distances should serialize");
     Expect(editedSettings.FogNearIntensity == 127.5f && editedSettings.FogFarIntensity == 32,
         "UYA level settings fog intensities should serialize");
-    Expect(editedSettingsBytes.AsSpan(0x28).SequenceEqual(levelSettingsBytes.AsSpan(0x28)),
+    Expect(editedSettings.DeathHeight == -8192 && !editedSettings.IsSphericalWorld,
+        "UYA level settings death height and spherical-world state should serialize");
+    Expect(editedSettings.SphereCenter == new UyaVector3(7, 8, 9)
+        && editedSettings.ShipPosition == new UyaVector3(10, 11, 12)
+        && editedSettings.ShipRotationZ == 1.25f,
+        "UYA level settings scene positions and ship rotation should serialize");
+    Expect(editedSettings.ShipPath == 4 && editedSettings.ShipCameraCuboidStart == 5
+        && editedSettings.ShipCameraCuboidEnd == 6,
+        "UYA level settings instance links should serialize");
+    Expect(editedSettingsBytes.AsSpan(0x58).SequenceEqual(levelSettingsBytes.AsSpan(0x58)),
         "UYA level settings writer should preserve unsupported bytes");
 
     Expect(mobyInstances is not null, "UYA core moby_instances block should be parsed into a typed model");

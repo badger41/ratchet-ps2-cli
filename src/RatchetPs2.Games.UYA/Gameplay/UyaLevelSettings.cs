@@ -137,7 +137,15 @@ public sealed record UyaLevelSettingsEdit(
     float FogNearDistance,
     float FogFarDistance,
     float FogNearIntensity,
-    float FogFarIntensity);
+    float FogFarIntensity,
+    float DeathHeight,
+    bool IsSphericalWorld,
+    UyaVector3 SphereCenter,
+    UyaVector3 ShipPosition,
+    float ShipRotationZ,
+    int ShipPath,
+    int ShipCameraCuboidStart,
+    int ShipCameraCuboidEnd);
 
 public static class UyaLevelSettingsWriter
 {
@@ -150,13 +158,19 @@ public static class UyaLevelSettingsWriter
         var values = new[]
         {
             edit.FogNearDistance, edit.FogFarDistance, edit.FogNearIntensity, edit.FogFarIntensity,
+            edit.DeathHeight,
+            edit.SphereCenter.X, edit.SphereCenter.Y, edit.SphereCenter.Z,
+            edit.ShipPosition.X, edit.ShipPosition.Y, edit.ShipPosition.Z,
+            edit.ShipRotationZ,
         };
         if (values.Any(value => !float.IsFinite(value)))
-            throw new InvalidDataException("UYA level settings fog values must be finite.");
+            throw new InvalidDataException("UYA editable level settings must be finite.");
         if (edit.FogNearDistance < 0 || edit.FogFarDistance < 0)
             throw new InvalidDataException("UYA level settings fog distances cannot be negative.");
         if (edit.FogNearIntensity is < 0 or > 255 || edit.FogFarIntensity is < 0 or > 255)
             throw new InvalidDataException("UYA level settings fog intensities must be between 0 and 255.");
+        if (edit.ShipPath < -1 || edit.ShipCameraCuboidStart < -1 || edit.ShipCameraCuboidEnd < -1)
+            throw new InvalidDataException("UYA level settings links must be -1 or a non-negative instance index.");
 
         var output = source.ToArray();
         WriteColor(output, 0x00, edit.BackgroundColor);
@@ -165,6 +179,14 @@ public static class UyaLevelSettingsWriter
         BinaryPrimitives.WriteSingleLittleEndian(output.AsSpan(0x1c), edit.FogFarDistance);
         BinaryPrimitives.WriteSingleLittleEndian(output.AsSpan(0x20), edit.FogNearIntensity);
         BinaryPrimitives.WriteSingleLittleEndian(output.AsSpan(0x24), edit.FogFarIntensity);
+        BinaryPrimitives.WriteSingleLittleEndian(output.AsSpan(0x28), edit.DeathHeight);
+        BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(0x2c), edit.IsSphericalWorld ? 1 : 0);
+        WriteVector3(output, 0x30, edit.SphereCenter);
+        WriteVector3(output, 0x3c, edit.ShipPosition);
+        BinaryPrimitives.WriteSingleLittleEndian(output.AsSpan(0x48), edit.ShipRotationZ);
+        BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(0x4c), edit.ShipPath);
+        BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(0x50), edit.ShipCameraCuboidStart);
+        BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(0x54), edit.ShipCameraCuboidEnd);
         return output;
     }
 
@@ -179,5 +201,12 @@ public static class UyaLevelSettingsWriter
         BinaryPrimitives.WriteInt32LittleEndian(output[offset..], value.Red);
         BinaryPrimitives.WriteInt32LittleEndian(output[(offset + 4)..], value.Green);
         BinaryPrimitives.WriteInt32LittleEndian(output[(offset + 8)..], value.Blue);
+    }
+
+    private static void WriteVector3(Span<byte> output, int offset, UyaVector3 value)
+    {
+        BinaryPrimitives.WriteSingleLittleEndian(output[offset..], value.X);
+        BinaryPrimitives.WriteSingleLittleEndian(output[(offset + 4)..], value.Y);
+        BinaryPrimitives.WriteSingleLittleEndian(output[(offset + 8)..], value.Z);
     }
 }
