@@ -56,13 +56,17 @@ public static class UyaFrontendMapPackageBuilder
         }
 
         var assets = UyaLevelWadRenderPackageBuilder.ReadAssetSourceFiles(sourceFiles);
+        var options = DlLevelWadRenderPackageBuildOptions.Browser with
+        {
+            PreserveTfragChunkNodes = assetGroup == FrontendMapAssetGroup.Terrain
+        };
         return PackedFilePackageBuilder.Pack(DlLevelWadRenderPackageBuilder.BuildAssetFiles(
             GameId.UYA,
             levelIndex,
             assets.HeaderBytes,
             assets.PaletteBytes,
             assets.AssetWadBytes,
-            DlLevelWadRenderPackageBuildOptions.Browser,
+            options,
             assets.ChunkWads,
             assetGroup: assetGroup));
     }
@@ -81,7 +85,10 @@ public static class UyaFrontendMapPackageBuilder
                 assets.HeaderBytes,
                 assets.PaletteBytes,
                 assets.AssetWadBytes,
-                DlLevelWadRenderPackageBuildOptions.Browser,
+                DlLevelWadRenderPackageBuildOptions.Browser with
+                {
+                    PreserveTfragChunkNodes = assetGroup is FrontendMapAssetGroup.All or FrontendMapAssetGroup.Terrain
+                },
                 assets.ChunkWads,
                 assetGroup: assetGroup),
             GameId.UYA).ToList();

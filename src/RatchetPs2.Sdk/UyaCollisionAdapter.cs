@@ -24,7 +24,7 @@ internal static class UyaCollisionAdapter
     }
 
     public static CollisionAnalysis Analyze(byte[] collisionBytes) =>
-        FromAnalysis(UyaCollisionWriter.Analyze(UyaCollisionReader.Read(collisionBytes)));
+        FromAnalysis(UyaCollisionWriter.AnalyzeNative(collisionBytes));
 
     public static UyaCollisionGltfExport ExportGltf(
         byte[] collisionBytes,
@@ -101,7 +101,8 @@ internal static class UyaCollisionAdapter
 
     public static InstancedCollisionCandidate FromCandidate(UyaInstancedCollisionSurfaceCandidate candidate) => new(
         new(InstancedCollisionCandidateKind.Surface, candidate.GeneratorVersion,
-            candidate.LodIndex, candidate.RawType, candidate.MaximumFaces),
+            candidate.LodIndex, candidate.RawType, candidate.MaximumFaces,
+            TargetFaceRatio: candidate.TargetFaceRatio),
         FromAddition(candidate.Addition),
         candidate.SourceVertexCount,
         candidate.SourceTriangleCount,

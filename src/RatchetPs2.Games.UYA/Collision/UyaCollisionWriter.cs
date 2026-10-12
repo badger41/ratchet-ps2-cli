@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Numerics;
 
 namespace RatchetPs2.Games.UYA.Collision;
@@ -14,6 +15,15 @@ public static class UyaCollisionWriter
     {
         ArgumentNullException.ThrowIfNull(collision);
         var octants = BuildOctants(collision.SolidPieces, new Dictionary<int, string>(), cancellationToken);
+        return Write(collision, octants, cancellationToken);
+    }
+
+    private static byte[] Write(
+        UyaMapCollision collision,
+        Dictionary<OctantKey, OctantData> octants,
+        CancellationToken cancellationToken,
+        byte[]? preservedPlayerBarriers = null)
+    {
         var mesh = WriteSolidMesh(octants, cancellationToken);
         using var output = new MemoryStream();
         using var writer = new BinaryWriter(output);
@@ -27,7 +37,8 @@ public static class UyaCollisionWriter
         {
             Pad(output, 0x40);
             barrierOffset = checked((int)output.Position);
-            writer.Write(WritePlayerBarriers(collision.PlayerBarriers, cancellationToken));
+            writer.Write(preservedPlayerBarriers
+                ?? WritePlayerBarriers(collision.PlayerBarriers, cancellationToken));
         }
 
         PatchInt32(writer, 0, meshOffset);
@@ -43,6 +54,25 @@ public static class UyaCollisionWriter
         return Analyze(collision, new Dictionary<int, string>(), cancellationToken);
     }
 
+    internal static UyaCollisionAnalysis AnalyzeNative(
+        ReadOnlySpan<byte> sourceBytes,
+        CancellationToken cancellationToken = default)
+    {
+        var source = UyaCollisionReader.ReadNative(sourceBytes);
+        var octants = new Dictionary<OctantKey, OctantData>(source.Octants.Count);
+        foreach (var value in source.Octants)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var key = new OctantKey(value.X, value.Y, value.Z);
+            octants.Add(key, BuildOctant(
+                key,
+                value.Faces.Select(face => new TaggedFace(face, null)).ToArray(),
+                value.EncodedBytes,
+                preserveFaceOrder: true));
+        }
+        return Analyze(source.Collision.SolidPieces.SelectMany(value => value.Faces).ToArray(), octants);
+    }
+
     internal static UyaCollisionAnalysis Analyze(
         UyaMapCollision collision,
         IReadOnlyDictionary<int, string> additionIds,
@@ -52,6 +82,85 @@ public static class UyaCollisionWriter
         ArgumentNullException.ThrowIfNull(additionIds);
         var faces = collision.SolidPieces.SelectMany(piece => piece.Faces).ToArray();
         var octants = BuildOctants(collision.SolidPieces, additionIds, cancellationToken);
+        return Analyze(faces, octants);
+    }
+
+    internal static (byte[] Bytes, UyaCollisionAnalysis Analysis) WritePreservingSourceOctants(
+        UyaCollisionNativeData source,
+        UyaMapCollision collision,
+        IReadOnlyDictionary<int, string> additionIds,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        var octants = BuildPreservingSourceOctants(
+            source, collision, additionIds, cancellationToken);
+        var logicalFaces = collision.SolidPieces.SelectMany(piece => piece.Faces).ToArray();
+        var analysis = Analyze(logicalFaces, octants);
+        return (WritePreservingSourceLayout(source, collision, octants, cancellationToken), analysis);
+    }
+
+    internal static UyaCollisionAnalysis AnalyzePreservingSourceOctants(
+        UyaCollisionNativeData source,
+        UyaMapCollision collision,
+        IReadOnlyDictionary<int, string> additionIds,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        var octants = BuildPreservingSourceOctants(
+            source, collision, additionIds, cancellationToken);
+        return Analyze(collision.SolidPieces.SelectMany(piece => piece.Faces).ToArray(), octants);
+    }
+
+    private static Dictionary<OctantKey, OctantData> BuildPreservingSourceOctants(
+        UyaCollisionNativeData source,
+        UyaMapCollision collision,
+        IReadOnlyDictionary<int, string> additionIds,
+        CancellationToken cancellationToken)
+    {
+        var sourceOctants = source.Octants.ToDictionary(
+            value => new OctantKey(value.X, value.Y, value.Z));
+        var octantFaces = source.Octants.ToDictionary(
+            value => new OctantKey(value.X, value.Y, value.Z),
+            value => value.Faces.Select(face => new TaggedFace(face, null)).ToList());
+        foreach (var (sourceIndex, additionId) in additionIds.OrderBy(value => value.Key))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var piece = collision.SolidPieces.Single(value => value.SourceIndex == sourceIndex);
+            var additionOctants = BuildOctants(
+                [piece],
+                new Dictionary<int, string> { [sourceIndex] = additionId },
+                cancellationToken);
+            foreach (var (key, octant) in additionOctants)
+            {
+                if (!octantFaces.TryGetValue(key, out var faces))
+                {
+                    if (octantFaces.Count >= MaximumOctants)
+                    {
+                        throw new InvalidDataException(
+                            $"UYA collision exceeds the {MaximumOctants}-octant safety limit.");
+                    }
+                    faces = [];
+                    octantFaces.Add(key, faces);
+                }
+                faces.AddRange(octant.Faces.Select(face => new TaggedFace(face, additionId)));
+            }
+        }
+
+        return octantFaces.ToDictionary(
+            value => value.Key,
+            value => BuildOctant(
+                value.Key,
+                value.Value,
+                value.Value.Any(face => face.AdditionId is not null)
+                    ? null
+                    : sourceOctants[value.Key].EncodedBytes,
+                preserveFaceOrder: true));
+    }
+
+    private static UyaCollisionAnalysis Analyze(
+        IReadOnlyList<UyaCollisionSolidFace> faces,
+        IReadOnlyDictionary<OctantKey, OctantData> octants)
+    {
         var vertices = new HashSet<UyaCollisionVertex>();
         foreach (var face in faces)
         {
@@ -62,10 +171,10 @@ public static class UyaCollisionWriter
         }
 
         return new(
-            faces.Length,
+            faces.Count,
             vertices.Count,
             octants.Count,
-            checked(octants.Values.Sum(octant => octant.Faces.Length) - faces.Length),
+            checked(octants.Values.Sum(octant => octant.Faces.Length) - faces.Count),
             octants.Values.Sum(octant => octant.Violations.Count),
             octants.Values
                 .OrderBy(octant => octant.Key.Z)
@@ -82,6 +191,57 @@ public static class UyaCollisionWriter
                     octant.AdditionIds,
                     octant.Violations))
                 .ToArray());
+    }
+
+    private static byte[] WritePreservingSourceLayout(
+        UyaCollisionNativeData source,
+        UyaMapCollision collision,
+        IReadOnlyDictionary<OctantKey, OctantData> octants,
+        CancellationToken cancellationToken)
+    {
+        var lookups = source.Lookups.ToDictionary(
+            value => new OctantKey(value.X, value.Y, value.Z),
+            value => value.EntryOffset);
+        if (octants.Keys.Any(key => !lookups.ContainsKey(key)))
+        {
+            return Write(collision, new Dictionary<OctantKey, OctantData>(octants),
+                cancellationToken, source.PlayerBarrierBytes);
+        }
+
+        using var output = new MemoryStream();
+        using var writer = new BinaryWriter(output);
+        writer.Write(source.PrefixBytes);
+        if (output.Position != source.MeshOffset)
+            throw new InvalidDataException("UYA collision source mesh offset does not match its preserved prefix.");
+        writer.Write(source.SolidMeshBytes);
+        foreach (var (key, octant) in octants
+            .Where(value => value.Value.PreservedBytes is null)
+            .OrderBy(value => value.Key.Z)
+            .ThenBy(value => value.Key.Y)
+            .ThenBy(value => value.Key.X))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Pad(output, 0x10);
+            var meshRelativeOffset = checked((int)output.Position - source.MeshOffset);
+            if (meshRelativeOffset > 0x00ff_ffff)
+                throw new InvalidDataException("UYA collision octant offset exceeds its native 24-bit range.");
+            var bytes = WriteOctant(octant);
+            writer.Write(bytes);
+            PatchUInt32(writer,
+                checked(source.MeshOffset + lookups[key]),
+                ((uint)meshRelativeOffset << 8) | checked((uint)(bytes.Length / 0x10)));
+        }
+        var barrierOffset = 0;
+        if (source.PlayerBarrierBytes is not null)
+        {
+            if (collision.PlayerBarriers.Count == 0)
+                throw new InvalidDataException("UYA collision additions cannot remove preserved player barriers.");
+            Pad(output, 0x40);
+            barrierOffset = checked((int)output.Position);
+            writer.Write(source.PlayerBarrierBytes);
+        }
+        PatchInt32(writer, 4, barrierOffset);
+        return output.ToArray();
     }
 
     private static Dictionary<OctantKey, OctantData> BuildOctants(
@@ -250,7 +410,15 @@ public static class UyaCollisionWriter
                 throw new InvalidDataException("UYA collision octant offset exceeds its native 24-bit range.");
             }
 
-            var bytes = WriteOctant(octant);
+            var bytes = octant.PreservedBytes ?? WriteOctant(octant);
+            if (bytes.Length < 4)
+                throw new InvalidDataException($"Encoded UYA collision octant {key} is truncated.");
+            var requiredSize = checked(4
+                + bytes[2] * 4
+                + BinaryPrimitives.ReadUInt16LittleEndian(bytes) * 4
+                + bytes[3]);
+            if (requiredSize > bytes.Length)
+                throw new InvalidDataException($"Encoded UYA collision octant {key} is truncated.");
             writer.Write(bytes);
             var sizeUnits = octant.EncodedByteCount / 0x10;
             PatchUInt32(writer, xPatches[key], ((uint)offset << 8) | (uint)sizeUnits);
@@ -259,23 +427,31 @@ public static class UyaCollisionWriter
         return stream.ToArray();
     }
 
-    private static OctantData BuildOctant(OctantKey key, IReadOnlyList<TaggedFace> sourceFaces)
+    private static OctantData BuildOctant(
+        OctantKey key,
+        IReadOnlyList<TaggedFace> sourceFaces,
+        byte[]? preservedBytes = null,
+        bool preserveFaceOrder = false)
     {
-        var faces = sourceFaces
-            .OrderByDescending(item => item.Face.IsQuad)
-            .ThenBy(item => item.Face.Type)
-            .ThenBy(item => item.Face.A.X64)
-            .ThenBy(item => item.Face.A.Y64)
-            .ThenBy(item => item.Face.A.Z64)
-            .ThenBy(item => item.Face.B.X64)
-            .ThenBy(item => item.Face.B.Y64)
-            .ThenBy(item => item.Face.B.Z64)
-            .ThenBy(item => item.Face.C.X64)
-            .ThenBy(item => item.Face.C.Y64)
-            .ThenBy(item => item.Face.C.Z64)
-            .ThenBy(item => item.Face.D.X64)
-            .ThenBy(item => item.Face.D.Y64)
-            .ThenBy(item => item.Face.D.Z64)
+        var orderedFaces = sourceFaces.OrderByDescending(item => item.Face.IsQuad);
+        if (!preserveFaceOrder)
+        {
+            orderedFaces = orderedFaces
+                .ThenBy(item => item.Face.Type)
+                .ThenBy(item => item.Face.A.X64)
+                .ThenBy(item => item.Face.A.Y64)
+                .ThenBy(item => item.Face.A.Z64)
+                .ThenBy(item => item.Face.B.X64)
+                .ThenBy(item => item.Face.B.Y64)
+                .ThenBy(item => item.Face.B.Z64)
+                .ThenBy(item => item.Face.C.X64)
+                .ThenBy(item => item.Face.C.Y64)
+                .ThenBy(item => item.Face.C.Z64)
+                .ThenBy(item => item.Face.D.X64)
+                .ThenBy(item => item.Face.D.Y64)
+                .ThenBy(item => item.Face.D.Z64);
+        }
+        var faces = orderedFaces
             .Select(item => item.Face)
             .ToArray();
         var vertices = new List<UyaCollisionVertex>();
@@ -289,8 +465,9 @@ public static class UyaCollisionWriter
         }
 
         var quadCount = faces.Count(face => face.IsQuad);
-        var encodedByteCount = checked(4 + vertices.Count * 4 + faces.Length * 4 + quadCount);
-        encodedByteCount = checked((encodedByteCount + 0x0f) & ~0x0f);
+        var rebuiltByteCount = checked(4 + vertices.Count * 4 + faces.Length * 4 + quadCount);
+        rebuiltByteCount = checked((rebuiltByteCount + 0x0f) & ~0x0f);
+        var encodedByteCount = preservedBytes?.Length ?? rebuiltByteCount;
         var violations = new List<string>();
         if (faces.Length > ushort.MaxValue)
             violations.Add("UYA collision octant exceeds its native face count.");
@@ -317,7 +494,8 @@ public static class UyaCollisionWriter
                 .Distinct(StringComparer.Ordinal)
                 .Order(StringComparer.Ordinal)
                 .ToArray(),
-            violations);
+            violations,
+            preservedBytes);
 
         void AddVertex(UyaCollisionVertex vertex)
         {
@@ -631,6 +809,7 @@ public static class UyaCollisionWriter
         int QuadCount,
         int EncodedByteCount,
         IReadOnlyList<string> AdditionIds,
-        IReadOnlyList<string> Violations);
+        IReadOnlyList<string> Violations,
+        byte[]? PreservedBytes);
 
 }

@@ -8,6 +8,11 @@ using RatchetPs2.Core.Tfrags;
 using RatchetPs2.Core.Ties;
 
 var repoRoot = FindRepoRoot(AppContext.BaseDirectory);
+TfragBoundaryTests.Run(repoRoot);
+TfragPieceExtractionTests.Run(repoRoot);
+TfragPieceTransformTests.Run();
+TfragPieceCompositionTests.Run(repoRoot);
+TfragInstancedCollisionTests.Run();
 ValidateSharedPs2ColorRules();
 ValidateSharedTexCoordUnwrapRules();
 var fixtures = new[]
@@ -64,13 +69,69 @@ foreach (var fixture in fixtures)
     ValidateLodGroups(export.GltfBytes, fixture.Game);
     ValidateNormals(export.GltfBytes, fixture.Game);
     ValidateLightSelectors(export.GltfBytes, fixture.Game);
+    ValidateSingleSidedMaterials(export.GltfBytes, fixture.Game);
 
     ValidateTriangleWinding(export.GltfBytes, export.BinBytes, fixture.Game);
+    if (fixture.Game == "UYA")
+    {
+        ValidateChunkPreservingRuntimeExport(terrain, export.GltfBytes);
+    }
 }
 
 ValidateDlLevel10Chunk283Texture8UvSpan(repoRoot);
 
 Console.WriteLine("Tfrag terrain export tests passed.");
+
+static void ValidateSingleSidedMaterials(byte[] gltfBytes, string game)
+{
+    using var document = JsonDocument.Parse(gltfBytes);
+    Expect(document.RootElement.GetProperty("materials").EnumerateArray().All(material =>
+            !material.TryGetProperty("doubleSided", out var value) || !value.GetBoolean()),
+        $"{game} tfrag materials should use front-face culling");
+}
+
+static void ValidateChunkPreservingRuntimeExport(TfragTerrain terrain, byte[] fullGltfBytes)
+{
+    var export = TfragGltfExporter.Export(
+        terrain,
+        "terrain.gltf",
+        new TfragGltfExportOptions
+        {
+            GameLabel = "UYA",
+            IncludeDiagnostics = false,
+            Minify = true,
+            MetadataMode = GltfExportMetadataMode.RuntimeOnly,
+            PreserveChunkNodes = true,
+            LodIndex = 0
+        });
+
+    using var runtimeDocument = JsonDocument.Parse(export.GltfBytes);
+    using var fullDocument = JsonDocument.Parse(fullGltfBytes);
+    var runtimeRoot = runtimeDocument.RootElement;
+    var runtimeMeshes = runtimeRoot.GetProperty("meshes").EnumerateArray().ToArray();
+    var fullLodZeroMeshes = fullDocument.RootElement.GetProperty("meshes").EnumerateArray()
+        .Where(mesh => mesh.GetProperty("name").GetString()?.EndsWith("_lod_0", StringComparison.Ordinal) == true)
+        .ToArray();
+
+    Expect(runtimeMeshes.Length == fullLodZeroMeshes.Length,
+        "chunk-preserving runtime export should retain one mesh per decoded LOD 0 chunk");
+    Expect(runtimeRoot.GetProperty("nodes").EnumerateArray().Any(node =>
+            node.TryGetProperty("name", out var name)
+            && name.GetString()?.StartsWith("chunk_", StringComparison.Ordinal) == true),
+        "chunk-preserving runtime export should retain named chunk nodes");
+    Expect(runtimeMeshes.All(mesh =>
+    {
+        var materials = mesh.GetProperty("primitives").EnumerateArray()
+            .Select(primitive => primitive.GetProperty("material").GetInt32())
+            .ToArray();
+        return materials.Length == materials.Distinct().Count();
+    }), "chunk-preserving runtime export should merge compatible primitives within each chunk");
+
+    var runtimePrimitiveCount = runtimeMeshes.Sum(mesh => mesh.GetProperty("primitives").GetArrayLength());
+    var fullPrimitiveCount = fullLodZeroMeshes.Sum(mesh => mesh.GetProperty("primitives").GetArrayLength());
+    Expect(runtimePrimitiveCount <= fullPrimitiveCount,
+        "chunk-preserving runtime export should not add primitive ranges");
+}
 
 static void ValidateSharedPs2ColorRules()
 {
@@ -342,9 +403,9 @@ static void ValidateTriangleWinding(byte[] gltfBytes, byte[] binBytes, string ga
                 accessors,
                 bufferViews,
                 binBytes,
-                attributes.GetProperty("NORMAL").GetInt32(),
+                attributes.GetProperty(TfragGltfExporter.LightNormalAttributeName).GetInt32(),
                 game,
-                "NORMAL");
+                TfragGltfExporter.LightNormalAttributeName);
             var indices = ReadIndexAccessor(
                 accessors,
                 bufferViews,

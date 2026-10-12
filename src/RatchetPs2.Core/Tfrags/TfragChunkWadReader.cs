@@ -5,7 +5,8 @@ namespace RatchetPs2.Core.Tfrags;
 
 public static class TfragChunkWadReader
 {
-    private const int HeaderSize = 0x10;
+    private const int HeaderSize = 0x08;
+    private const int MinimumPayloadOffset = 0x10;
 
     public static byte[] ReadTerrainPayload(ReadOnlySpan<byte> chunkBytes)
     {
@@ -37,13 +38,13 @@ public static class TfragChunkWadReader
         out ReadOnlySpan<byte> payload)
     {
         payload = [];
-        if (chunkBytes.Length < HeaderSize)
+        if (chunkBytes.Length < MinimumPayloadOffset)
         {
             return false;
         }
 
         var payloadOffset = BinarySpanReader.ReadInt32LittleEndian(chunkBytes, headerOffset);
-        if (payloadOffset < HeaderSize || payloadOffset >= chunkBytes.Length)
+        if (payloadOffset < MinimumPayloadOffset || payloadOffset >= chunkBytes.Length)
         {
             return false;
         }

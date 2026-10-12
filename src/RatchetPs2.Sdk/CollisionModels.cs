@@ -72,7 +72,8 @@ public sealed record InstancedCollisionRecipe(
     int LodIndex,
     byte RawType,
     int MaximumFaces,
-    int ProfileSections = 0);
+    int ProfileSections = 0,
+    float TargetFaceRatio = 1f);
 
 public sealed record InstancedCollisionCandidate(
     InstancedCollisionRecipe Recipe,

@@ -48,6 +48,28 @@ public sealed record UyaMapCollision(
     int NativeFaceCount,
     int DuplicateSolidFaceCount);
 
+internal sealed record UyaCollisionNativeOctant(
+    int X,
+    int Y,
+    int Z,
+    IReadOnlyList<UyaCollisionSolidFace> Faces,
+    byte[] EncodedBytes);
+
+internal readonly record struct UyaCollisionNativeLookup(
+    int X,
+    int Y,
+    int Z,
+    int EntryOffset);
+
+internal sealed record UyaCollisionNativeData(
+    UyaMapCollision Collision,
+    IReadOnlyList<UyaCollisionNativeOctant> Octants,
+    int MeshOffset,
+    byte[] PrefixBytes,
+    byte[] SolidMeshBytes,
+    IReadOnlyList<UyaCollisionNativeLookup> Lookups,
+    byte[]? PlayerBarrierBytes);
+
 public enum UyaCollisionPieceKind
 {
     Solid = 1,

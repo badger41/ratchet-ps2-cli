@@ -998,6 +998,42 @@ static void ValidateUyaLevelWadInventory()
         "UYA writes should preserve padding and opaque gap bytes while relocating payloads");
     Expect(bytes.SequenceEqual(sourceSnapshot), "UYA writes should not mutate source memory");
 
+    var growingChunk = Enumerable.Repeat((byte)0xC7, 2 * UyaLevelConstants.SectorSize + 17).ToArray();
+    var rootRewrite = UyaLevelWadWriter.Write(inventory, new Dictionary<string, ReadOnlyMemory<byte>>
+    {
+        ["level_wad/chunks/chunk0.wad"] = growingChunk,
+    });
+    var rootRewriteInventory = UyaLevelWadInventoryReader.Read(rootRewrite);
+    var rewrittenChunk = rootRewriteInventory.Containers.Single(container => container.Path == "level_wad")
+        .Slots.Single(slot => slot.Path == "level_wad/chunks/chunk0.wad");
+    var rewrittenChunkBank = rootRewriteInventory.Containers.Single(container => container.Path == "level_wad")
+        .Slots.Single(slot => slot.Path == "level_wad/chunks/chunk0_bank.wad");
+    Expect(rewrittenChunk.Bytes.Span[..growingChunk.Length].SequenceEqual(growingChunk)
+        && !rewrittenChunk.Bytes.Span[growingChunk.Length..].ContainsAnyExcept((byte)0),
+        "UYA root replacements should retain their bytes plus only sector alignment padding");
+    Expect(rewrittenChunk is
+        {
+            DeclaredOffset: 7,
+            DeclaredLength: 3,
+            Offset: 7 * UyaLevelConstants.SectorSize,
+            Length: 3 * UyaLevelConstants.SectorSize,
+        }
+        && rewrittenChunkBank is
+        {
+            DeclaredOffset: 10,
+            DeclaredLength: 1,
+            Offset: 10 * UyaLevelConstants.SectorSize,
+            Length: UyaLevelConstants.SectorSize,
+        },
+        "a growing UYA root payload should relocate its following bank and rewrite both sector declarations");
+    Expect(rootRewriteInventory.Containers.Single(container => container.Path == "level_wad").Slots
+            .Where(slot => slot.Length > 0)
+            .All(slot => slot.Offset % UyaLevelConstants.SectorSize == 0
+                && slot.Length % UyaLevelConstants.SectorSize == 0
+                && slot.DeclaredOffset * UyaLevelConstants.SectorSize == slot.Offset
+                && slot.DeclaredLength * UyaLevelConstants.SectorSize == slot.Length),
+        "every rewritten UYA root declaration should match its sector-aligned byte range");
+
     var alignedBytes = CreateSyntheticUyaLooseLevelWad(payloadBaseSector: 0x1234);
     var levelDataOffset = 3 * UyaLevelConstants.SectorSize;
     alignedBytes.AsSpan(levelDataOffset, 2 * UyaLevelConstants.SectorSize).Clear();
@@ -1323,6 +1359,26 @@ static void ValidateUyaLevelAssetComposer()
     Expect(unchanged.HeaderBytes.SequenceEqual(header) && unchanged.AssetWadBytes.SequenceEqual(assets),
         "UYA asset composer no-op should remain byte-identical");
 
+    var zeroTerrainHeader = new byte[0x120];
+    WriteInt32(zeroTerrainHeader, 0x08, 0);
+    WriteInt32(zeroTerrainHeader, 0x10, 0x40);
+    WriteInt32(zeroTerrainHeader, 0x7c, 0x60);
+    WriteInt32(zeroTerrainHeader, 0x8c, 0x60);
+    var zeroTerrainAssets = new byte[0x60];
+    WriteInt32(zeroTerrainAssets, 0x00, 0x40);
+    zeroTerrainAssets.AsSpan(0x40, 0x20).Fill(0x22);
+    var zeroTerrainReplacement = zeroTerrainAssets.AsSpan(0, 0x40).ToArray();
+    WriteInt32(zeroTerrainReplacement, 0x08, BitConverter.SingleToInt32Bits(32f));
+    var zeroTerrainComposition = LevelAssetComposer.ComposeAssetWad(
+        GameId.UYA, zeroTerrainHeader, zeroTerrainAssets, new(Terrain: zeroTerrainReplacement));
+    var zeroTerrainComposedHeader = LevelAssetReader.ReadHeader(zeroTerrainComposition.HeaderBytes);
+    Expect(zeroTerrainComposedHeader.TerrainOffset == 0
+        && zeroTerrainComposedHeader.SkyOffset == 0x40
+        && zeroTerrainComposition.AssetWadBytes.AsSpan(0, 0x40).SequenceEqual(zeroTerrainReplacement)
+        && zeroTerrainComposition.AssetWadBytes.AsSpan(0x40, 0x20)
+            .SequenceEqual(zeroTerrainAssets.AsSpan(0x40, 0x20)),
+        "UYA asset composer should replace verified terrain stored at asset offset zero");
+
     var sourceTerrain = Enumerable.Repeat((byte)0x5a, 0x180).ToArray();
     var encodedTerrain = WadCompression.CompressVerified(sourceTerrain).CompressedBytes;
     var sourceEnd = (0x10 + encodedTerrain.Length + 0x0f) & ~0x0f;
@@ -1330,14 +1386,16 @@ static void ValidateUyaLevelAssetComposer()
     WriteInt32(chunk, 0x00, 0x10);
     WriteInt32(chunk, 0x04, sourceEnd);
     WriteInt32(chunk, 0x08, sourceEnd + 0x10);
+    WriteInt32(chunk, 0x0c, sourceEnd + 0x18);
     encodedTerrain.CopyTo(chunk.AsSpan(0x10));
     chunk.AsSpan(sourceEnd, 0x20).Fill(0x7b);
     var replacementTerrain = Enumerable.Repeat((byte)0xa5, 0x281).ToArray();
     var composedChunk = LevelAssetComposer.ComposeTfragChunk(GameId.UYA, chunk, replacementTerrain);
     var movedSuffix = BinaryPrimitives.ReadInt32LittleEndian(composedChunk.AsSpan(0x04));
     Expect(TfragChunkWadReader.ReadTerrainPayload(composedChunk).SequenceEqual(replacementTerrain)
-        && composedChunk.AsSpan(movedSuffix, 0x20).SequenceEqual(chunk.AsSpan(sourceEnd, 0x20)),
-        "UYA chunk composer should replace compressed terrain and preserve its trailing payloads");
+        && composedChunk.AsSpan(movedSuffix, 0x20).SequenceEqual(chunk.AsSpan(sourceEnd, 0x20))
+        && composedChunk.AsSpan(8, 8).SequenceEqual(chunk.AsSpan(8, 8)),
+        "UYA chunk composer should replace compressed terrain, preserve collision, and ignore header padding words");
 
     var plainChunk = new byte[0x28];
     WriteInt32(plainChunk, 0x00, 0x10);
@@ -3373,6 +3431,8 @@ static void ValidateUyaAssetRenderPackageBuild()
 static void ValidateUyaCollisionParsingAndGltf()
 {
     var bytes = CreateSyntheticUyaCollision();
+    bytes[0x89] = 0xa5;
+    bytes[0xfc] = 0xb6;
     var collision = UyaCollisionReader.Read(bytes);
 
     Expect(collision.NativeOctantCount == 2, "UYA collision should report native octants");
@@ -3494,6 +3554,20 @@ static void ValidateUyaCollisionParsingAndGltf()
         && CollisionWork.EncodeStandalone(GameId.UYA, [quantizedAddition]).Analysis?.HardViolationCount == 0,
         "instance quantization should discard fine faces that collapse at the placed TIE scale");
     var withAddition = CollisionConverter.Compose(bytes, GameId.UYA, [], [addition]);
+    var completeState = CollisionConverter.Inspect(bytes, GameId.UYA).Pieces.Select(piece =>
+        new CollisionPieceEdit(piece.Kind, piece.SourcePieceIndex, 0, 0, 0)).ToArray();
+    var completeWithAddition = CollisionWork.ComposeComplete(
+        bytes, GameId.UYA, completeState, [addition]);
+    Expect(completeWithAddition.Bytes.SequenceEqual(withAddition.Bytes),
+        "complete collision state should compose additions without a separate source inspection");
+    var completeWithoutFirstSolid = CollisionWork.ComposeComplete(
+        bytes, GameId.UYA,
+        completeState.Where(piece => piece is not
+            { Kind: CollisionPieceKind.Solid, SourcePieceIndex: 0 }).ToArray(), []);
+    Expect(CollisionConverter.Inspect(completeWithoutFirstSolid.Bytes, GameId.UYA).Pieces
+            .Count(piece => piece.Kind == CollisionPieceKind.Solid)
+        == completeState.Count(piece => piece.Kind == CollisionPieceKind.Solid) - 1,
+        "complete collision state should remove omitted source pieces");
     var standalone = CollisionConverter.EncodeStandalone(GameId.UYA, [addition]);
     var decodedStandalone = CollisionWork.DecodeSolidAddition(
         standalone.Bytes, GameId.UYA, "decoded:proxy");
@@ -3515,6 +3589,13 @@ static void ValidateUyaCollisionParsingAndGltf()
         .Single(face => face.Type == 0x31);
     Expect(addedFace.A == new UyaCollisionVertex(640, 640, 640),
         "collision composition should add quantized SDK solid faces");
+    var sourceAdditionBarrierOffset = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(4));
+    var outputAdditionBarrierOffset = BinaryPrimitives.ReadInt32LittleEndian(withAddition.Bytes.AsSpan(4));
+    Expect(withAddition.Bytes.AsSpan().IndexOf(bytes.AsSpan(0x60, 0x30)) >= 0
+        && outputAdditionBarrierOffset > sourceAdditionBarrierOffset
+        && withAddition.Bytes.AsSpan(outputAdditionBarrierOffset)
+            .SequenceEqual(bytes.AsSpan(sourceAdditionBarrierOffset)),
+        "collision additions should preserve native octants and relocate barriers after the enlarged mesh");
     var additionAnalysis = withAddition.Analysis
         ?? throw new InvalidOperationException("collision addition composition did not return analysis");
     Expect(additionAnalysis is
@@ -3716,6 +3797,12 @@ static void ValidateUyaCollisionParsingAndGltf()
     Expect(files.BinBytes.Length > 0, "collision glTF should include geometry data");
     var meshPrimitives = root.GetProperty("meshes").EnumerateArray()
         .Select(mesh => mesh.GetProperty("primitives")[0]).ToArray();
+    var quadIndices = ReadAccessorUInt32Values(
+        root,
+        files.BinBytes,
+        meshPrimitives[0].GetProperty("indices").GetInt32());
+    Expect(quadIndices.SequenceEqual([2u, 1u, 0u, 3u, 2u, 0u]),
+        "collision glTF should triangulate native quads across their A-C diagonal");
     var quadFaceIds = ReadAccessorUInt32Values(
         root,
         files.BinBytes,
@@ -3778,14 +3865,13 @@ static void ValidateUyaCollisionParsingAndGltf()
     var chunk = new byte[collisionEnd + 0x20];
     WriteInt32(chunk, 4, 0x10);
     WriteInt32(chunk, 8, collisionEnd);
+    WriteInt32(chunk, 12, collisionEnd + 0x10);
     compressed.CopyTo(chunk.AsSpan(0x10));
-    chunk.AsSpan(collisionEnd, 0x20).Fill(0x5c);
     Expect(UyaCollisionReader.ReadChunkWad(chunk).NativeFaceCount == 3, "UYA chunk WAD collision should be decompressed");
     var composedChunk = LevelAssetComposer.ComposeTfragChunkCollision(GameId.UYA, chunk, composed.Bytes);
-    var movedCollisionSuffix = BinaryPrimitives.ReadInt32LittleEndian(composedChunk.AsSpan(8));
     Expect(TfragChunkWadReader.ReadCollisionPayload(composedChunk).SequenceEqual(composed.Bytes)
-        && composedChunk.AsSpan(movedCollisionSuffix, 0x20).SequenceEqual(chunk.AsSpan(collisionEnd, 0x20)),
-        "UYA chunk composer should replace compressed collision and preserve later payloads");
+        && composedChunk.AsSpan(8, 8).SequenceEqual(chunk.AsSpan(8, 8)),
+        "UYA chunk composer should replace compressed collision and ignore header padding words");
     var unchangedChunk = LevelAssetComposer.ComposeTfragChunkCollision(GameId.UYA, chunk, bytes);
     Expect(unchangedChunk.SequenceEqual(chunk), "UYA chunk collision no-op should remain byte-identical");
     var badCompression = new byte[0x20];

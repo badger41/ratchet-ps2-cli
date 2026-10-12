@@ -76,7 +76,6 @@ public static partial class TfragGltfExporter
             var material = new Dictionary<string, object?>
             {
                 ["name"] = BuildMaterialName(key),
-                ["doubleSided"] = true,
                 ["extensions"] = new Dictionary<string, object>
                 {
                     [UnlitExtensionName] = new Dictionary<string, object>()

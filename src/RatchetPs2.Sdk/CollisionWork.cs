@@ -97,6 +97,74 @@ public static class CollisionWork
         };
     }
 
+    public static InstancedCollisionCandidate GenerateTfragSurfaceCandidate(
+        byte[] canonicalBytes,
+        GameId gameId,
+        string additionId,
+        int lodIndex = 0,
+        byte rawType = 0,
+        int maximumFaces = DefaultMaximumFaces,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(canonicalBytes);
+        return gameId switch
+        {
+            GameId.UYA => UyaCollisionAdapter.FromCandidate(UyaTfragCollisionGenerator.GenerateSurface(
+                canonicalBytes, additionId, lodIndex, rawType, maximumFaces, cancellationToken)),
+            _ => throw new NotSupportedException($"Tfrag collision generation does not support {gameId}."),
+        };
+    }
+
+    public static InstancedCollisionCandidate GenerateTfragDecimatedCandidate(
+        byte[] canonicalBytes,
+        GameId gameId,
+        string additionId,
+        byte rawType = 0,
+        float targetFaceRatio = 0.5f,
+        int maximumFaces = DefaultMaximumFaces,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(canonicalBytes);
+        return gameId switch
+        {
+            GameId.UYA => UyaCollisionAdapter.FromCandidate(UyaTfragCollisionGenerator.GenerateDecimatedSurface(
+                canonicalBytes, additionId, rawType, targetFaceRatio, maximumFaces, cancellationToken)),
+            _ => throw new NotSupportedException($"Tfrag collision decimation does not support {gameId}."),
+        };
+    }
+
+    public static InstancedCollisionCandidate GenerateTfragConvexHullCandidate(
+        byte[] canonicalBytes,
+        GameId gameId,
+        string additionId,
+        int lodIndex = 0,
+        byte rawType = 0,
+        int profileSections = DefaultProfileSections,
+        int maximumFaces = DefaultMaximumFaces,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(canonicalBytes);
+        return gameId switch
+        {
+            GameId.UYA => UyaCollisionAdapter.FromCandidate(UyaTfragCollisionGenerator.GenerateHull(
+                canonicalBytes, additionId, lodIndex, rawType, profileSections, maximumFaces, cancellationToken)),
+            _ => throw new NotSupportedException($"Tfrag collision convex hull generation does not support {gameId}."),
+        };
+    }
+
+    public static IReadOnlyList<int> InspectTfragSurfaceLodIndices(
+        byte[] canonicalBytes,
+        GameId gameId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(canonicalBytes);
+        return gameId switch
+        {
+            GameId.UYA => UyaTfragCollisionGenerator.InspectSurfaceLodIndices(canonicalBytes, cancellationToken),
+            _ => throw new NotSupportedException($"Tfrag collision inspection does not support {gameId}."),
+        };
+    }
+
     public static CollisionComposition EncodeStandalone(
         GameId gameId,
         IReadOnlyList<CollisionSolidAddition> additions,
@@ -305,6 +373,27 @@ public static class CollisionWork
         };
     }
 
+    public static CollisionAnalysis AnalyzeCompleteComposition(
+        byte[] collisionBytes,
+        GameId gameId,
+        IReadOnlyList<CollisionPieceEdit> pieces,
+        IReadOnlyList<CollisionSolidAddition> additions,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(collisionBytes);
+        ArgumentNullException.ThrowIfNull(pieces);
+        ArgumentNullException.ThrowIfNull(additions);
+        return gameId switch
+        {
+            GameId.UYA => UyaCollisionAdapter.FromAnalysis(UyaCollisionComposer.AnalyzeCompleteComposition(
+                collisionBytes,
+                UyaCollisionAdapter.ToEdits(pieces),
+                additions.Select(UyaCollisionAdapter.ToAddition).ToArray(),
+                cancellationToken)),
+            _ => throw new NotSupportedException($"Complete collision composition analysis does not support {gameId}."),
+        };
+    }
+
     public static CollisionComposition Compose(
         byte[] collisionBytes,
         GameId gameId,
@@ -323,6 +412,27 @@ public static class CollisionWork
                 additions.Select(UyaCollisionAdapter.ToAddition).ToArray(),
                 cancellationToken)),
             _ => throw new NotSupportedException($"Collision composition does not support {gameId}."),
+        };
+    }
+
+    public static CollisionComposition ComposeComplete(
+        byte[] collisionBytes,
+        GameId gameId,
+        IReadOnlyList<CollisionPieceEdit> pieces,
+        IReadOnlyList<CollisionSolidAddition> additions,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(collisionBytes);
+        ArgumentNullException.ThrowIfNull(pieces);
+        ArgumentNullException.ThrowIfNull(additions);
+        return gameId switch
+        {
+            GameId.UYA => UyaCollisionAdapter.FromComposition(UyaCollisionComposer.ComposeComplete(
+                collisionBytes,
+                UyaCollisionAdapter.ToEdits(pieces),
+                additions.Select(UyaCollisionAdapter.ToAddition).ToArray(),
+                cancellationToken)),
+            _ => throw new NotSupportedException($"Complete collision composition does not support {gameId}."),
         };
     }
 

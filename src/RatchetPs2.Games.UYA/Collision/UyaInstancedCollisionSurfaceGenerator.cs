@@ -18,7 +18,9 @@ internal static class UyaInstancedCollisionSurfaceGenerator
         string sourceLabel,
         byte rawType,
         int maximumFaces = DefaultMaximumFaces,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool mergeCoplanarPairs = true,
+        float targetFaceRatio = 1f)
     {
         ArgumentNullException.ThrowIfNull(positions);
         ArgumentNullException.ThrowIfNull(triangles);
@@ -80,7 +82,9 @@ internal static class UyaInstancedCollisionSurfaceGenerator
             throw new InvalidDataException($"{sourceLabel} produced no usable collision faces.");
         }
 
-        var (mergedFaces, mergedQuadCount) = MergeCoplanarPairs(faces, cancellationToken);
+        var (mergedFaces, mergedQuadCount) = mergeCoplanarPairs
+            ? MergeCoplanarPairs(faces, cancellationToken)
+            : (faces, 0);
         // Native UYA collision blocks on the opposite side from render-mesh winding.
         var nativeFaces = UyaInstancedCollisionGeometry.SplitForNativeOctants(
             mergedFaces.Select(face => face.IsQuad
@@ -100,6 +104,7 @@ internal static class UyaInstancedCollisionSurfaceGenerator
             lodIndex,
             rawType,
             maximumFaces,
+            targetFaceRatio,
             positions.Count,
             triangles.Count,
             generatedVertices.Count,

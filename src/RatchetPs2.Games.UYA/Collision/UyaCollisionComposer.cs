@@ -11,7 +11,8 @@ public static class UyaCollisionComposer
         UyaMapCollision Collision,
         IReadOnlyList<UyaCollisionPieceEdit> EffectiveEdits,
         IReadOnlyDictionary<int, string> AdditionIds,
-        bool Changed);
+        bool Changed,
+        UyaCollisionNativeData? NativeSource);
 
     public static UyaCollisionAnalysis AnalyzeComposition(
         byte[] sourceBytes,
@@ -19,7 +20,29 @@ public static class UyaCollisionComposer
         IReadOnlyList<UyaCollisionSolidAddition> additions,
         CancellationToken cancellationToken = default)
     {
-        var prepared = Prepare(sourceBytes, edits, additions, cancellationToken);
+        return AnalyzeComposition(sourceBytes, edits, additions, completeState: false, cancellationToken);
+    }
+
+    public static UyaCollisionAnalysis AnalyzeCompleteComposition(
+        byte[] sourceBytes,
+        IReadOnlyList<UyaCollisionPieceEdit> pieces,
+        IReadOnlyList<UyaCollisionSolidAddition> additions,
+        CancellationToken cancellationToken = default) =>
+        AnalyzeComposition(sourceBytes, pieces, additions, completeState: true, cancellationToken);
+
+    private static UyaCollisionAnalysis AnalyzeComposition(
+        byte[] sourceBytes,
+        IReadOnlyList<UyaCollisionPieceEdit> edits,
+        IReadOnlyList<UyaCollisionSolidAddition> additions,
+        bool completeState,
+        CancellationToken cancellationToken)
+    {
+        var prepared = Prepare(sourceBytes, edits, additions, completeState, cancellationToken);
+        if (prepared.EffectiveEdits.Count == 0 && additions.Count > 0)
+        {
+            return UyaCollisionWriter.AnalyzePreservingSourceOctants(
+                prepared.NativeSource!, prepared.Collision, prepared.AdditionIds, cancellationToken);
+        }
         return UyaCollisionWriter.Analyze(
             prepared.Collision,
             prepared.AdditionIds,
@@ -37,11 +60,34 @@ public static class UyaCollisionComposer
         IReadOnlyList<UyaCollisionPieceEdit> edits,
         IReadOnlyList<UyaCollisionSolidAddition> additions,
         CancellationToken cancellationToken = default)
+        => Compose(sourceBytes, edits, additions, completeState: false, cancellationToken);
+
+    public static UyaCollisionComposition ComposeComplete(
+        byte[] sourceBytes,
+        IReadOnlyList<UyaCollisionPieceEdit> pieces,
+        IReadOnlyList<UyaCollisionSolidAddition> additions,
+        CancellationToken cancellationToken = default) =>
+        Compose(sourceBytes, pieces, additions, completeState: true, cancellationToken);
+
+    private static UyaCollisionComposition Compose(
+        byte[] sourceBytes,
+        IReadOnlyList<UyaCollisionPieceEdit> edits,
+        IReadOnlyList<UyaCollisionSolidAddition> additions,
+        bool completeState,
+        CancellationToken cancellationToken)
     {
-        var prepared = Prepare(sourceBytes, edits, additions, cancellationToken);
+        var prepared = Prepare(sourceBytes, edits, additions, completeState, cancellationToken);
         if (!prepared.Changed)
         {
             return new(sourceBytes, false, []);
+        }
+
+        if (prepared.EffectiveEdits.Count == 0 && additions.Count > 0)
+        {
+            var preserved = UyaCollisionWriter.WritePreservingSourceOctants(
+                prepared.NativeSource!, prepared.Collision, prepared.AdditionIds, cancellationToken);
+            Verify(prepared.Collision, UyaCollisionReader.Read(preserved.Bytes));
+            return new(preserved.Bytes, true, [], preserved.Analysis);
         }
 
         var analysis = UyaCollisionWriter.Analyze(
@@ -76,19 +122,18 @@ public static class UyaCollisionComposer
         byte[] sourceBytes,
         IReadOnlyList<UyaCollisionPieceEdit> edits,
         IReadOnlyList<UyaCollisionSolidAddition> additions,
+        bool completeState,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(sourceBytes);
         ArgumentNullException.ThrowIfNull(edits);
         ArgumentNullException.ThrowIfNull(additions);
         ValidateAdditions(additions, cancellationToken);
-        var source = UyaCollisionReader.Read(sourceBytes);
         var byKey = new Dictionary<(UyaCollisionPieceKind Kind, int Index), UyaCollisionPieceEdit>();
         foreach (var sourceEdit in edits)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var edit = Normalize(sourceEdit);
-            ValidateEdit(source, edit);
             if (!byKey.TryAdd((edit.Kind, edit.SourcePieceIndex), edit))
             {
                 throw new ArgumentException(
@@ -97,18 +142,29 @@ public static class UyaCollisionComposer
             }
         }
 
+        var hasExplicitEdits = byKey.Values.Any(IsEffective);
+        var nativeSource = additions.Count > 0 && (completeState || !hasExplicitEdits)
+            ? UyaCollisionReader.ReadNative(sourceBytes)
+            : null;
+        var source = nativeSource?.Collision ?? UyaCollisionReader.Read(sourceBytes);
+        if (completeState)
+        {
+            foreach (var piece in source.SolidPieces)
+                byKey.TryAdd((UyaCollisionPieceKind.Solid, piece.SourceIndex),
+                    new(UyaCollisionPieceKind.Solid, piece.SourceIndex, 0, 0, 0, Remove: true));
+            foreach (var barrier in source.PlayerBarriers)
+                byKey.TryAdd((UyaCollisionPieceKind.PlayerBarrier, barrier.SourceIndex),
+                    new(UyaCollisionPieceKind.PlayerBarrier, barrier.SourceIndex, 0, 0, 0, Remove: true));
+        }
+        foreach (var edit in byKey.Values) ValidateEdit(source, edit);
         var effective = byKey.Values
-            .Where(edit => edit.Remove
-                || edit.TranslationX64 != 0
-                || edit.TranslationY64 != 0
-                || edit.TranslationZ64 != 0
-                || edit.Rotation != Quaternion.Identity)
+            .Where(IsEffective)
             .OrderBy(edit => edit.Kind)
             .ThenBy(edit => edit.SourcePieceIndex)
             .ToArray();
         if (effective.Length == 0 && additions.Count == 0)
         {
-            return new(source, [], new Dictionary<int, string>(), false);
+            return new(source, [], new Dictionary<int, string>(), false, null);
         }
 
         var solidPieces = new List<UyaCollisionSolidPiece>();
@@ -161,8 +217,14 @@ public static class UyaCollisionComposer
 
         var expected = new UyaMapCollision(solidPieces, barriers, 0, 0, 0);
         ValidateUniqueFaces(expected);
-        return new(expected, effective, additionIds, true);
+        return new(expected, effective, additionIds, true, nativeSource);
     }
+
+    private static bool IsEffective(UyaCollisionPieceEdit edit) => edit.Remove
+        || edit.TranslationX64 != 0
+        || edit.TranslationY64 != 0
+        || edit.TranslationZ64 != 0
+        || edit.Rotation != Quaternion.Identity;
 
     private static void ValidateUniqueFaces(UyaMapCollision collision)
     {

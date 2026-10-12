@@ -33,6 +33,8 @@ public sealed class TfragGltfExportOptions
 
     public GltfExportMetadataMode MetadataMode { get; init; } = GltfExportMetadataMode.Full;
 
+    public bool PreserveChunkNodes { get; init; }
+
     public int? LodIndex { get; init; }
 
     public Action<string, string, double, string?>? TimingSink { get; init; }
@@ -353,6 +355,25 @@ public static partial class TfragGltfExporter
                     mesh.LodIndex,
                     mesh.Groups,
                     mesh))
+                .ToArray();
+        }
+
+        if (options.PreserveChunkNodes)
+        {
+            return meshes
+                .OrderBy(mesh => mesh.LodIndex)
+                .ThenBy(mesh => mesh.Chunk.Index)
+                .Select(mesh => new TfragGltfMesh(
+                    $"chunk_{mesh.Chunk.Index:0000}_lod_{mesh.LodIndex}",
+                    mesh.LodIndex,
+                    mesh.Groups
+                        .GroupBy(primitive => primitive.MaterialKey)
+                        .OrderBy(primitiveGroup => primitiveGroup.Key.TextureId)
+                        .ThenBy(primitiveGroup => primitiveGroup.Key.ClampU)
+                        .ThenBy(primitiveGroup => primitiveGroup.Key.ClampV)
+                        .Select(MergePrimitiveGroups)
+                        .ToArray(),
+                    SourceMesh: null))
                 .ToArray();
         }
 

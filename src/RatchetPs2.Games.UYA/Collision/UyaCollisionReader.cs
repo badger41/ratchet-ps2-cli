@@ -26,6 +26,12 @@ public static class UyaCollisionReader
     }
 
     public static UyaMapCollision Read(ReadOnlySpan<byte> data)
+        => ReadCore(data, preserveNativeLayout: false).Collision;
+
+    internal static UyaCollisionNativeData ReadNative(ReadOnlySpan<byte> data)
+        => ReadCore(data, preserveNativeLayout: true);
+
+    private static UyaCollisionNativeData ReadCore(ReadOnlySpan<byte> data, bool preserveNativeLayout)
     {
         RequireRange(data, 0, HeaderSize, "header");
         var meshOffset = ReadInt32(data, 0, "solid mesh offset");
@@ -42,20 +48,30 @@ public static class UyaCollisionReader
         }
 
         var meshEnd = barrierOffset == 0 ? data.Length : barrierOffset;
-        var solid = ReadSolidMesh(data[meshOffset..meshEnd], meshOffset);
+        var solid = ReadSolidMesh(data[meshOffset..meshEnd], meshOffset, preserveNativeLayout);
         var barriers = barrierOffset == 0
             ? []
             : ReadPlayerBarriers(data[barrierOffset..], barrierOffset);
         var pieces = BuildSolidPieces(solid.Faces);
         return new(
-            pieces,
-            barriers,
-            solid.OctantCount,
-            solid.NativeFaceCount,
-            solid.NativeFaceCount - solid.Faces.Count);
+            new(
+                pieces,
+                barriers,
+                solid.OctantCount,
+                solid.NativeFaceCount,
+                solid.NativeFaceCount - solid.Faces.Count),
+            solid.Octants,
+            meshOffset,
+            preserveNativeLayout ? data[..meshOffset].ToArray() : [],
+            preserveNativeLayout ? data[meshOffset..meshEnd].ToArray() : [],
+            solid.Lookups,
+            preserveNativeLayout && barrierOffset != 0 ? data[barrierOffset..].ToArray() : null);
     }
 
-    private static SolidReadResult ReadSolidMesh(ReadOnlySpan<byte> mesh, int sourceOffset)
+    private static SolidReadResult ReadSolidMesh(
+        ReadOnlySpan<byte> mesh,
+        int sourceOffset,
+        bool preserveNativeLayout)
     {
         RequireRange(mesh, 0, 4, "solid mesh root", sourceOffset);
         var ranges = new RangeTracker(mesh.Length, sourceOffset, "solid mesh");
@@ -64,6 +80,8 @@ public static class UyaCollisionReader
         ranges.Add(0, checked(4 + zCount * 2), "Z lookup");
         var faces = new HashSet<UyaCollisionSolidFace>();
         var nativeFaceCount = 0;
+        var octants = new List<UyaCollisionNativeOctant>();
+        var lookups = new List<UyaCollisionNativeLookup>();
         var octantCount = 0;
 
         for (var zIndex = 0; zIndex < zCount; zIndex++)
@@ -104,6 +122,14 @@ public static class UyaCollisionReader
                 {
                     var xEntryOffset = checked(xOffset + 4 + xIndex * 4);
                     var packed = ReadUInt32(mesh, xEntryOffset, "octant lookup entry", sourceOffset);
+                    if (preserveNativeLayout)
+                    {
+                        lookups.Add(new(
+                            xCoordinate + xIndex,
+                            yCoordinate + yIndex,
+                            zCoordinate + zIndex,
+                            xEntryOffset));
+                    }
                     if (packed == 0)
                     {
                         continue;
@@ -128,16 +154,25 @@ public static class UyaCollisionReader
                         zCoordinate + zIndex,
                         sourceOffset);
                     octantCount++;
+                    if (preserveNativeLayout)
+                    {
+                        octants.Add(new(
+                            xCoordinate + xIndex,
+                            yCoordinate + yIndex,
+                            zCoordinate + zIndex,
+                            octantFaces,
+                            mesh.Slice(octantOffset, octantSize).ToArray()));
+                    }
                     nativeFaceCount = checked(nativeFaceCount + octantFaces.Count);
                     foreach (var face in octantFaces)
                     {
-                        faces.Add(face);
+                        faces.Add(Canonicalize(face));
                     }
                 }
             }
         }
 
-        return new(faces.Order(FaceComparer.Instance).ToArray(), octantCount, nativeFaceCount);
+        return new(faces.Order(FaceComparer.Instance).ToArray(), octants, lookups, octantCount, nativeFaceCount);
     }
 
     private static IReadOnlyList<UyaCollisionSolidFace> ReadOctant(
@@ -199,13 +234,13 @@ public static class UyaCollisionReader
                 ValidateVertexIndex(d, vertexCount, sourceOffset + fourthVertexOffset + index);
             }
 
-            faces[index] = Canonicalize(new(
+            faces[index] = new(
                 type,
                 vertices[a],
                 vertices[b],
                 vertices[c],
                 index < quadCount ? vertices[d] : default,
-                index < quadCount));
+                index < quadCount);
         }
 
         return faces;
@@ -472,6 +507,8 @@ public static class UyaCollisionReader
 
     private sealed record SolidReadResult(
         IReadOnlyList<UyaCollisionSolidFace> Faces,
+        IReadOnlyList<UyaCollisionNativeOctant> Octants,
+        IReadOnlyList<UyaCollisionNativeLookup> Lookups,
         int OctantCount,
         int NativeFaceCount);
 

@@ -12,7 +12,8 @@ namespace RatchetPs2.Games.UYA.Builders;
 internal static class UyaLevelAssetComposer
 {
     private const int AssetAlignment = 0x10;
-    private const int ChunkHeaderSize = 0x10;
+    private const int ChunkHeaderSize = 0x08;
+    private const int ChunkMinimumPayloadOffset = 0x10;
 
     public static LevelAssetWadComposition SetAlwaysVisibleOcclusionBit(
         ReadOnlySpan<byte> headerBytes,
@@ -58,16 +59,29 @@ internal static class UyaLevelAssetComposer
         var shrubs = LevelAssetReader.ReadShrubDefinitions(
             headerBytes, header.ShrubModelOffset, header.ShrubModelCount);
         var assetWadLength = assetWadBytes.Length;
-        var references = CollectReferences(header, mobys, ties, shrubs, assetWadLength);
+        var references = CollectReferences(header, mobys, ties, shrubs, assetWadLength).ToList();
+        var terrainAtAssetStart = replacements.Terrain is not null && header.TerrainOffset == 0;
+        if (terrainAtAssetStart)
+        {
+            var knownOffsets = references.Select(value => value.AssetOffset)
+                .Append(header.SceneViewSize)
+                .Append(assetWadLength);
+            _ = TfragTerrainReader.Read(LevelAssetReader.ReadAssetSlice(
+                assetWadBytes, 0, knownOffsets, allowZeroOffset: true));
+            references.Add(new(0x08, 0));
+        }
         var offsets = references.Select(value => value.AssetOffset)
             .Append(header.SceneViewSize)
             .Where(value => value > 0 && value < assetWadLength)
-            .Append(assetWadLength).Distinct().Order().ToArray();
+            .Append(assetWadLength)
+            .Append(terrainAtAssetStart ? 0 : assetWadLength)
+            .Distinct().Order().ToArray();
         if (offsets.Length < 2)
             throw new InvalidDataException("UYA asset WAD has no addressable payloads.");
 
         var replacementByOffset = new Dictionary<int, ReadOnlyMemory<byte>>();
-        AddReplacement(replacementByOffset, "terrain", header.TerrainOffset, replacements.Terrain, assetWadLength);
+        AddReplacement(replacementByOffset, "terrain", header.TerrainOffset, replacements.Terrain,
+            assetWadLength, allowZeroOffset: terrainAtAssetStart);
         AddReplacement(replacementByOffset, "occlusion", header.OcclusionOffset, replacements.Occlusion, assetWadLength);
         AddReplacement(replacementByOffset, "sky", header.SkyOffset, replacements.Sky, assetWadLength);
         AddReplacement(replacementByOffset, "collision", header.CollisionOffset, replacements.Collision, assetWadLength);
@@ -162,9 +176,9 @@ internal static class UyaLevelAssetComposer
         CancellationToken cancellationToken)
     {
         if (replacementBytes.IsEmpty) throw new ArgumentException($"Tfrag {name} payload cannot be empty.", nameof(replacementBytes));
-        if (chunkBytes.Length < ChunkHeaderSize) throw new InvalidDataException("Tfrag chunk is shorter than its header.");
+        if (chunkBytes.Length < ChunkMinimumPayloadOffset) throw new InvalidDataException("Tfrag chunk is shorter than its header.");
         var payloadOffset = BinarySpanReader.ReadInt32LittleEndian(chunkBytes, headerOffset);
-        if (payloadOffset < ChunkHeaderSize || payloadOffset >= chunkBytes.Length)
+        if (payloadOffset < ChunkMinimumPayloadOffset || payloadOffset >= chunkBytes.Length)
             throw new InvalidDataException($"Tfrag chunk {name} offset is outside the chunk.");
         var payloadEnd = chunkBytes.Length;
         for (var offset = 0; offset < ChunkHeaderSize; offset += sizeof(int))
@@ -255,11 +269,12 @@ internal static class UyaLevelAssetComposer
         string name,
         int offset,
         ReadOnlyMemory<byte>? bytes,
-        int assetLength)
+        int assetLength,
+        bool allowZeroOffset = false)
     {
         if (bytes is null) return;
         if (bytes.Value.IsEmpty) throw new ArgumentException($"UYA {name} replacement cannot be empty.", nameof(bytes));
-        if (offset <= 0 || offset >= assetLength)
+        if (offset < 0 || offset == 0 && !allowZeroOffset || offset >= assetLength)
             throw new InvalidDataException($"UYA asset header has no writable {name} payload.");
         if (!replacements.TryAdd(offset, bytes.Value)
             && !replacements[offset].Span.SequenceEqual(bytes.Value.Span))
@@ -277,7 +292,8 @@ internal static class UyaLevelAssetComposer
         var shrubs = LevelAssetReader.ReadShrubDefinitions(headerBytes, header.ShrubModelOffset, header.ShrubModelCount);
         var offsets = LevelAssetReader.CollectKnownAssetOffsets(
             header, assetBytes.Length, mobys, ties, shrubs, [header.SceneViewSize]);
-        Verify("terrain", replacements.Terrain, header.TerrainOffset, assetBytes, offsets);
+        Verify("terrain", replacements.Terrain, header.TerrainOffset, assetBytes, offsets,
+            allowZeroOffset: header.TerrainOffset == 0);
         Verify("occlusion", replacements.Occlusion, header.OcclusionOffset, assetBytes, offsets);
         Verify("sky", replacements.Sky, header.SkyOffset, assetBytes, offsets);
         Verify("collision", replacements.Collision, header.CollisionOffset, assetBytes, offsets);
@@ -289,10 +305,11 @@ internal static class UyaLevelAssetComposer
         ReadOnlyMemory<byte>? expected,
         int offset,
         byte[] assetBytes,
-        IReadOnlyList<int> offsets)
+        IReadOnlyList<int> offsets,
+        bool allowZeroOffset = false)
     {
         if (expected is null) return;
-        var actual = LevelAssetReader.ReadAssetSlice(assetBytes, offset, offsets);
+        var actual = LevelAssetReader.ReadAssetSlice(assetBytes, offset, offsets, allowZeroOffset);
         if (actual.Length < expected.Value.Length
             || !actual.AsSpan(0, expected.Value.Length).SequenceEqual(expected.Value.Span)
             || actual.AsSpan(expected.Value.Length).ContainsAnyExcept((byte)0))

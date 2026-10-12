@@ -6,6 +6,7 @@ public sealed record UyaInstancedCollisionSurfaceCandidate(
     int LodIndex,
     byte RawType,
     int MaximumFaces,
+    float TargetFaceRatio,
     int SourceVertexCount,
     int SourceTriangleCount,
     int GeneratedVertexCount,

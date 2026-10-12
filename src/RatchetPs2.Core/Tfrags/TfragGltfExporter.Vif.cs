@@ -102,7 +102,12 @@ public static partial class TfragGltfExporter
                     continue;
                 }
 
-                ApplyVifCommand(bytes.Slice(commandPayloadOffset, commandPayloadLength), command, immediate, ref vifState);
+                ApplyVifCommand(
+                    bytes.Slice(commandPayloadOffset, commandPayloadLength),
+                    command,
+                    immediate,
+                    offset,
+                    ref vifState);
                 offset = commandPayloadOffset + commandPayloadLength;
                 continue;
             }
@@ -223,6 +228,7 @@ public static partial class TfragGltfExporter
         ReadOnlySpan<byte> payload,
         int command,
         ushort immediate,
+        int commandOffset,
         ref TfragVifState state)
     {
         switch (command)
@@ -239,7 +245,8 @@ public static partial class TfragGltfExporter
                     RowX = BinarySpanReader.ReadInt32LittleEndian(payload, 0x00),
                     RowY = BinarySpanReader.ReadInt32LittleEndian(payload, 0x04),
                     RowZ = BinarySpanReader.ReadInt32LittleEndian(payload, 0x08),
-                    RowW = BinarySpanReader.ReadInt32LittleEndian(payload, 0x0C)
+                    RowW = BinarySpanReader.ReadInt32LittleEndian(payload, 0x0C),
+                    RowCommandOffset = commandOffset,
                 };
                 break;
         }
@@ -438,6 +445,7 @@ public static partial class TfragGltfExporter
             usesVifBase ? vifState.RowY : 0,
             usesVifBase ? vifState.RowZ : 0,
             usesVifBase ? vifState.RowW : 0,
+            usesVifBase ? vifState.RowCommandOffset : -1,
             positions);
     }
 
@@ -478,6 +486,7 @@ public static partial class TfragGltfExporter
             BaseY: 0,
             BaseZ: 0,
             BaseW: 0,
+            BaseCommandOffset: -1,
             positions);
     }
 

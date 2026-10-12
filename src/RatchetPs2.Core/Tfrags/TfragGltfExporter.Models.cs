@@ -217,9 +217,10 @@ public static partial class TfragGltfExporter
         int RowX,
         int RowY,
         int RowZ,
-        int RowW)
+        int RowW,
+        int RowCommandOffset)
     {
-        public static TfragVifState Default { get; } = new(0, 0, 0, 0, 0, 0);
+        public static TfragVifState Default { get; } = new(0, 0, 0, 0, 0, 0, -1);
     }
 
     private sealed class TfragReferenceState
@@ -232,7 +233,7 @@ public static partial class TfragGltfExporter
         }
     }
 
-    private readonly record struct TfragSourcePosition(
+    internal readonly record struct TfragSourcePosition(
         short X,
         short Y,
         short Z,
@@ -245,7 +246,7 @@ public static partial class TfragGltfExporter
         int PacketOffset,
         int RowIndex);
 
-    private sealed record TfragPositionPacket(
+    internal sealed record TfragPositionPacket(
         string SegmentName,
         int Offset,
         int RelativeOffset,
@@ -257,6 +258,7 @@ public static partial class TfragGltfExporter
         int BaseY,
         int BaseZ,
         int BaseW,
+        int BaseCommandOffset,
         IReadOnlyList<TfragSourcePosition> Positions);
 
     private sealed record TfragTopologyPacket(

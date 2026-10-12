@@ -200,11 +200,12 @@ public static class UyaCollisionGltfExporter
 
             if (face.IsQuad)
             {
-                indices.Add(baseIndex + 3);
+                // Native quads are ABC + ACD; reverse each triangle for glTF's coordinate basis.
                 indices.Add(baseIndex + 2);
                 indices.Add(baseIndex + 1);
+                indices.Add(baseIndex);
                 indices.Add(baseIndex + 3);
-                indices.Add(baseIndex + 1);
+                indices.Add(baseIndex + 2);
                 indices.Add(baseIndex);
             }
             else

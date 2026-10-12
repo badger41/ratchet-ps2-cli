@@ -442,7 +442,7 @@ public static partial class TfragGltfExporter
 
     private static void OrientPrimitiveGroupTriangleWindingToNormals(TfragPrimitiveGroup group)
     {
-        if (group.Positions.Count != group.Normals.Count)
+        if (group.Positions.Count != group.LightNormals.Count)
         {
             return;
         }
@@ -462,7 +462,7 @@ public static partial class TfragGltfExporter
             var faceNormal = Vector3.Cross(
                 group.Positions[b] - group.Positions[a],
                 group.Positions[c] - group.Positions[a]);
-            var averageNormal = group.Normals[a] + group.Normals[b] + group.Normals[c];
+            var averageNormal = group.LightNormals[a] + group.LightNormals[b] + group.LightNormals[c];
             if (faceNormal.LengthSquared() <= 0.00000001f
                 || averageNormal.LengthSquared() <= 0.00000001f)
             {

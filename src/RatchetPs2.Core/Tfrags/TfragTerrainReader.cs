@@ -42,15 +42,43 @@ public static class TfragTerrainReader
             throw new InvalidDataException($"Tfrag count {tfragCount} is invalid.");
         }
 
-        var tableLength = checked(tfragCount * TfragRecordSize);
+        if (tableOffset > bytes.Length
+            || tfragCount > (bytes.Length - tableOffset) / TfragRecordSize)
+        {
+            throw new InvalidDataException(
+                $"Tfrag table with {tfragCount} record(s) exceeds terrain length 0x{bytes.Length:X}.");
+        }
+
+        var tableLength = tfragCount * TfragRecordSize;
         BinarySpanReader.EnsureRange(bytes, tableOffset, tableLength, "Tfrag table");
+        var tableEnd = tableOffset + tableLength;
 
         var dataOffsets = new int[tfragCount];
         for (var i = 0; i < tfragCount; i++)
         {
             var recordOffset = tableOffset + i * TfragRecordSize;
             var dataOffsetRaw = BinarySpanReader.ReadInt32LittleEndian(bytes, recordOffset + 0x10);
-            dataOffsets[i] = checked(tableOffset + dataOffsetRaw);
+            var dataOffsetValue = (long)tableOffset + dataOffsetRaw;
+            if (dataOffsetValue < tableEnd || dataOffsetValue >= bytes.Length)
+            {
+                throw new InvalidDataException(
+                    $"Tfrag {i} data offset 0x{dataOffsetValue:X} is outside the terrain data range 0x{tableEnd:X}-0x{bytes.Length:X}.");
+            }
+
+            var dataOffset = (int)dataOffsetValue;
+            if ((dataOffset & 0x0F) != 0)
+            {
+                throw new InvalidDataException(
+                    $"Tfrag {i} data offset 0x{dataOffset:X} is not 0x10-byte aligned.");
+            }
+
+            if (i > 0 && dataOffset <= dataOffsets[i - 1])
+            {
+                throw new InvalidDataException(
+                    $"Tfrag {i} data offset 0x{dataOffset:X} must follow tfrag {i - 1} at 0x{dataOffsets[i - 1]:X}.");
+            }
+
+            dataOffsets[i] = dataOffset;
         }
 
         var chunks = new List<TfragChunk>(tfragCount);
@@ -58,7 +86,7 @@ public static class TfragTerrainReader
         {
             var recordOffset = tableOffset + i * TfragRecordSize;
             var dataOffset = dataOffsets[i];
-            var nextDataOffset = i + 1 < dataOffsets.Length && dataOffsets[i + 1] > dataOffset
+            var nextDataOffset = i + 1 < dataOffsets.Length
                 ? dataOffsets[i + 1]
                 : bytes.Length;
             var dataLength = nextDataOffset - dataOffset;

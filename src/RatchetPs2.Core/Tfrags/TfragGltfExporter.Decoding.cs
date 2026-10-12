@@ -385,9 +385,9 @@ public static partial class TfragGltfExporter
         var elevationY = MathF.Sin(elevation);
 
         var ps2Normal = new Vector3(
-            -azimuthX * elevationX,
-            -azimuthY * elevationX,
-            -elevationY);
+            azimuthX * elevationX,
+            azimuthY * elevationX,
+            elevationY);
         var gltfNormal = GltfCoordinateBasis.FromPs2Position(ps2Normal.X, ps2Normal.Y, ps2Normal.Z);
         return gltfNormal.LengthSquared() <= 0.00000001f
             ? Vector3.UnitY

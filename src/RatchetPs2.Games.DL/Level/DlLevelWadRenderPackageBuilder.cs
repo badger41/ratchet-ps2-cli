@@ -40,6 +40,7 @@ public sealed record DlLevelWadRenderPackageBuildOptions
     public bool IncludeMissionMobys { get; init; } = true;
     public bool MinifyGltf { get; init; }
     public GltfExportMetadataMode GltfMetadataMode { get; init; } = GltfExportMetadataMode.Full;
+    public bool PreserveTfragChunkNodes { get; init; }
     public int? TfragLodIndex { get; init; }
     public int? MobyLodIndex { get; init; }
     public LevelAssetProfile AssetProfile { get; init; } = LevelAssetProfile.Default;
@@ -594,6 +595,7 @@ public static class DlLevelWadRenderPackageBuilder
                     IncludeDiagnostics = options.IncludeDiagnostics,
                     Minify = options.MinifyGltf,
                     MetadataMode = options.GltfMetadataMode,
+                    PreserveChunkNodes = options.PreserveTfragChunkNodes,
                     LodIndex = options.TfragLodIndex,
                     TimingSink = (key, label, durationMs, detail) => AddTiming(
                         timings,
