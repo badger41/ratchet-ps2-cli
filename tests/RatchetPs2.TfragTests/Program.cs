@@ -167,6 +167,19 @@ static void ValidateSharedTexCoordUnwrapRules()
     var seamMin = seam.Min(texCoord => texCoord.Y);
     var seamMax = seam.Max(texCoord => texCoord.Y);
     Expect(seamMax - seamMin < 0.03f, "repeated UV spans that straddle the tile seam should still unwrap");
+
+    var authoredTiles = GltfTexCoordUtils.AdjustTriangleTexCoords(
+        new Vector2(0.1f, 0f),
+        new Vector2(1.1f, 0f),
+        new Vector2(0.2f, 1f),
+        textureSize: null,
+        repeatU: true,
+        repeatV: true,
+        preserveRepeatedTexCoordTiles: true);
+    Expect(authoredTiles[0].X == 0.1f
+        && authoredTiles[1].X == 1.1f
+        && authoredTiles[2].X == 0.2f,
+        "canonical glTF previews should preserve authored repeated-UV tile offsets");
 }
 
 static void ValidateLodGroups(byte[] gltfBytes, string game)

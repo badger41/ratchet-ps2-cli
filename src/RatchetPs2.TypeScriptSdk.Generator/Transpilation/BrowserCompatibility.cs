@@ -542,6 +542,9 @@ namespace RatchetPs2.JavaScript
         [Transpose.Template("Browser.BrowserCompression.Unzlib({bytes})")]
         public static extern byte[] Unzlib(byte[] bytes);
 
+        [Transpose.Template("Browser.BrowserCompression.UnzlibBounded({bytes}, {expectedLength})")]
+        public static extern byte[] UnzlibBounded(byte[] bytes, int expectedLength);
+
         [Transpose.Template("Browser.BrowserCompression.ZipNames({bytes})")]
         public static extern string[] ZipNames(byte[] bytes);
 

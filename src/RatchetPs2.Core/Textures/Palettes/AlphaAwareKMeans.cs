@@ -20,7 +20,26 @@ public static class AlphaAwareKMeans
     public static AlphaAwareQuantization Quantize(
         IReadOnlyList<TextureColor> pixels,
         int paletteSize,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        Quantize(pixels, paletteSize, includePixelIndices: true, cancellationToken);
+
+    internal static IReadOnlyList<TextureColor> QuantizePalette(
+        IReadOnlyList<TextureColor> pixels,
+        int paletteSize,
+        CancellationToken cancellationToken = default) =>
+        Quantize(pixels, paletteSize, includePixelIndices: false, cancellationToken).Palette;
+
+    internal static IReadOnlyList<TextureColor> QuantizePalette(
+        IReadOnlyDictionary<TextureColor, int> histogram,
+        int paletteSize,
+        CancellationToken cancellationToken = default) =>
+        Quantize([], histogram, paletteSize, includePixelIndices: false, cancellationToken).Palette;
+
+    private static AlphaAwareQuantization Quantize(
+        IReadOnlyList<TextureColor> pixels,
+        int paletteSize,
+        bool includePixelIndices,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(pixels);
         if (paletteSize <= 0) throw new ArgumentOutOfRangeException(nameof(paletteSize));
@@ -31,6 +50,19 @@ public static class AlphaAwareKMeans
             cancellationToken.ThrowIfCancellationRequested();
             histogram[color] = histogram.GetValueOrDefault(color) + 1;
         }
+
+        return Quantize(pixels, histogram, paletteSize, includePixelIndices, cancellationToken);
+    }
+
+    private static AlphaAwareQuantization Quantize(
+        IReadOnlyList<TextureColor> pixels,
+        IReadOnlyDictionary<TextureColor, int> histogram,
+        int paletteSize,
+        bool includePixelIndices,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(histogram);
+        if (paletteSize <= 0) throw new ArgumentOutOfRangeException(nameof(paletteSize));
 
         var hasFullyTransparent = histogram.Keys.Any(color => color.Alpha == 0);
         var reservedTransparent = hasFullyTransparent && paletteSize > 1 ? 1 : 0;
@@ -90,8 +122,8 @@ public static class AlphaAwareKMeans
         while (finalPalette.Count < paletteSize) finalPalette.Add(Transparent);
 
         var palette = finalPalette.Take(paletteSize).ToArray();
-        var indices = new int[pixels.Count];
-        for (var index = 0; index < pixels.Count; index++)
+        var indices = includePixelIndices ? new int[pixels.Count] : [];
+        for (var index = 0; index < indices.Length; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             indices[index] = FindNearestPaletteIndex(pixels[index], palette);

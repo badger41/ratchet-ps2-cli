@@ -4,6 +4,10 @@ CLI tool to interact with the Ratchet & Clank series games for PS2.
 ## Build
 
 CLI command usage is documented in [docs/COMMANDS.md](docs/COMMANDS.md).
+The bounded static-model import profile is documented in
+[docs/STATIC_MODEL_IMPORT.md](docs/STATIC_MODEL_IMPORT.md).
+Native UYA TIE conversion and its current LOD policy are documented in
+[docs/UYA_STATIC_TIE_CONVERSION.md](docs/UYA_STATIC_TIE_CONVERSION.md).
 
 Build the CLI:
 

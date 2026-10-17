@@ -1,4 +1,5 @@
 using System.Numerics;
+using RatchetPs2.Core.IO.Vif;
 using RatchetPs2.Core.Textures.Png;
 
 namespace RatchetPs2.Core.Tfrags;
@@ -212,7 +213,7 @@ public static partial class TfragGltfExporter
     }
 
     private readonly record struct TfragVifState(
-        int Cycle,
+        Ps2VifCycle Cycle,
         int Mode,
         int RowX,
         int RowY,
@@ -220,7 +221,7 @@ public static partial class TfragGltfExporter
         int RowW,
         int RowCommandOffset)
     {
-        public static TfragVifState Default { get; } = new(0, 0, 0, 0, 0, 0, -1);
+        public static TfragVifState Default { get; } = new(Ps2VifCycle.OneToOne, 0, 0, 0, 0, 0, -1);
     }
 
     private sealed class TfragReferenceState

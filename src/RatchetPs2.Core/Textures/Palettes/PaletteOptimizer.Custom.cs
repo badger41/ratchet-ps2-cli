@@ -59,11 +59,36 @@ public static partial class PaletteOptimizer
         PaletteOptimizationProfile? profile = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(importedInventory);
         ArgumentNullException.ThrowIfNull(customTextures);
+        var custom = customTextures.Select(ValidateCustomInput)
+            .Select(value => new CustomTextureData(value))
+            .ToArray();
+        return Optimize(importedInventory, custom, profile, cancellationToken);
+    }
+
+    internal static JointPaletteOptimizationResult Optimize(
+        TextureInventory importedInventory,
+        IEnumerable<Rgba32TexturePaletteInput> customTextures,
+        PaletteOptimizationProfile? profile = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(customTextures);
+        var custom = customTextures.Select(ValidateRgba32Input)
+            .Select(value => new CustomTextureData(value))
+            .ToArray();
+        return Optimize(importedInventory, custom, profile, cancellationToken);
+    }
+
+    private static JointPaletteOptimizationResult Optimize(
+        TextureInventory importedInventory,
+        IReadOnlyList<CustomTextureData> customTextures,
+        PaletteOptimizationProfile? profile,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(importedInventory);
         profile ??= PaletteOptimizationProfile.Default;
         ValidateProfile(profile);
-        var custom = customTextures.Select(ValidateCustomInput)
+        var custom = customTextures
             .OrderBy(value => value.Encoding)
             .ThenBy(value => value.PaletteFormat)
             .ThenBy(value => value.PaletteOrder)
@@ -97,8 +122,7 @@ public static partial class PaletteOptimizer
         {
             cancellationToken.ThrowIfCancellationRequested();
             var compatibility = CompatibilityOf(texture);
-            var histogram = texture.Pixels.GroupBy(value => value)
-                .ToDictionary(group => group.Key, group => group.Count());
+            var histogram = texture.BuildHistogram(cancellationToken);
             var candidates = palettes
                 .Where(value => value.Compatibility == compatibility)
                 .Select(value => Evaluate(
@@ -122,7 +146,7 @@ public static partial class PaletteOptimizer
                 palettes.Add(palette);
             }
 
-            selected = selected.Materialize(texture.Pixels, cancellationToken);
+            selected = selected.Materialize(texture, cancellationToken);
             selected.Apply(texture.Key);
             assignments.Add(selected.Assignment(texture.Key));
             if (selected.MaximumSquaredError >= PaletteOptimizationProfile.MaximumError)
@@ -173,14 +197,14 @@ public static partial class PaletteOptimizer
         return input;
     }
 
-    private static Compatibility CompatibilityOf(CustomTexturePaletteInput texture) => new(
+    private static Compatibility CompatibilityOf(CustomTextureData texture) => new(
         texture.Encoding,
         texture.PaletteFormat,
         texture.PaletteOrder,
         texture.Capacity);
 
     private static CandidateEvaluation Evaluate(
-        CustomTexturePaletteInput texture,
+        CustomTextureData texture,
         IReadOnlyDictionary<TextureColor, int> histogram,
         MutablePalette palette,
         double reuseThreshold,
@@ -225,9 +249,12 @@ public static partial class PaletteOptimizer
         }
         else if (freeIndexes.Length > 0)
         {
-            var pixels = texture.Pixels.Where(remaining.Contains).ToArray();
-            additions = AlphaAwareKMeans.Quantize(pixels, freeIndexes.Length, cancellationToken)
-                .Palette.Distinct()
+            var remainingHistogram = histogram
+                .Where(value => remaining.Contains(value.Key))
+                .ToDictionary();
+            additions = AlphaAwareKMeans.QuantizePalette(
+                    remainingHistogram, freeIndexes.Length, cancellationToken)
+                .Distinct()
                 .Where(color => entries.Values.All(entry => entry.Color != color))
                 .Take(freeIndexes.Length)
                 .ToArray();
@@ -268,7 +295,7 @@ public static partial class PaletteOptimizer
             resolved.Values.Distinct().Count(),
             reusedImportedColors,
             reusedImportedTexels,
-            totalError / texture.Pixels.Count,
+            totalError / texture.PixelCount,
             maximumError);
     }
 
@@ -359,17 +386,9 @@ public static partial class PaletteOptimizer
             0, 0, 0, 0, double.PositiveInfinity, double.PositiveInfinity);
 
         public CandidateEvaluation Materialize(
-            IReadOnlyList<TextureColor> pixels,
+            CustomTextureData texture,
             CancellationToken cancellationToken)
-        {
-            var indices = new int[pixels.Count];
-            for (var index = 0; index < pixels.Count; index++)
-            {
-                if ((index & 0xffff) == 0) cancellationToken.ThrowIfCancellationRequested();
-                indices[index] = ResolvedIndices[pixels[index]];
-            }
-            return this with { PixelIndices = indices };
-        }
+            => this with { PixelIndices = texture.Materialize(ResolvedIndices, cancellationToken) };
 
         public void Apply(string textureKey)
         {

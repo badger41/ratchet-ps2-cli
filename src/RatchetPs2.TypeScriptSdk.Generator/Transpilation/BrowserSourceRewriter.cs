@@ -297,6 +297,18 @@ internal sealed class BrowserSourceRewriter(SemanticModel model, HashSet<Microso
         if (operation is { } call)
         {
             var method = call.TargetMethod;
+            if (method.ContainingType.ToDisplayString()
+                    == "RatchetPs2.Core.Textures.Png.PngTextureMetadataReader"
+                && method.Name == "InflateRows"
+                && node.ArgumentList.Arguments is [var compressedRows, var expectedRows])
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.ParseExpression(
+                        "global::RatchetPs2.JavaScript.BrowserCompression.UnzlibBounded"),
+                    SyntaxFactory.ArgumentList(SyntaxFactory.SeparatedList(new[]
+                    {
+                        SyntaxFactory.Argument((ExpressionSyntax)Visit(compressedRows.Expression)!),
+                        SyntaxFactory.Argument((ExpressionSyntax)Visit(expectedRows.Expression)!)
+                    }))).WithTriviaFrom(node);
             if (method.ContainingType.ToDisplayString() == "System.Buffers.Binary.BinaryPrimitives" &&
                 method.Name is "ReadInt16LittleEndian" or "ReadUInt16LittleEndian" or
                     "ReadInt32LittleEndian" or "ReadUInt32LittleEndian" &&

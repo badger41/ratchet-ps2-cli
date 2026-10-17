@@ -176,6 +176,7 @@ internal static class TieGltfGeometryBuilder
         IReadOnlyList<float> ambientIndices,
         IReadOnlyList<float> indexAmbientIndices,
         IReadOnlyList<PacketIndexGroup> packetIndexGroups,
+        bool preserveRepeatedTexCoordTiles,
         IReadOnlyDictionary<int, TextureSize>? textureSizes)
     {
         ArgumentNullException.ThrowIfNull(shaders);
@@ -248,7 +249,8 @@ internal static class TieGltfGeometryBuilder
                     texCoords[cIndex],
                     textureSize,
                     repeatU,
-                    repeatV);
+                    repeatV,
+                    preserveRepeatedTexCoordTiles: preserveRepeatedTexCoordTiles);
                 var adjustedMultipassTexCoords = includeMultipassTexCoords
                     ? AdjustMultipassTriangleTexCoords(
                         GetMultipassTexCoord(aIndex),

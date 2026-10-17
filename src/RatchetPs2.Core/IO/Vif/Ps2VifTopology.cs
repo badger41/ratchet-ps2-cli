@@ -25,6 +25,7 @@ public static class Ps2VifTopology
         }
 
         var available = Enumerable.Repeat(true, triangles.Count).ToArray();
+        var continuationIndex = new ContinuationIndex(triangles);
         var remaining = triangles.Count;
         var tokens = new List<byte>(triangleIndices.Count);
         while (remaining > 0)
@@ -39,7 +40,8 @@ public static class Ps2VifTopology
 
                 for (var rotation = 0; rotation < 3; rotation++)
                 {
-                    var candidate = BuildGreedyRestartStrip(triangles, available, triangleIndex, rotation);
+                    var candidate = BuildGreedyRestartStrip(
+                        triangles, available, triangleIndex, rotation, continuationIndex);
                     if (best is null
                         || candidate.TriangleIndices.Count > best.TriangleIndices.Count
                         || (candidate.TriangleIndices.Count == best.TriangleIndices.Count
@@ -190,7 +192,48 @@ public static class Ps2VifTopology
         IReadOnlyList<TopologyTriangle> triangles,
         IReadOnlyList<bool> available,
         int seedTriangleIndex,
-        int seedRotation)
+        int seedRotation) => BuildGreedyRestartStrip(
+            triangles,
+            available,
+            seedTriangleIndex,
+            seedRotation,
+            new ContinuationIndex(triangles));
+
+    public static bool TryBuildSingleRestartStrip(
+        IReadOnlyList<TopologyTriangle> triangles,
+        out Ps2VifTopologyStripBuild? build)
+    {
+        ArgumentNullException.ThrowIfNull(triangles);
+        if (triangles.Count == 0)
+        {
+            build = new([], []);
+            return true;
+        }
+
+        var available = Enumerable.Repeat(true, triangles.Count).ToArray();
+        var continuationIndex = new ContinuationIndex(triangles);
+        for (var triangleIndex = 0; triangleIndex < triangles.Count; triangleIndex++)
+        {
+            for (var rotation = 0; rotation < 3; rotation++)
+            {
+                var candidate = BuildGreedyRestartStrip(
+                    triangles, available, triangleIndex, rotation, continuationIndex);
+                if (candidate.TriangleIndices.Count != triangles.Count) continue;
+                build = candidate;
+                return true;
+            }
+        }
+
+        build = null;
+        return false;
+    }
+
+    private static Ps2VifTopologyStripBuild BuildGreedyRestartStrip(
+        IReadOnlyList<TopologyTriangle> triangles,
+        IReadOnlyList<bool> available,
+        int seedTriangleIndex,
+        int seedRotation,
+        ContinuationIndex continuationIndex)
     {
         var localAvailable = available.ToArray();
         localAvailable[seedTriangleIndex] = false;
@@ -212,31 +255,24 @@ public static class Ps2VifTopology
             var bestTriangleIndex = -1;
             uint bestNextVertex = 0;
             var bestContinuationCount = -1;
-            for (var triangleIndex = 0; triangleIndex < triangles.Count; triangleIndex++)
+            foreach (var continuation in continuationIndex.Get(currentStrip))
             {
+                var triangleIndex = continuation.TriangleIndex;
                 if (!localAvailable[triangleIndex])
                 {
                     continue;
                 }
 
-                if (!TryFindAppendableTriangleRotation(
-                    currentStrip,
-                    triangles[triangleIndex],
-                    out _,
-                    out var nextVertex))
-                {
-                    continue;
-                }
-
-                var continuationStrip = new List<uint>(currentStrip) { nextVertex };
-                var continuationCount = CountAppendableTriangles(continuationStrip, triangles, localAvailable, triangleIndex);
+                var continuationCount = continuationIndex.GetAfterAppend(currentStrip, continuation.NextVertex)
+                    .Count(candidate => candidate.TriangleIndex != triangleIndex
+                        && localAvailable[candidate.TriangleIndex]);
                 if (continuationCount <= bestContinuationCount)
                 {
                     continue;
                 }
 
                 bestTriangleIndex = triangleIndex;
-                bestNextVertex = nextVertex;
+                bestNextVertex = continuation.NextVertex;
                 bestContinuationCount = continuationCount;
                 found = true;
             }
@@ -251,29 +287,6 @@ public static class Ps2VifTopology
         }
 
         return new Ps2VifTopologyStripBuild(tokens, usedTriangleIndices);
-    }
-
-    private static int CountAppendableTriangles(
-        IReadOnlyList<uint> currentStrip,
-        IReadOnlyList<TopologyTriangle> triangles,
-        IReadOnlyList<bool> available,
-        int excludingTriangleIndex)
-    {
-        var count = 0;
-        for (var triangleIndex = 0; triangleIndex < triangles.Count; triangleIndex++)
-        {
-            if (triangleIndex == excludingTriangleIndex || !available[triangleIndex])
-            {
-                continue;
-            }
-
-            if (TryFindAppendableTriangleRotation(currentStrip, triangles[triangleIndex], out _, out _))
-            {
-                count++;
-            }
-        }
-
-        return count;
     }
 
     public static bool TryFindAppendableTriangleRotation(
@@ -310,5 +323,42 @@ public static class Ps2VifTopology
         return remainder == 0
             ? value
             : value + alignment - remainder;
+    }
+
+    private sealed class ContinuationIndex
+    {
+        private readonly TriangleDirectedEdgeIndex _edges;
+
+        public ContinuationIndex(IReadOnlyList<TopologyTriangle> triangles)
+        {
+            var indices = new uint[checked(triangles.Count * 3)];
+            for (var triangleIndex = 0; triangleIndex < triangles.Count; triangleIndex++)
+            {
+                var triangle = triangles[triangleIndex];
+                var offset = triangleIndex * 3;
+                indices[offset] = triangle.A;
+                indices[offset + 1] = triangle.B;
+                indices[offset + 2] = triangle.C;
+            }
+            _edges = new(indices);
+        }
+
+        public IReadOnlyList<TriangleEdgeContinuation> Get(IReadOnlyList<uint> currentStrip)
+        {
+            var nextFlip = ((currentStrip.Count - 2) & 1) == 1;
+            return nextFlip
+                ? _edges.Get(currentStrip[^1], currentStrip[^2])
+                : _edges.Get(currentStrip[^2], currentStrip[^1]);
+        }
+
+        public IReadOnlyList<TriangleEdgeContinuation> GetAfterAppend(
+            IReadOnlyList<uint> currentStrip,
+            uint nextVertex)
+        {
+            var nextFlip = ((currentStrip.Count - 1) & 1) == 1;
+            return nextFlip
+                ? _edges.Get(nextVertex, currentStrip[^1])
+                : _edges.Get(currentStrip[^1], nextVertex);
+        }
     }
 }

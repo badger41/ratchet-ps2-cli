@@ -1,5 +1,6 @@
 using System.Numerics;
 using RatchetPs2.Core.IO;
+using RatchetPs2.Core.IO.Vif;
 
 namespace RatchetPs2.Core.Tfrags;
 
@@ -86,13 +87,14 @@ public static partial class TfragGltfExporter
         TfragLodSegment segment)
     {
         var packets = new List<TfragRawUnpackPacket>();
+        var cycle = Ps2VifCycle.OneToOne;
         var endOffset = segment.Offset + segment.Length;
         for (var offset = segment.Offset; offset + 4 <= endOffset;)
         {
             var command = bytes[offset + 3] & 0x7F;
             var rowCount = bytes[offset + 2];
             var immediate = BinarySpanReader.ReadUInt16LittleEndian(bytes, offset);
-            var payloadLength = GetVifUnpackPayloadLength(command, rowCount);
+            var payloadLength = GetVifUnpackPayloadLength(command, rowCount, cycle);
             if (payloadLength is null)
             {
                 var commandPayloadLength = GetVifCommandPayloadLength(command, immediate, rowCount);
@@ -103,6 +105,10 @@ public static partial class TfragGltfExporter
                     continue;
                 }
 
+                if (command == VifCommandStcycl)
+                {
+                    cycle = Ps2VifCycle.FromImmediate(immediate);
+                }
                 offset = commandPayloadOffset + commandPayloadLength;
                 continue;
             }

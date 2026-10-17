@@ -1,6 +1,7 @@
 using System.Numerics;
 using RatchetPs2.Core.Gltf;
 using RatchetPs2.Core.IO;
+using RatchetPs2.Core.IO.Vif;
 
 namespace RatchetPs2.Core.Tfrags;
 
@@ -11,9 +12,7 @@ public static partial class TfragGltfExporter
     private const int VifCommandUnpackV4_8 = 0x6E;
     private const int VifCommandStcycl = 0x01;
     private const int VifCommandStmod = 0x05;
-    private const int VifCommandStmask = 0x20;
     private const int VifCommandStrow = 0x30;
-    private const int VifCommandStcol = 0x31;
 
     private static TfragLodRecoveryLayout BuildRuntimeLodRecoveryLayout(TfragChunk chunk, int lodIndex)
     {
@@ -91,7 +90,7 @@ public static partial class TfragGltfExporter
             var command = bytes[offset + 3] & 0x7F;
             var rowCount = bytes[offset + 2];
             var immediate = BinarySpanReader.ReadUInt16LittleEndian(bytes, offset);
-            var payloadLength = GetVifUnpackPayloadLength(command, rowCount);
+            var payloadLength = GetVifUnpackPayloadLength(command, rowCount, vifState.Cycle);
             if (payloadLength is null)
             {
                 var commandPayloadLength = GetVifCommandPayloadLength(command, immediate, rowCount);
@@ -187,41 +186,19 @@ public static partial class TfragGltfExporter
         }
     }
 
-    private static int? GetVifUnpackPayloadLength(int command, int rowCount)
+    private static int? GetVifUnpackPayloadLength(
+        int command,
+        int rowCount,
+        Ps2VifCycle cycle)
     {
-        if (command is < 0x60 or > 0x7F)
-        {
-            return null;
-        }
-
-        var unpackFormat = command & 0x0F;
-        var componentCount = ((unpackFormat >> 2) & 0x03) + 1;
-        var valueSizeBytes = (unpackFormat & 0x03) switch
-        {
-            0 => 4,
-            1 => 2,
-            2 => 1,
-            // V4_5 packs one 16-bit value per row. Other *_5 forms are not valid VIF unpack formats.
-            3 when componentCount == 4 => 2,
-            _ => 0
-        };
-        if (valueSizeBytes == 0)
-        {
-            return null;
-        }
-
-        var effectiveRowCount = rowCount == 0 ? 256 : rowCount;
-        return checked(effectiveRowCount * componentCount * valueSizeBytes);
+        return Ps2VifPacket.TryGetUnpackPayloadLength(command, rowCount, cycle, out var payloadLength)
+            ? payloadLength
+            : null;
     }
 
     private static int GetVifCommandPayloadLength(int command, ushort immediate, int rowCount)
     {
-        return command switch
-        {
-            VifCommandStmask => 4,
-            VifCommandStrow or VifCommandStcol => 16,
-            _ => 0
-        };
+        return Ps2VifPacket.GetPayloadLength(command, immediate, rowCount);
     }
 
     private static void ApplyVifCommand(
@@ -234,7 +211,7 @@ public static partial class TfragGltfExporter
         switch (command)
         {
             case VifCommandStcycl:
-                state = state with { Cycle = immediate };
+                state = state with { Cycle = Ps2VifCycle.FromImmediate(immediate) };
                 break;
             case VifCommandStmod:
                 state = state with { Mode = immediate & 0x03 };

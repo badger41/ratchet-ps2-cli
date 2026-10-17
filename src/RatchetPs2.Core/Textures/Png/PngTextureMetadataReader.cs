@@ -56,16 +56,11 @@ public static class PngTextureMetadataReader
             throw new InvalidDataException("Interlaced PNG images are not supported for RGBA decoding.");
         }
 
-        var rows = InflateRows(png.Idat);
         var bitsPerPixel = GetBitsPerPixel(png.Header);
         var rowByteCount = checked((png.Header.Width * bitsPerPixel + 7) / 8);
         var bytesPerPixel = Math.Max(1, (bitsPerPixel + 7) / 8);
         var expectedLength = checked(png.Header.Height * (rowByteCount + 1));
-        if (rows.Length < expectedLength)
-        {
-            throw new InvalidDataException(
-                $"PNG pixel payload is too short. Expected at least {expectedLength} byte(s), got {rows.Length}.");
-        }
+        var rows = InflateRows(png.Idat, expectedLength);
 
         var pixels = new byte[checked(png.Header.Width * png.Header.Height * 4)];
         var row = new byte[rowByteCount];
@@ -190,16 +185,11 @@ public static class PngTextureMetadataReader
                 : ReadTrnsAlphaFallback(header, trns);
         }
 
-        var rows = InflateRows(idat);
         var bitsPerPixel = GetBitsPerPixel(header);
         var rowByteCount = checked((header.Width * bitsPerPixel + 7) / 8);
         var bytesPerPixel = Math.Max(1, (bitsPerPixel + 7) / 8);
         var expectedLength = checked(header.Height * (rowByteCount + 1));
-        if (rows.Length < expectedLength)
-        {
-            throw new InvalidDataException(
-                $"PNG pixel payload is too short. Expected at least {expectedLength} byte(s), got {rows.Length}.");
-        }
+        var rows = InflateRows(idat, expectedLength);
 
         byte minAlpha = 255;
         byte maxAlpha = 0;
@@ -248,13 +238,24 @@ public static class PngTextureMetadataReader
             || (header.ColorType is 0 or 2 or 3 && trns is { Length: > 0 });
     }
 
-    private static byte[] InflateRows(byte[] idat)
+    private static byte[] InflateRows(byte[] idat, int expectedLength)
     {
         using var compressed = new MemoryStream(idat);
         using var zlib = new ZLibStream(compressed, CompressionMode.Decompress);
-        using var inflated = new MemoryStream();
-        zlib.CopyTo(inflated);
-        return inflated.ToArray();
+        var rows = new byte[expectedLength];
+        try
+        {
+            zlib.ReadExactly(rows);
+        }
+        catch (EndOfStreamException exception)
+        {
+            throw new InvalidDataException(
+                $"PNG pixel payload is shorter than the expected {expectedLength} byte(s).", exception);
+        }
+        if (zlib.ReadByte() != -1)
+            throw new InvalidDataException(
+                $"PNG pixel payload exceeds the expected {expectedLength} byte(s).");
+        return rows;
     }
 
     private static void UnfilterRow(byte[] row, byte[] previousRow, int bytesPerPixel, byte filter)

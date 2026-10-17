@@ -27,6 +27,11 @@ public sealed class TieGltfExportOptions
     public bool IncludeDiagnostics { get; init; } = true;
     /// <summary>Writes compact JSON and, with runtime-only metadata, merges render-equivalent packet primitives.</summary>
     public bool Minify { get; init; }
+    /// <summary>
+    /// Keeps authored integer tile offsets on repeated UVs instead of reconstructing shorter
+    /// per-triangle spans. Use this for TIEs generated from canonical glTF geometry.
+    /// </summary>
+    public bool PreserveRepeatedTexCoordTiles { get; init; }
     public GltfExportMetadataMode MetadataMode { get; init; } = GltfExportMetadataMode.Full;
     public Action<string, string, double, string?>? TimingSink { get; init; }
 }
@@ -189,6 +194,7 @@ public static class TieGltfExporter
             ambientIndexResult.Indices,
             ambientIndexResult.IndexIndices,
             packetGroupResult.PacketIndexGroups,
+            options.PreserveRepeatedTexCoordTiles,
             options.ExternalTextureSizes);
         AddTiming(
             options,

@@ -15,9 +15,16 @@ public static partial class GltfTexCoordUtils
         TextureSize? textureSize,
         bool repeatU,
         bool repeatV,
-        bool normalizeClampedAxes = false)
+        bool normalizeClampedAxes = false,
+        bool preserveRepeatedTexCoordTiles = false)
     {
-        var adjustedTexCoords = UnwrapTriangleTexCoords(a, b, c, repeatU, repeatV, normalizeClampedAxes);
+        var adjustedTexCoords = UnwrapTriangleTexCoords(
+            a,
+            b,
+            c,
+            repeatU && !preserveRepeatedTexCoordTiles,
+            repeatV && !preserveRepeatedTexCoordTiles,
+            normalizeClampedAxes);
         return textureSize is { } resolvedTextureSize
             ? BiasTriangleTextureTileEdges(adjustedTexCoords, resolvedTextureSize, repeatU, repeatV)
             : adjustedTexCoords;

@@ -21,6 +21,7 @@ for (const check of [
   'check-io.mjs',
   'check-json.mjs',
   'check-json-serialization.mjs',
+  'check-static-model-import.mjs',
   'check-bcl.mjs',
   'check-discovery.mjs'
 ]) run(process.execPath, [test(check), dotnet]);

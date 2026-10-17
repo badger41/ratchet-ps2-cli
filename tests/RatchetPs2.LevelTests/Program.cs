@@ -39,6 +39,30 @@ using RatchetPs2.Games.UYA.Hud;
 using RatchetPs2.Games.UYA.Level;
 using RatchetPs2.Sdk;
 
+if (args is ["--static-model-gltf"])
+{
+    StaticModelGltfImporterTests.Run();
+    return;
+}
+
+if (args is ["--uya-static-tie"])
+{
+    UyaStaticTieComposerTests.Run();
+    return;
+}
+
+if (args is ["--vif-codec"])
+{
+    Ps2VifPacketTests.Run();
+    return;
+}
+
+if (args is ["--vif-topology"])
+{
+    Ps2VifTopologyTests.Run();
+    return;
+}
+
 if (args is ["--dl-boot-iso"])
 {
     DlBootIsoQualification.RunUnitTests();
@@ -188,6 +212,10 @@ if (args.Contains("--uya-inventory", StringComparer.Ordinal))
 
 DlExecutableQualification.RunUnitTests();
 DlBootIsoQualification.RunUnitTests();
+StaticModelGltfImporterTests.Run();
+UyaStaticTieComposerTests.Run();
+Ps2VifPacketTests.Run();
+Ps2VifTopologyTests.Run();
 ValidateLevelInfoLookup();
 ValidateLevelWadParsing();
 ValidateArmorWadParsing();

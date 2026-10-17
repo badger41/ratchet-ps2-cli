@@ -16,7 +16,8 @@ internal static class UyaFrontendAssetPackageBuilder
     public static PackedFilePackage Build(
         FrontendAssetKind kind,
         byte[] modelBytes,
-        IReadOnlyList<FrontendAssetTexture> textures)
+        IReadOnlyList<FrontendAssetTexture> textures,
+        bool preserveTieRepeatedTexCoordTiles = false)
     {
         ArgumentNullException.ThrowIfNull(modelBytes);
         ArgumentNullException.ThrowIfNull(textures);
@@ -56,7 +57,7 @@ internal static class UyaFrontendAssetPackageBuilder
         var (gltf, buffer) = kind switch
         {
             FrontendAssetKind.Moby => ExportMoby(input, uris, sizes, alpha),
-            FrontendAssetKind.Tie => ExportTie(input, uris, sizes, alpha),
+            FrontendAssetKind.Tie => ExportTie(input, uris, sizes, alpha, preserveTieRepeatedTexCoordTiles),
             FrontendAssetKind.Shrub => ExportShrub(input, uris, sizes, alpha, billboard),
             _ => throw new ArgumentOutOfRangeException(nameof(kind)),
         };
@@ -87,7 +88,8 @@ internal static class UyaFrontendAssetPackageBuilder
         Stream input,
         IReadOnlyDictionary<int, string> uris,
         IReadOnlyDictionary<int, TextureSize> sizes,
-        IReadOnlyDictionary<int, TextureAlphaInfo> alpha)
+        IReadOnlyDictionary<int, TextureAlphaInfo> alpha,
+        bool preserveRepeatedTexCoordTiles)
     {
         var export = TieGltfExporter.Export(input, "model.gltf", new()
         {
@@ -96,6 +98,7 @@ internal static class UyaFrontendAssetPackageBuilder
             ExternalTextureUris = uris,
             ExternalTextureSizes = sizes,
             ExternalTextureAlpha = alpha,
+            PreserveRepeatedTexCoordTiles = preserveRepeatedTexCoordTiles,
             IncludeDiagnostics = false,
             Minify = true,
             MetadataMode = GltfExportMetadataMode.RuntimeOnly,
