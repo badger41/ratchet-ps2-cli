@@ -1,6 +1,7 @@
 using RatchetPs2.Core.Games;
 using RatchetPs2.Core.Wad.Models;
 using RatchetPs2.Games.DL.Builders;
+using RatchetPs2.Games.DL.Level;
 using RatchetPs2.Games.GC.Builders;
 using RatchetPs2.Games.RC1.Builders;
 using RatchetPs2.Games.UYA.Builders;
@@ -63,5 +64,34 @@ public static class FrontendMapPackageBuilder
             GameId.UYA => UyaFrontendMapPackageBuilder.BuildCustomMapZipPart(zipBytes, assetGroup),
             _ => throw new NotSupportedException($"Custom map ZIP packages are not supported for {gameId}."),
         };
+    }
+
+    public static PackedFilePackage BuildAssetPackage(
+        GameId gameId,
+        int levelIndex,
+        byte[] headerBytes,
+        byte[] paletteBytes,
+        byte[] assetWadBytes,
+        IReadOnlyDictionary<int, byte[]> chunkWads,
+        FrontendMapAssetGroup assetGroup)
+    {
+        ArgumentNullException.ThrowIfNull(headerBytes);
+        ArgumentNullException.ThrowIfNull(paletteBytes);
+        ArgumentNullException.ThrowIfNull(assetWadBytes);
+        ArgumentNullException.ThrowIfNull(chunkWads);
+        var options = DlLevelWadRenderPackageBuildOptions.Browser with
+        {
+            PreserveTfragChunkNodes = assetGroup is FrontendMapAssetGroup.All
+                or FrontendMapAssetGroup.Terrain,
+        };
+        return PackedFilePackageBuilder.Pack(DlLevelWadRenderPackageBuilder.BuildAssetFiles(
+            gameId,
+            levelIndex,
+            headerBytes,
+            paletteBytes,
+            assetWadBytes,
+            options,
+            chunkWads,
+            assetGroup: assetGroup));
     }
 }

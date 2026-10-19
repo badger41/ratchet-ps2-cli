@@ -242,6 +242,17 @@ internal static class UyaTfragTerrainComposer
     }
 
     internal static bool TrianglesEquivalent(TfragPiecePrimitive expected, TfragPiecePrimitive actual)
+        => TrianglesEquivalent(expected, actual, allowReversedWinding: false);
+
+    internal static bool TrianglesEquivalentIgnoringWinding(
+        TfragPiecePrimitive expected,
+        TfragPiecePrimitive actual) =>
+        TrianglesEquivalent(expected, actual, allowReversedWinding: true);
+
+    private static bool TrianglesEquivalent(
+        TfragPiecePrimitive expected,
+        TfragPiecePrimitive actual,
+        bool allowReversedWinding)
     {
         if (expected.Indices.Count != actual.Indices.Count
             || expected.Indices.Count % 3 != 0)
@@ -255,7 +266,8 @@ internal static class UyaTfragTerrainComposer
             {
                 var triangle = actualIndex / 3;
                 if (matched[triangle]
-                    || !TriangleEquivalent(expected, expectedIndex, actual, actualIndex)) continue;
+                    || !TriangleEquivalent(
+                        expected, expectedIndex, actual, actualIndex, allowReversedWinding)) continue;
                 matched[triangle] = true;
                 found = true;
                 break;
@@ -269,11 +281,14 @@ internal static class UyaTfragTerrainComposer
         TfragPiecePrimitive expected,
         int expectedIndex,
         TfragPiecePrimitive actual,
-        int actualIndex)
+        int actualIndex,
+        bool allowReversedWinding)
     {
         for (var start = 0; start < 3; start++)
         {
-            if (TriangleOrderEquivalent(expected, expectedIndex, actual, actualIndex, start))
+            if (TriangleOrderEquivalent(expected, expectedIndex, actual, actualIndex, start, 1)
+                || allowReversedWinding
+                && TriangleOrderEquivalent(expected, expectedIndex, actual, actualIndex, start, -1))
                 return true;
         }
         return false;
@@ -284,13 +299,14 @@ internal static class UyaTfragTerrainComposer
         int expectedIndex,
         TfragPiecePrimitive actual,
         int actualIndex,
-        int actualStart)
+        int actualStart,
+        int actualStep)
     {
         for (var vertex = 0; vertex < 3; vertex++)
         {
             var leftIndex = checked((int)expected.Indices[expectedIndex + vertex]);
             var rightIndex = checked((int)actual.Indices[
-                actualIndex + (actualStart + vertex) % 3]);
+                actualIndex + (actualStart + vertex * actualStep + 6) % 3]);
             if (leftIndex < 0 || leftIndex >= expected.Vertices.Count
                 || rightIndex < 0 || rightIndex >= actual.Vertices.Count
                 || !VertexEquivalent(expected.Vertices[leftIndex], actual.Vertices[rightIndex]))

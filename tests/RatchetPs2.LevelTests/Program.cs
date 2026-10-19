@@ -1383,6 +1383,17 @@ static void ValidateUyaLevelAssetComposer()
         && composed.AssetWadBytes.AsSpan(moby.ModelOffset, 0x20)
             .SequenceEqual(Enumerable.Repeat((byte)0x44, 0x20).ToArray()),
         "UYA asset composer should preserve untouched payloads around replacements");
+    var indirectHeader = header.ToArray();
+    WriteInt32(indirectHeader, 0xa0, 0x70);
+    var indirectAssets = assets.ToArray();
+    indirectAssets.AsSpan(0x70, 0x10).Fill(0x55);
+    var indirectComposition = LevelAssetComposer.ComposeAssetWad(
+        GameId.UYA, indirectHeader, indirectAssets, new(Terrain: terrain, Collision: collision));
+    var indirectComposedHeader = LevelAssetReader.ReadHeader(indirectComposition.HeaderBytes);
+    Expect(indirectComposedHeader.Unused3 == 0xa0
+        && indirectComposition.AssetWadBytes.AsSpan(indirectComposedHeader.Unused3, 0x10)
+            .SequenceEqual(Enumerable.Repeat((byte)0x55, 0x10).ToArray()),
+        "UYA asset composition should relocate the preserved pre-model asset pointer");
     var unchanged = LevelAssetComposer.ComposeAssetWad(GameId.UYA, header, assets, new());
     Expect(unchanged.HeaderBytes.SequenceEqual(header) && unchanged.AssetWadBytes.SequenceEqual(assets),
         "UYA asset composer no-op should remain byte-identical");
@@ -1962,6 +1973,11 @@ static void ValidateUyaStaticAssetComposition()
     var pixels = Enumerable.Range(0, 16).Select(index => (byte)(index % 2 == 0 ? 8 : 16)).ToArray();
     var sourcePif = PifWriter.Write(PifWriter.CreateIndexed8(
         4, 4, palette, pixels, [[8, 16, 8, 16], [16]]));
+    var appendedPalette = palette.ToArray();
+    new byte[] { 90, 100, 110, 128 }.CopyTo(appendedPalette, 32 * 4);
+    var appendedPif = PifWriter.Write(PifWriter.CreateIndexed8(
+        4, 4, appendedPalette, Enumerable.Repeat((byte)32, 16).ToArray(),
+        [Enumerable.Repeat((byte)32, 4).ToArray(), new byte[] { 32 }]));
 
     var sourceInventory = TextureInventoryBuilder.Build([
         new("writer", TextureAssetFamily.Tie, 1, 0, TextureRole.Material, sourcePif),
@@ -1973,6 +1989,83 @@ static void ValidateUyaStaticAssetComposition()
         sourceOptimization.Palettes.Single());
     Expect(DecodedPifColors(sourcePif).SequenceEqual(DecodedPifColors(rewrittenPif)),
         "UYA optimized PIF writing should preserve every base and mip texel exactly");
+
+    var terrainTexture = new TerrainTextureInput("terrain-a", sourcePif);
+    var terrainComposed = StaticAssetComposer.Compose(
+        GameId.UYA, new byte[0xc0], new byte[0x10], [], [], [terrainTexture]);
+    var terrainHeader = LevelAssetReader.ReadHeader(terrainComposed.HeaderBytes);
+    var terrainDefinition = LevelAssetReader.ReadTextureDefinitions(
+        terrainComposed.HeaderBytes, terrainHeader.TerrainTextureOffset, terrainHeader.TerrainTextureCount).Single();
+    var terrainPif = LevelAssetReader.BuildAssetTexture(
+        "terrain", 0, terrainDefinition, terrainComposed.PaletteBytes,
+        terrainComposed.AssetWadBytes, terrainHeader.TextureDataOffset, isSwizzled: false).PifBytes;
+    Expect(terrainComposed.TerrainTextures is [{ AssetId: "terrain-a", TextureId: 0 }]
+        && DecodedPifColors(sourcePif).SequenceEqual(DecodedPifColors(terrainPif)),
+        "UYA static composition should allocate a terrain texture and preserve every mip texel");
+    var paddedTerrainPalette = new byte[terrainComposed.PaletteBytes.Length + 0x2000];
+    terrainComposed.PaletteBytes.CopyTo(paddedTerrainPalette, 0);
+    paddedTerrainPalette.AsSpan(terrainComposed.PaletteBytes.Length).Fill(0x5a);
+    var stashSourceOffset = terrainComposed.PaletteBytes.Length + 0x1000;
+    var sourceMipmapTableOffset = (terrainComposed.HeaderBytes.Length + 0xf) & ~0xf;
+    var sourceHeaderWithStash = new byte[
+        sourceMipmapTableOffset + (terrainHeader.GsRamCount + 1) * 0x10];
+    terrainComposed.HeaderBytes.CopyTo(sourceHeaderWithStash, 0);
+    terrainComposed.HeaderBytes.AsSpan(
+            terrainHeader.GsRamOffset, terrainHeader.GsRamCount * 0x10)
+        .CopyTo(sourceHeaderWithStash.AsSpan(sourceMipmapTableOffset));
+    var stashRecordOffset = sourceMipmapTableOffset + terrainHeader.GsRamCount * 0x10;
+    WriteInt32(sourceHeaderWithStash, stashRecordOffset, 0x13);
+    WriteInt16(sourceHeaderWithStash, stashRecordOffset + 4, 4);
+    WriteInt16(sourceHeaderWithStash, stashRecordOffset + 6, 4);
+    WriteInt32(sourceHeaderWithStash, stashRecordOffset + 8, stashSourceOffset);
+    WriteInt32(sourceHeaderWithStash, stashRecordOffset + 12, 0);
+    WriteInt32(sourceHeaderWithStash, 0x04, sourceMipmapTableOffset);
+    WriteInt32(sourceHeaderWithStash, 0x84, 1);
+    var terrainAppended = StaticAssetComposer.AppendTerrainTextures(
+        GameId.UYA,
+        sourceHeaderWithStash,
+        terrainComposed.AssetWadBytes,
+        paddedTerrainPalette,
+        [new("terrain-b", appendedPif)]);
+    var terrainAppendedHeader = LevelAssetReader.ReadHeader(terrainAppended.HeaderBytes);
+    var appendedTerrainDefinitions = LevelAssetReader.ReadTextureDefinitions(
+        terrainAppended.HeaderBytes,
+        terrainAppendedHeader.TerrainTextureOffset,
+        terrainAppendedHeader.TerrainTextureCount);
+    var appendedMipmaps = LevelAssetReader.ReadMipmapDefinitions(
+        terrainAppended.HeaderBytes,
+        terrainAppendedHeader.GsRamOffset,
+        terrainAppendedHeader.GsRamCount + terrainAppendedHeader.ExtraMipmapCount);
+    var appendedPrimaryMipmaps = appendedMipmaps.Take(terrainAppendedHeader.GsRamCount).ToArray();
+    var relocatedStash = appendedMipmaps.Skip(terrainAppendedHeader.GsRamCount).Single();
+    var retainedTerrainPif = LevelAssetReader.BuildAssetTexture(
+        "terrain-a", 0, appendedTerrainDefinitions[0], terrainAppended.PaletteBytes,
+        terrainAppended.AssetWadBytes, terrainAppendedHeader.TextureDataOffset,
+        isSwizzled: false).PifBytes;
+    var appendedDefinition = appendedTerrainDefinitions[1];
+    var appendedPaletteRecord = appendedPrimaryMipmaps.Single(value =>
+        value.TextureFormat == 0 && value.Offset2 == appendedDefinition.PaletteId * 0x100);
+    var appendedMipRecord = appendedPrimaryMipmaps.Single(value =>
+        value.TextureFormat == 0x13 && value.Offset2 == appendedDefinition.MipmapPaletteId * 0x100);
+    var appendedTerrainPif = LevelAssetReader.BuildAssetTexture(
+        "terrain-b", 1, appendedDefinition, terrainAppended.PaletteBytes,
+        terrainAppended.AssetWadBytes, terrainAppendedHeader.TextureDataOffset,
+        isSwizzled: false).PifBytes;
+    Expect(terrainAppendedHeader.TerrainTextureCount == 2
+        && terrainAppended.TerrainTextures is [{ AssetId: "terrain-b", TextureId: 1 }]
+        && terrainAppended.PaletteBytes.AsSpan(0, terrainComposed.PaletteBytes.Length)
+            .SequenceEqual(terrainComposed.PaletteBytes)
+        && appendedPaletteRecord.Offset1 >= terrainComposed.PaletteBytes.Length
+        && appendedPaletteRecord.Offset1 < paddedTerrainPalette.Length
+        && appendedPaletteRecord.Offset1 == appendedPaletteRecord.Offset2
+        && appendedMipRecord.Offset1 == appendedMipRecord.Offset2
+        && relocatedStash.Offset1 > appendedMipRecord.Offset1
+        && relocatedStash.Offset2 == 0
+        && terrainAppended.PaletteBytes.AsSpan(relocatedStash.Offset1, 16)
+            .SequenceEqual(Enumerable.Repeat((byte)0x5a, 16).ToArray())
+        && DecodedPifColors(sourcePif).SequenceEqual(DecodedPifColors(retainedTerrainPif))
+        && DecodedPifColors(appendedPif).SequenceEqual(DecodedPifColors(appendedTerrainPif)),
+        "UYA static composition should keep primary palette sources at their GS destinations");
 
     var inputs = new[]
     {
@@ -1996,6 +2089,66 @@ static void ValidateUyaStaticAssetComposition()
         && header is { MobyTextureCount: 1, TieTextureCount: 1, ShrubTextureCount: 1 }
         && composed.Optimization.Palettes.Count == 1,
         "UYA static composition should install all selected classes and share their exact palette");
+    var terrainOnlyAppend = StaticAssetComposer.AppendTerrainTextures(
+        GameId.UYA, composed.HeaderBytes, composed.AssetWadBytes, composed.PaletteBytes,
+        [new("terrain-c", appendedPif)]);
+    var terrainOnlyHeader = LevelAssetReader.ReadHeader(terrainOnlyAppend.HeaderBytes);
+    var sourceMobyDefinitions = LevelAssetReader.ReadModelDefinitions(
+        composed.HeaderBytes, header.MobyModelOffset, header.MobyModelCount);
+    var appendedMobyDefinitions = LevelAssetReader.ReadModelDefinitions(
+        terrainOnlyAppend.HeaderBytes, terrainOnlyHeader.MobyModelOffset, terrainOnlyHeader.MobyModelCount);
+    var sourceTieDefinition = LevelAssetReader.ReadModelDefinitions(
+        composed.HeaderBytes, header.TieModelOffset, header.TieModelCount).Single();
+    var appendedTieDefinition = LevelAssetReader.ReadModelDefinitions(
+        terrainOnlyAppend.HeaderBytes, terrainOnlyHeader.TieModelOffset, terrainOnlyHeader.TieModelCount).Single();
+    var sourceShrubDefinition = LevelAssetReader.ReadShrubDefinitions(
+        composed.HeaderBytes, header.ShrubModelOffset, header.ShrubModelCount).Single();
+    var appendedShrubDefinition = LevelAssetReader.ReadShrubDefinitions(
+        terrainOnlyAppend.HeaderBytes, terrainOnlyHeader.ShrubModelOffset, terrainOnlyHeader.ShrubModelCount).Single();
+    var terrainInsertionDelta = appendedMobyDefinitions[0].ModelOffset - sourceMobyDefinitions[0].ModelOffset;
+    foreach (var (name, sourceOffset, sourceCount, appendedOffset, appendedCount) in new[]
+        {
+            ("moby", header.MobyTextureOffset, header.MobyTextureCount,
+                terrainOnlyHeader.MobyTextureOffset, terrainOnlyHeader.MobyTextureCount),
+            ("tie", header.TieTextureOffset, header.TieTextureCount,
+                terrainOnlyHeader.TieTextureOffset, terrainOnlyHeader.TieTextureCount),
+            ("shrub", header.ShrubTextureOffset, header.ShrubTextureCount,
+                terrainOnlyHeader.ShrubTextureOffset, terrainOnlyHeader.ShrubTextureCount),
+        })
+    {
+        var sourceDefinitions = LevelAssetReader.ReadTextureDefinitions(
+            composed.HeaderBytes, sourceOffset, sourceCount);
+        var appendedDefinitions = LevelAssetReader.ReadTextureDefinitions(
+            terrainOnlyAppend.HeaderBytes, appendedOffset, appendedCount);
+        Expect(sourceDefinitions.Count == appendedDefinitions.Count
+            && sourceDefinitions.Select((definition, index) =>
+                LevelAssetReader.BuildAssetTexture(
+                    name, index, definition, composed.PaletteBytes, composed.AssetWadBytes,
+                    header.TextureDataOffset, isSwizzled: false).PifBytes.SequenceEqual(
+                    LevelAssetReader.BuildAssetTexture(
+                        name, index, appendedDefinitions[index], terrainOnlyAppend.PaletteBytes,
+                        terrainOnlyAppend.AssetWadBytes, terrainOnlyHeader.TextureDataOffset,
+                        isSwizzled: false).PifBytes)).All(value => value),
+            $"terrain-only appends should preserve every existing {name} texture");
+    }
+    Expect(terrainOnlyHeader.MobyModelCount == header.MobyModelCount
+        && terrainOnlyHeader.MobyModelOffset == header.MobyModelOffset
+        && terrainOnlyHeader.TieModelCount == header.TieModelCount
+        && terrainOnlyHeader.TieModelOffset == header.TieModelOffset
+        && terrainOnlyHeader.ShrubModelCount == header.ShrubModelCount
+        && terrainOnlyHeader.ShrubModelOffset == header.ShrubModelOffset
+        && terrainInsertionDelta > 0
+        && appendedMobyDefinitions.Select(value => value.ModelOffset)
+            .SequenceEqual(sourceMobyDefinitions.Select(value => value.ModelOffset + terrainInsertionDelta))
+        && appendedTieDefinition.ModelOffset == sourceTieDefinition.ModelOffset + terrainInsertionDelta
+        && appendedShrubDefinition.ModelOffset == sourceShrubDefinition.ModelOffset + terrainInsertionDelta
+        && terrainOnlyAppend.AssetWadBytes.AsSpan(appendedMobyDefinitions[0].ModelOffset, 2)
+            .SequenceEqual(composed.AssetWadBytes.AsSpan(sourceMobyDefinitions[0].ModelOffset, 2))
+        && terrainOnlyAppend.AssetWadBytes.AsSpan(appendedTieDefinition.ModelOffset, 3)
+            .SequenceEqual(composed.AssetWadBytes.AsSpan(sourceTieDefinition.ModelOffset, 3))
+        && terrainOnlyAppend.AssetWadBytes[appendedShrubDefinition.ModelOffset]
+            == composed.AssetWadBytes[sourceShrubDefinition.ModelOffset],
+        "terrain-only appends should insert pixels before and preserve exact static model payloads");
     var mobys = LevelAssetReader.ReadModelDefinitions(composed.HeaderBytes, header.MobyModelOffset, 2);
     var moby = mobys[0];
     var tie = LevelAssetReader.ReadModelDefinitions(composed.HeaderBytes, header.TieModelOffset, 1).Single();
@@ -2233,6 +2386,17 @@ static void ValidateUyaStaticAssetComposition()
         && BinaryPrimitives.ReadInt32LittleEndian(outputSequenceTable[4..]) == sequenceOutputHeader.SceneViewSize + 0x10
         && sequenceOutputHeader.LightCuboidsOffset == withSequences.HeaderBytes.Length - 0x400,
         "UYA static composition should relocate and retain the trailing sequence table");
+    var sequencesWithTerrain = StaticAssetComposer.AppendTerrainTextures(
+        GameId.UYA, withSequences.HeaderBytes, withSequences.AssetWadBytes, withSequences.PaletteBytes,
+        [new("terrain-sequence", sourcePif)]);
+    var sequencesWithTerrainHeader = LevelAssetReader.ReadHeader(sequencesWithTerrain.HeaderBytes);
+    var appendedSequenceTable = sequencesWithTerrain.HeaderBytes.AsSpan(^0x400);
+    Expect(sequencesWithTerrain.AssetWadBytes.AsSpan(sequencesWithTerrainHeader.SceneViewSize)
+            .SequenceEqual(withSequences.AssetWadBytes.AsSpan(sequenceOutputHeader.SceneViewSize))
+        && BinaryPrimitives.ReadInt32LittleEndian(appendedSequenceTable)
+            == sequencesWithTerrainHeader.SceneViewSize
+        && sequencesWithTerrainHeader.LightCuboidsOffset == sequencesWithTerrain.HeaderBytes.Length - 0x400,
+        "terrain-only appends should relocate and retain trailing sequence data");
 
     var mobyTexture = LevelAssetReader.ReadTextureDefinitions(
         composed.HeaderBytes, header.MobyTextureOffset, 1).Single();
@@ -2266,10 +2430,10 @@ static void ValidateUyaStaticAssetComposition()
     var billboardPif = LevelAssetReader.BuildShrubBillboardTexture(shrub, composed.PaletteBytes).PifBytes;
     Expect(DecodedPifColors(sourcePif).SequenceEqual(DecodedPifColors(billboardPif)),
         "composed shrub billboard should preserve every source texel");
-    ValidateUyaCampaignStaticAssetCompositionWhenAvailable();
+    ValidateUyaCampaignStaticAssetCompositionWhenAvailable(sourcePif);
 }
 
-static void ValidateUyaCampaignStaticAssetCompositionWhenAvailable()
+static void ValidateUyaCampaignStaticAssetCompositionWhenAvailable(byte[] sourcePif)
 {
     var root = Path.Combine("test-assets", "extractions_uya", "level08_iso_world01", "assets");
     var headerPath = Path.Combine(root, "asset_header.bin");
@@ -2282,6 +2446,42 @@ static void ValidateUyaCampaignStaticAssetCompositionWhenAvailable()
     var sourcePaletteBytes = File.ReadAllBytes(palettePath);
     if (BinaryMagic.IsWad(sourceAssetBytes)) sourceAssetBytes = WadCompression.Decompress(sourceAssetBytes);
     var sourceHeader = LevelAssetReader.ReadHeader(sourceHeaderBytes);
+    var terrainAppend = StaticAssetComposer.AppendTerrainTextures(
+        GameId.UYA, sourceHeaderBytes, sourceAssetBytes, sourcePaletteBytes,
+        [new("campaign-terrain", sourcePif)]);
+    var terrainAppendHeader = LevelAssetReader.ReadHeader(terrainAppend.HeaderBytes);
+    var sourceModels = LevelAssetReader.ReadModelDefinitions(
+            sourceHeaderBytes, sourceHeader.MobyModelOffset, sourceHeader.MobyModelCount)
+        .Select(value => value.ModelOffset)
+        .Concat(LevelAssetReader.ReadModelDefinitions(
+            sourceHeaderBytes, sourceHeader.TieModelOffset, sourceHeader.TieModelCount)
+            .Select(value => value.ModelOffset))
+        .Concat(LevelAssetReader.ReadShrubDefinitions(
+            sourceHeaderBytes, sourceHeader.ShrubModelOffset, sourceHeader.ShrubModelCount)
+            .Select(value => value.ModelOffset))
+        .Where(value => value > 0)
+        .ToArray();
+    var sourceModelStart = sourceModels.Length == 0 ? sourceHeader.SceneViewSize : sourceModels.Min();
+    var preservedStart = new[]
+        {
+            sourceHeader.ParticleTextureDataOffset,
+            sourceHeader.FxTextureDataOffset,
+            sourceModelStart,
+        }
+        .Where(value => value > sourceHeader.TextureDataOffset)
+        .DefaultIfEmpty(sourceModelStart)
+        .Min();
+    var terrainDelta = terrainAppendHeader.SceneViewSize - sourceHeader.SceneViewSize;
+    Expect(terrainDelta > 0
+        && terrainAppend.AssetWadBytes.AsSpan(
+                preservedStart + terrainDelta,
+                sourceHeader.SceneViewSize - preservedStart)
+            .SequenceEqual(sourceAssetBytes.AsSpan(
+                preservedStart,
+                sourceHeader.SceneViewSize - preservedStart))
+        && (sourceHeader.Unused3 < preservedStart
+            || terrainAppendHeader.Unused3 == sourceHeader.Unused3 + terrainDelta),
+        "UYA campaign terrain append should relocate the opaque runtime suffix byte-for-byte");
     var composed = StaticAssetComposer.Compose(
         GameId.UYA, sourceHeaderBytes, sourceAssetBytes, sourcePaletteBytes, []);
     var header = LevelAssetReader.ReadHeader(composed.HeaderBytes);
@@ -2834,6 +3034,27 @@ static void ValidateUyaGameplayTypedParsing()
     Expect(insertedMappings.Select(value => (value.BitIndex, value.OcclusionId))
             .SequenceEqual([(5, 77), (42, 78)]),
         "UYA tie insertion should preserve native visibility and map new ties to the reserved bit");
+    var collidingMappings = UyaOcclusionMappingsReader.Read(
+        UyaOcclusionMappingsWriter.RemapTiesBySourceIndex(
+            mappingsBytes, [0, -1], [77, 77], 42)).Ties;
+    Expect(collidingMappings.Select(value => (value.BitIndex, value.OcclusionId))
+            .SequenceEqual([(5, 77), (42, 77)]),
+        "UYA inserted ties should use the reserved visibility bit when their occlusion ID collides");
+    var appendedTfragMappingBytes = UyaOcclusionMappingsWriter.AppendTfrags(mappingsBytes, 2, 42, 77);
+    var appendedTfragMappings = UyaOcclusionMappingsReader.Read(appendedTfragMappingBytes);
+    Expect(appendedTfragMappings.Tfrags.Select(value => (value.BitIndex, value.OcclusionId))
+            .SequenceEqual([(42, 77), (42, 77)]),
+        "UYA tfrag insertion should append gameplay mappings on the reserved visibility bit");
+    var spatialTfragMappings = UyaOcclusionMappingsReader.Read(
+        UyaOcclusionMappingsWriter.AppendTfrags(mappingsBytes,
+            [new UyaOcclusionMapping(7, 70), new UyaOcclusionMapping(9, 90)])).Tfrags;
+    Expect(spatialTfragMappings.Select(value => (value.BitIndex, value.OcclusionId))
+            .SequenceEqual([(7, 70), (9, 90)]),
+        "UYA tfrag insertion should preserve per-group spatial visibility mappings");
+    var filteredTfragMappings = UyaOcclusionMappingsReader.Read(
+        UyaOcclusionMappingsWriter.FilterTfrags(appendedTfragMappingBytes, []));
+    Expect(filteredTfragMappings.Tfrags.Count == 0 && filteredTfragMappings.Ties.Count == 1,
+        "UYA tfrag filtering should preserve the other gameplay occlusion families");
 
     var editedMoby = new UyaMobyInstanceEdit(
         0x1234,
@@ -3115,6 +3336,17 @@ static void ValidateUyaStaticInstanceParsing()
                 BinaryPrimitives.ReadInt32LittleEndian(classIds.AsSpan(4 + index * 4)))
             .SequenceEqual(new[] { 0x100, 0x200, 0x300 }),
         "UYA class list writer should deduplicate, sort, and align class IDs");
+    var nativeClassIds = new byte[0x20];
+    BinaryPrimitives.WriteInt32LittleEndian(nativeClassIds, 3);
+    BinaryPrimitives.WriteInt32LittleEndian(nativeClassIds.AsSpan(4), 0x300);
+    BinaryPrimitives.WriteInt32LittleEndian(nativeClassIds.AsSpan(8), 0x100);
+    BinaryPrimitives.WriteInt32LittleEndian(nativeClassIds.AsSpan(12), 0x200);
+    var unchangedClassIds = UyaClassIdListWriter.Compose(nativeClassIds, [0x200, 0x100]);
+    var extendedClassIds = UyaClassIdListWriter.Compose(nativeClassIds, [0x200, 0x400, 0x100]);
+    Expect(unchangedClassIds.SequenceEqual(nativeClassIds),
+        "UYA class list composition should preserve an unchanged native payload byte-for-byte");
+    Expect(UyaClassIdListWriter.Read(extendedClassIds).SequenceEqual([0x300, 0x100, 0x200, 0x400]),
+        "UYA class list composition should preserve native registration order and append new classes");
 
     var quarterTurn = new UyaQuaternion(0, 0, MathF.Sin(MathF.PI / 4), MathF.Cos(MathF.PI / 4));
     var rebuiltCameras = UyaCameraInstancesReader.Read(UyaCameraInstancesWriter.Write(cameras,

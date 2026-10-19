@@ -1,21 +1,65 @@
 using System.Buffers.Binary;
+using System.Numerics;
+using System.Security.Cryptography;
+using RatchetPs2.Core.Games;
 using RatchetPs2.Core.Gltf;
 using RatchetPs2.Core.Textures;
 using RatchetPs2.Core.Textures.Palettes;
 using RatchetPs2.Core.Textures.Pif;
 
-namespace RatchetPs2.Games.UYA.Ties;
+namespace RatchetPs2.Games.UYA.Textures;
 
-internal static partial class UyaStaticTieComposer
+internal static class UyaStaticModelTextureConverter
 {
-    private const byte GsFullOpacityAlpha = 0x80;
 
-    private static TextureBuildResult BuildTextures(
+    public static StaticModelTextureConversionResult Convert(
+        StaticModelCanonicalAsset asset,
+        CancellationToken cancellationToken) => Convert(asset, int.MaxValue, cancellationToken);
+
+    public static StaticModelTextureConversionResult Convert(
+        StaticModelCanonicalAsset asset,
+        int maximumTextureDimension,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(asset);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (asset.FormatVersion != StaticModelCanonicalFormat.Version)
+            throw new InvalidDataException($"Unsupported canonical static-model version {asset.FormatVersion}.");
+        if (asset.Primitives is null || asset.Samplers is null || asset.Textures is null
+            || asset.Materials is null || asset.Images is null)
+            throw new InvalidDataException("The canonical static model has a missing collection.");
+        if (asset.Primitives.Count == 0)
+            throw new InvalidDataException("The canonical static model has no primitives.");
+
+        var diagnostics = new List<StaticModelNativeDiagnostic>();
+        var textureResult = Build(
+            asset, PrepareMaterials(asset, diagnostics), diagnostics, maximumTextureDimension, cancellationToken);
+        return new(
+            GameId.UYA,
+            textureResult.Textures,
+            textureResult.Materials.Select(material => new StaticModelNativeMaterialBinding(
+                material.NativeIndex,
+                material.SourceIndex,
+                material.Texture.AssetId,
+                material.ClampU,
+                material.ClampV)).ToArray(),
+            diagnostics);
+    }
+
+    internal static PreparedMaterial[] PrepareMaterials(
+        StaticModelCanonicalAsset asset,
+        List<StaticModelNativeDiagnostic> diagnostics) =>
+        UyaStaticModelMaterialResolver.PrepareUsed(asset, diagnostics);
+
+    internal static TextureBuildResult Build(
         StaticModelCanonicalAsset asset,
         IReadOnlyList<PreparedMaterial> materials,
         List<StaticModelNativeDiagnostic> diagnostics,
+        int maximumTextureDimension,
         CancellationToken cancellationToken)
     {
+        if (maximumTextureDimension <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maximumTextureDimension));
         var effectiveBySource = new Dictionary<EffectiveTextureSourceKey, EffectiveTexture>();
         var effectiveByHash = new Dictionary<string, EffectiveTexture>(StringComparer.Ordinal);
         var effectiveByMaterial = new EffectiveTexture[materials.Count];
@@ -29,7 +73,17 @@ internal static partial class UyaStaticTieComposer
                 material.AlphaCutoff);
             if (!effectiveBySource.TryGetValue(sourceKey, out var texture))
             {
-                texture = BuildEffectiveTexture(asset, material, cancellationToken);
+                if (material.ImageIndex is { } imageIndex)
+                {
+                    var image = asset.Images[imageIndex];
+                    if (Math.Max(image.Width, image.Height) > maximumTextureDimension)
+                        diagnostics.Add(new(
+                            "texture-resized",
+                            $"Texture {imageIndex} was resized from {image.Width}x{image.Height} "
+                            + $"to {maximumTextureDimension}x{maximumTextureDimension} for native terrain streaming.",
+                            SourceMaterialIndex: material.SourceIndex));
+                }
+                texture = BuildEffectiveTexture(asset, material, maximumTextureDimension, cancellationToken);
                 effectiveBySource.Add(sourceKey, texture);
             }
             if (!effectiveByHash.TryGetValue(texture.Key, out var shared))
@@ -102,12 +156,25 @@ internal static partial class UyaStaticTieComposer
             material.ClampU,
             material.ClampV,
             nativeByKey[effectiveByMaterial[material.NativeIndex].Key])).ToArray();
-        return new(nativeByKey.Values.OrderBy(value => value.AssetId, StringComparer.Ordinal).ToArray(), boundMaterials);
+        var nativeTextures = nativeByKey.Values
+            .GroupBy(value => value.AssetId, StringComparer.Ordinal)
+            .Select(group =>
+            {
+                var first = group.First();
+                if (group.Skip(1).Any(value => !value.PifBytes.SequenceEqual(first.PifBytes)))
+                    throw new InvalidDataException(
+                        $"Generated textures have conflicting payloads for content ID {group.Key}.");
+                return first;
+            })
+            .OrderBy(value => value.AssetId, StringComparer.Ordinal)
+            .ToArray();
+        return new(nativeTextures, boundMaterials);
     }
 
     private static EffectiveTexture BuildEffectiveTexture(
         StaticModelCanonicalAsset asset,
         PreparedMaterial material,
+        int maximumTextureDimension,
         CancellationToken cancellationToken)
     {
         var width = 1;
@@ -123,9 +190,9 @@ internal static partial class UyaStaticTieComposer
             height = image.Height;
             source = image.Rgba32;
         }
-        if (width != height)
+        if (width != height || width > maximumTextureDimension)
         {
-            var size = Math.Max(width, height);
+            var size = Math.Min(Math.Max(width, height), maximumTextureDimension);
             var square = new byte[checked(size * size * 4)];
             for (var y = 0; y < size; y++)
             {
@@ -153,7 +220,7 @@ internal static partial class UyaStaticTieComposer
                 ? 1f
                 : source[offset + 3] / 255f * material.BaseColor.W;
             if (material.AlphaMode == "MASK") alpha = alpha >= material.AlphaCutoff ? 1f : 0f;
-            rgba[offset + 3] = checked((byte)MathF.Round(alpha * GsFullOpacityAlpha));
+            rgba[offset + 3] = checked((byte)MathF.Round(alpha * Ps2Color.FullOpacityAlpha));
         }
         var mipRgba = BuildMipChain(rgba, width, height, 2, cancellationToken);
         var identity = new byte[8 + rgba.Length];
@@ -220,6 +287,8 @@ internal static partial class UyaStaticTieComposer
 
     private static byte Multiply(byte value, float factor) =>
         checked((byte)Math.Clamp(MathF.Round(value * factor), 0, byte.MaxValue));
+
+    private static string Hash(ReadOnlySpan<byte> bytes) => System.Convert.ToHexString(SHA256.HashData(bytes));
 }
 
 internal sealed record EffectiveTexture(
@@ -231,9 +300,20 @@ internal sealed record EffectiveTexture(
 
 internal readonly record struct EffectiveTextureSourceKey(
     int? ImageIndex,
-    System.Numerics.Vector4 BaseColor,
+    Vector4 BaseColor,
     string AlphaMode,
     float AlphaCutoff);
+
+internal sealed record PreparedMaterial(
+    int NativeIndex,
+    int? SourceIndex,
+    int? ImageIndex,
+    Vector4 BaseColor,
+    string AlphaMode,
+    float AlphaCutoff,
+    bool DoubleSided,
+    bool ClampU,
+    bool ClampV);
 
 internal sealed record BoundMaterial(
     int NativeIndex,

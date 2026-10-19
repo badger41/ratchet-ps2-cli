@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using RatchetPs2.Core.Tfrags;
 using static RatchetPs2.Core.IO.BinarySpanReader;
 
 namespace RatchetPs2.Games.UYA.Gameplay;
@@ -136,6 +137,73 @@ public static class UyaOcclusionMappingsReader
 
 public static class UyaOcclusionMappingsWriter
 {
+    public static byte[] FilterTfrags(
+        ReadOnlySpan<byte> source,
+        IReadOnlyList<int> retainedMappingIndices)
+    {
+        ArgumentNullException.ThrowIfNull(retainedMappingIndices);
+        var mappings = UyaOcclusionMappingsReader.Read(source);
+        if (retainedMappingIndices.Any(value => value < 0 || value >= mappings.Tfrags.Count)
+            || retainedMappingIndices.Count != retainedMappingIndices.Distinct().Count())
+            throw new ArgumentException(
+                "Retained UYA tfrag occlusion mapping indices are invalid.", nameof(retainedMappingIndices));
+        return Write(mappings with
+        {
+            Tfrags = retainedMappingIndices.Order().Select(index => mappings.Tfrags[index]).ToArray(),
+        });
+    }
+
+    public static byte[] AppendTfrags(
+        ReadOnlySpan<byte> source,
+        int count,
+        int bitIndex,
+        int occlusionId)
+    {
+        if (count < 0) throw new ArgumentOutOfRangeException(nameof(count));
+        if (bitIndex is < 0 or >= 1024) throw new ArgumentOutOfRangeException(nameof(bitIndex));
+        return AppendTfrags(source,
+            Enumerable.Repeat(new UyaOcclusionMapping(bitIndex, occlusionId), count).ToArray());
+    }
+
+    public static byte[] AppendTfrags(
+        ReadOnlySpan<byte> source,
+        IReadOnlyList<UyaOcclusionMapping> appended)
+    {
+        ArgumentNullException.ThrowIfNull(appended);
+        if (appended.Any(value => value.BitIndex is < 0 or >= 1024))
+            throw new ArgumentOutOfRangeException(nameof(appended));
+        var mappings = UyaOcclusionMappingsReader.Read(source);
+        if (appended.Count == 0) return source.ToArray();
+        var tfrags = mappings.Tfrags.Concat(appended).ToArray();
+        return Write(mappings with { Tfrags = tfrags });
+    }
+
+    public static IReadOnlyList<UyaOcclusionMapping> MapTfragsByNearestSource(
+        IReadOnlyList<TfragChunk> sourceChunks,
+        IReadOnlyList<UyaOcclusionMapping> sourceMappings,
+        IReadOnlyList<TfragChunk> targetChunks)
+    {
+        ArgumentNullException.ThrowIfNull(sourceChunks);
+        ArgumentNullException.ThrowIfNull(sourceMappings);
+        ArgumentNullException.ThrowIfNull(targetChunks);
+        if (sourceChunks.Count != sourceMappings.Count || sourceChunks.Count == 0)
+            throw new ArgumentException("UYA source tfrags and occlusion mappings must be nonempty and aligned.");
+
+        return targetChunks.Select(target =>
+        {
+            var nearestIndex = 0;
+            var nearestDistance = double.PositiveInfinity;
+            for (var index = 0; index < sourceChunks.Count; index++)
+            {
+                var distance = DistanceSquared(target.BoundingSphere, sourceChunks[index].BoundingSphere);
+                if (distance >= nearestDistance) continue;
+                nearestDistance = distance;
+                nearestIndex = index;
+            }
+            return sourceMappings[nearestIndex];
+        }).ToArray();
+    }
+
     public static byte[] RemapTies(
         ReadOnlySpan<byte> source,
         IReadOnlyList<int> targetOcclusionIds,
@@ -159,15 +227,47 @@ public static class UyaOcclusionMappingsWriter
             foreach (var (occlusionId, count) in remaining.OrderBy(value => value.Key))
                 for (var index = 0; index < count; index++)
                     ties.Add(new(insertedBitIndex.Value, occlusionId));
-        var output = new byte[checked(0x10 + (mappings.Tfrags.Count + ties.Count + mappings.Mobys.Count) * 8
+        return Write(mappings with { Ties = ties });
+    }
+
+    public static byte[] RemapTiesBySourceIndex(
+        ReadOnlySpan<byte> source,
+        IReadOnlyList<int> targetSourceIndices,
+        IReadOnlyList<int> targetOcclusionIds,
+        int? insertedBitIndex = null)
+    {
+        ArgumentNullException.ThrowIfNull(targetSourceIndices);
+        ArgumentNullException.ThrowIfNull(targetOcclusionIds);
+        if (targetSourceIndices.Count != targetOcclusionIds.Count)
+            throw new ArgumentException("UYA target tie source and occlusion inventories must be aligned.");
+        if (insertedBitIndex is < 0 or >= 1024)
+            throw new ArgumentOutOfRangeException(nameof(insertedBitIndex));
+        var mappings = UyaOcclusionMappingsReader.Read(source);
+        var ties = targetSourceIndices.Select((sourceIndex, targetIndex) =>
+        {
+            if (sourceIndex < -1 || sourceIndex >= mappings.Ties.Count)
+                throw new ArgumentOutOfRangeException(
+                    nameof(targetSourceIndices), "UYA target tie source index is outside the source inventory.");
+            if (sourceIndex >= 0)
+                return mappings.Ties[sourceIndex] with { OcclusionId = targetOcclusionIds[targetIndex] };
+            if (insertedBitIndex is null)
+                throw new InvalidDataException("UYA inserted tie has no reserved visibility bit.");
+            return new UyaOcclusionMapping(insertedBitIndex.Value, targetOcclusionIds[targetIndex]);
+        }).ToArray();
+        return Write(mappings with { Ties = ties });
+    }
+
+    private static byte[] Write(UyaOcclusionMappings mappings)
+    {
+        var output = new byte[checked(0x10 + (mappings.Tfrags.Count + mappings.Ties.Count + mappings.Mobys.Count) * 8
             + mappings.TrailingBytes.Length)];
         BinaryPrimitives.WriteInt32LittleEndian(output, mappings.Tfrags.Count);
-        BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(4), ties.Count);
+        BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(4), mappings.Ties.Count);
         BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(8), mappings.Mobys.Count);
         BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(0xc), mappings.Padding);
         var offset = 0x10;
         WriteMappings(output, ref offset, mappings.Tfrags);
-        WriteMappings(output, ref offset, ties);
+        WriteMappings(output, ref offset, mappings.Ties);
         WriteMappings(output, ref offset, mappings.Mobys);
         mappings.TrailingBytes.CopyTo(output, offset);
         return output;
@@ -181,5 +281,13 @@ public static class UyaOcclusionMappingsWriter
             BinaryPrimitives.WriteInt32LittleEndian(output[(offset + 4)..], mapping.OcclusionId);
             offset += 8;
         }
+    }
+
+    private static double DistanceSquared(TfragBoundingSphere left, TfragBoundingSphere right)
+    {
+        var x = (double)left.X - right.X;
+        var y = (double)left.Y - right.Y;
+        var z = (double)left.Z - right.Z;
+        return x * x + y * y + z * z;
     }
 }

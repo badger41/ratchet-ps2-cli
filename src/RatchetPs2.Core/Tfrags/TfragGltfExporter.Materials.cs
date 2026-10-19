@@ -1,3 +1,4 @@
+using RatchetPs2.Core.Textures;
 using RatchetPs2.Core.Textures.Png;
 
 namespace RatchetPs2.Core.Tfrags;
@@ -152,7 +153,7 @@ public static partial class TfragGltfExporter
 
     private static TfragInterpretedAlpha InterpretAlpha(TextureAlphaInfo alpha)
     {
-        if (alpha.MinAlpha >= TfragTextureAlpha.FullOpacityAlpha)
+        if (alpha.MinAlpha >= Ps2Color.OpaqueAlphaThreshold)
         {
             return new TfragInterpretedAlpha(false, TextureAlphaMode.Opaque, null, true);
         }

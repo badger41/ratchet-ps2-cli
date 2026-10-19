@@ -16,7 +16,7 @@ public readonly record struct TextureAlphaInfo(byte MinAlpha, byte MaxAlpha, boo
 {
     public static TextureAlphaInfo Opaque { get; } = new(255, 255, true);
 
-    public bool HasAlpha => MinAlpha < Ps2Color.FullOpacityAlpha;
+    public bool HasAlpha => MinAlpha < Ps2Color.OpaqueAlphaThreshold;
 
     public TextureAlphaMode AlphaMode => !HasAlpha
         ? TextureAlphaMode.Opaque

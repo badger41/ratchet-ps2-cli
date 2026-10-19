@@ -23,6 +23,12 @@ public sealed record StaticModelNativeMaterialBinding(
     bool ClampU,
     bool ClampV);
 
+public sealed record StaticModelTextureConversionResult(
+    GameId GameId,
+    IReadOnlyList<StaticModelNativeTexture> Textures,
+    IReadOnlyList<StaticModelNativeMaterialBinding> Materials,
+    IReadOnlyList<StaticModelNativeDiagnostic> Diagnostics);
+
 public sealed record StaticModelNativePrimitiveBinding(
     int SourceMeshIndex,
     int SourcePrimitiveIndex,

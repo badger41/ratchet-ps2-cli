@@ -32,7 +32,8 @@ internal static class UyaLevelAssetComposer
         var shrubs = LevelAssetReader.ReadShrubDefinitions(
             headerBytes, header.ShrubModelOffset, header.ShrubModelCount);
         var offsets = LevelAssetReader.CollectKnownAssetOffsets(
-            header, assetWadBytes.Length, mobys, ties, shrubs, [header.SceneViewSize]);
+            header, assetWadBytes.Length, mobys, ties, shrubs,
+            [header.SceneViewSize, header.Unused3]);
         var source = LevelAssetReader.ReadAssetSlice(
             assetWadBytes, header.OcclusionOffset, offsets);
         var replacement = UyaOcclusionGridWriter.SetAlwaysVisibleBit(source, bitIndex);
@@ -233,6 +234,7 @@ internal static class UyaLevelAssetComposer
         AddDirect(references, 0x60, header.TextureDataOffset, assetLength);
         AddDirect(references, 0x64, header.ParticleTextureDataOffset, assetLength);
         AddDirect(references, 0x68, header.FxTextureDataOffset, assetLength);
+        AddDirect(references, 0xa0, header.Unused3, assetLength);
         AddDirect(references, 0xa4, header.HeightmapOffset, assetLength);
         AddDirect(references, 0xa8, header.OcclusionOctreeOffset, assetLength);
         AddDirect(references, 0xb0, header.OcclusionRadiusOffset, assetLength);
@@ -291,7 +293,8 @@ internal static class UyaLevelAssetComposer
         var ties = LevelAssetReader.ReadModelDefinitions(headerBytes, header.TieModelOffset, header.TieModelCount);
         var shrubs = LevelAssetReader.ReadShrubDefinitions(headerBytes, header.ShrubModelOffset, header.ShrubModelCount);
         var offsets = LevelAssetReader.CollectKnownAssetOffsets(
-            header, assetBytes.Length, mobys, ties, shrubs, [header.SceneViewSize]);
+            header, assetBytes.Length, mobys, ties, shrubs,
+            [header.SceneViewSize, header.Unused3]);
         Verify("terrain", replacements.Terrain, header.TerrainOffset, assetBytes, offsets,
             allowZeroOffset: header.TerrainOffset == 0);
         Verify("occlusion", replacements.Occlusion, header.OcclusionOffset, assetBytes, offsets);

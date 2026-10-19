@@ -15,7 +15,7 @@ public static class ShrubTextureAlpha
 
     public static ShrubTextureAlphaInfo Interpret(TextureAlphaInfo alpha)
     {
-        var hasOpacityAlpha = alpha.MinAlpha < FullOpacityAlpha;
+        var hasOpacityAlpha = alpha.MinAlpha < Ps2Color.OpaqueAlphaThreshold;
         if (!hasOpacityAlpha)
         {
             return new ShrubTextureAlphaInfo(false, TextureAlphaMode.Opaque, null, true);

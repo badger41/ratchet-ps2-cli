@@ -70,16 +70,35 @@ internal static class UyaStaticAssetLayout
     public static int FindRetainedTextureLength(
         ReadOnlySpan<byte> headerBytes,
         LevelAssetHeader header,
-        int preservedDataOffset)
+        int preservedDataOffset,
+        bool includeStaticTextures = false)
     {
         if (header.TextureDataOffset <= 0) return 0;
         var maxEnd = 0;
-        foreach (var texture in LevelAssetReader.ReadTextureDefinitions(
-                     headerBytes, header.TerrainTextureOffset, header.TerrainTextureCount))
+        IEnumerable<(LevelAssetTextureDefinition Texture, bool Required)> definitions =
+            LevelAssetReader.ReadTextureDefinitions(
+                    headerBytes, header.TerrainTextureOffset, header.TerrainTextureCount)
+                .Select(value => (value, true));
+        if (includeStaticTextures)
+            definitions = definitions
+                .Concat(LevelAssetReader.ReadTextureDefinitions(
+                    headerBytes, header.MobyTextureOffset, header.MobyTextureCount)
+                    .Select(value => (value, false)))
+                .Concat(LevelAssetReader.ReadTextureDefinitions(
+                    headerBytes, header.TieTextureOffset, header.TieTextureCount)
+                    .Select(value => (value, false)))
+                .Concat(LevelAssetReader.ReadTextureDefinitions(
+                    headerBytes, header.ShrubTextureOffset, header.ShrubTextureCount)
+                    .Select(value => (value, false)));
+        foreach (var (texture, required) in definitions)
         {
             if (texture.Type == 0) continue;
             if (texture.TextureOffset < 0 || texture.Width <= 0 || texture.Height <= 0)
-                throw new InvalidDataException("UYA terrain texture definition has invalid bounds.");
+            {
+                if (required)
+                    throw new InvalidDataException("UYA terrain texture definition has invalid bounds.");
+                continue;
+            }
             var end = checked(texture.TextureOffset + texture.Width * texture.Height);
             if ((texture.Type & 2) != 0)
                 end = checked(end + Math.Max(1, texture.Width / 2) * Math.Max(1, texture.Height / 2));

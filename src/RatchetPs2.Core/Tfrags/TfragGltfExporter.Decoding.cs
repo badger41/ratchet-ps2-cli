@@ -101,6 +101,7 @@ public static partial class TfragGltfExporter
                 positions,
                 textureEntries,
                 options,
+                preserveRepeatedTexCoordTiles: chunk.BaseOnly != 0,
                 groups);
         }
         else
@@ -137,6 +138,7 @@ public static partial class TfragGltfExporter
                     positions,
                     textureEntries,
                     options,
+                    preserveRepeatedTexCoordTiles: chunk.BaseOnly != 0,
                     groups);
             }
         }
@@ -178,6 +180,7 @@ public static partial class TfragGltfExporter
         IReadOnlyList<Vector3> positions,
         IReadOnlyList<TfragTextureEntry> textureEntries,
         TfragGltfExportOptions options,
+        bool preserveRepeatedTexCoordTiles,
         List<TfragPrimitiveGroup> groups)
     {
         var materialRanges = topologyDecode.MaterialRanges.Count > 0
@@ -207,7 +210,8 @@ public static partial class TfragGltfExporter
                 topologyDecode.Packet.ReferenceTexCoords,
                 referenceTexCoords,
                 positions,
-                textureSize) is { } group)
+                textureSize,
+                preserveRepeatedTexCoordTiles) is { } group)
             {
                 groups.Add(group);
             }

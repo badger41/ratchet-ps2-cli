@@ -9,6 +9,7 @@ public enum TextureAssetFamily
     Moby = 1,
     Tie = 2,
     Shrub = 3,
+    Terrain = 4,
 }
 
 public enum TextureRole

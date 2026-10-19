@@ -8,6 +8,7 @@ using RatchetPs2.Core.Tfrags;
 using RatchetPs2.Core.Ties;
 
 var repoRoot = FindRepoRoot(AppContext.BaseDirectory);
+StaticModelTfragPartitionerTests.Run();
 TfragBoundaryTests.Run(repoRoot);
 TfragPieceExtractionTests.Run(repoRoot);
 TfragPieceTransformTests.Run();
@@ -136,7 +137,8 @@ static void ValidateChunkPreservingRuntimeExport(TfragTerrain terrain, byte[] fu
 static void ValidateSharedPs2ColorRules()
 {
     Expect(TfragTextureAlpha.FullOpacityAlpha == Ps2Color.FullOpacityAlpha, "tfrag full-opacity alpha should use the shared PS2 alpha scale");
-    Expect(Ps2Color.FullOpacityAlpha == 127, "PS2 alpha 127 should be treated as full opacity");
+    Expect(Ps2Color.FullOpacityAlpha == 128, "PS2 writers should encode full opacity as GS alpha 0x80");
+    Expect(Ps2Color.OpaqueAlphaThreshold == 127, "PS2 readers should accept legacy alpha 0x7f as opaque");
     Expect(!new TextureAlphaInfo(127, 127, UsesBinaryAlpha: true).HasAlpha, "PNG alpha 127 should be classified as opaque");
     Expect(new TextureAlphaInfo(126, 127, UsesBinaryAlpha: false).HasAlpha, "PNG alpha below 127 should retain opacity");
     Expect(ShrubTextureAlpha.FullOpacityAlpha == Ps2Color.FullOpacityAlpha, "shrub full-opacity alpha should use the shared PS2 alpha scale");
@@ -172,9 +174,10 @@ static void ValidateSharedTexCoordUnwrapRules()
         new Vector2(0.1f, 0f),
         new Vector2(1.1f, 0f),
         new Vector2(0.2f, 1f),
-        textureSize: null,
+        new TextureSize(64, 64),
         repeatU: true,
         repeatV: true,
+        normalizeClampedAxes: true,
         preserveRepeatedTexCoordTiles: true);
     Expect(authoredTiles[0].X == 0.1f
         && authoredTiles[1].X == 1.1f

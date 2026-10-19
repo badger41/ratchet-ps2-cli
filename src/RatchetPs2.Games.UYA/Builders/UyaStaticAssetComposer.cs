@@ -7,21 +7,34 @@ using static RatchetPs2.Core.IO.BinarySpanReader;
 
 namespace RatchetPs2.Games.UYA.Builders;
 
-internal static class UyaStaticAssetComposer
+internal static partial class UyaStaticAssetComposer
 {
     private const int HeaderFixedSize = 0xc0;
     private const int AssetAlignment = 0x10;
     private const int PaletteAlignment = 0x100;
     private const int MaxFamilyTextures = byte.MaxValue;
+    private const int MaxTerrainTextures = 4_096;
+    private static readonly TextureAssetFamily[] StaticFamilies =
+        [TextureAssetFamily.Moby, TextureAssetFamily.Tie, TextureAssetFamily.Shrub];
 
     public static StaticAssetComposition Compose(
         ReadOnlySpan<byte> headerBytes,
         ReadOnlySpan<byte> assetWadBytes,
         ReadOnlySpan<byte> paletteBytes,
         IReadOnlyList<StaticAssetInput> assets,
+        CancellationToken cancellationToken = default) => Compose(
+            headerBytes, assetWadBytes, paletteBytes, assets, [], cancellationToken);
+
+    public static StaticAssetComposition Compose(
+        ReadOnlySpan<byte> headerBytes,
+        ReadOnlySpan<byte> assetWadBytes,
+        ReadOnlySpan<byte> paletteBytes,
+        IReadOnlyList<StaticAssetInput> assets,
+        IReadOnlyList<TerrainTextureInput> terrainTextures,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(assets);
+        ArgumentNullException.ThrowIfNull(terrainTextures);
         if (headerBytes.Length < HeaderFixedSize)
             throw new InvalidDataException("UYA asset header is shorter than its fixed header.");
         var ordered = assets.Select(ValidateAsset)
@@ -29,6 +42,12 @@ internal static class UyaStaticAssetComposer
             .ThenBy(value => value.ClassId)
             .ThenBy(value => value.AssetId, StringComparer.Ordinal)
             .ToArray();
+        var orderedTerrainTextures = terrainTextures.Select(ValidateTerrainTexture)
+            .OrderBy(value => value.AssetId, StringComparer.Ordinal).ToArray();
+        var duplicateTerrain = orderedTerrainTextures.GroupBy(value => value.AssetId, StringComparer.Ordinal)
+            .FirstOrDefault(group => group.Count() > 1);
+        if (duplicateTerrain is not null)
+            throw new ArgumentException($"Duplicate terrain texture asset {duplicateTerrain.Key}.", nameof(terrainTextures));
         var duplicate = ordered.GroupBy(value => (value.Family, value.ClassId))
             .FirstOrDefault(group => group.Count() > 1);
         if (duplicate is not null)
@@ -41,6 +60,14 @@ internal static class UyaStaticAssetComposer
             .ToDictionary(value => value.ModelId);
         var sourceMobyTextures = LevelAssetReader.ReadTextureDefinitions(
             headerBytes, sourceHeader.MobyTextureOffset, sourceHeader.MobyTextureCount);
+        var terrainTextureDefinitions = LevelAssetReader.ReadTextureDefinitions(
+                headerBytes, sourceHeader.TerrainTextureOffset, sourceHeader.TerrainTextureCount)
+            .Select(value => new TextureDefinition(
+                value.TextureOffset, value.Width, value.Height, value.Type,
+                value.PaletteId, value.MipmapPaletteId))
+            .ToList();
+        if (terrainTextureDefinitions.Count + orderedTerrainTextures.Length > MaxTerrainTextures)
+            throw new InvalidDataException($"UYA terrain texture table exceeds {MaxTerrainTextures} entries.");
         var stashedClassIds = LevelAssetReader.ReadMobyGsStashClassIds(
             headerBytes, sourceHeader.MobyGsStashListOffset).ToHashSet();
         var sourceStashReferences = sourceMobyModels.Values
@@ -58,7 +85,7 @@ internal static class UyaStaticAssetComposer
             .ToArray();
 
         var inventory = TextureInventoryBuilder.Build(
-            BuildInventoryInputs(ordered, stashedClassIds), cancellationToken);
+            BuildInventoryInputs(ordered, orderedTerrainTextures, stashedClassIds), cancellationToken);
         var optimization = PaletteOptimizer.Optimize(inventory, cancellationToken);
         if (optimization.Violations.Count > 0)
             throw new InvalidDataException(string.Join(' ', optimization.Violations.Select(value => value.Message)));
@@ -112,7 +139,7 @@ internal static class UyaStaticAssetComposer
             : 0;
         var definitions = ordered.ToDictionary(value => value, value => value.DefinitionBytes.ToArray());
         var modelBytes = ordered.ToDictionary(value => value, value => value.ModelBytes.ToArray());
-        var textureDefinitions = Enum.GetValues<TextureAssetFamily>()
+        var textureDefinitions = StaticFamilies
             .ToDictionary(value => value, _ => new List<TextureDefinition>());
         if (sourceMobyTextures.Count > MaxFamilyTextures)
             throw new InvalidDataException("UYA source moby texture table exceeds 255 addressable entries.");
@@ -126,7 +153,7 @@ internal static class UyaStaticAssetComposer
                 source.TextureOffset, source.Width, source.Height, source.Type,
                 source.PaletteId, source.MipmapPaletteId);
         }
-        var sharedMaterialIds = Enum.GetValues<TextureAssetFamily>()
+        var sharedMaterialIds = StaticFamilies
             .ToDictionary(value => value, _ => new Dictionary<(string SourceHash, int Palette), byte>());
         foreach (var asset in ordered)
         {
@@ -218,7 +245,12 @@ internal static class UyaStaticAssetComposer
             if (asset.Family == TextureAssetFamily.Moby)
                 modelBytes[asset] = UyaMobyTeamPaletteComposer.Rewrite(modelBytes[asset], materialPalettes);
         }
+        var terrainAllocations = AppendTerrainTextureData(
+            orderedTerrainTextures, inventoryByIdentity, assignmentByKey, paletteByIndex, paletteIds,
+            assetOutput, ref textureDataOffset, materialPixelOffsets, paletteOutput, primaryMipmaps,
+            occupiedPaletteRanges, terrainTextureDefinitions, cancellationToken);
         extraMipmaps = AppendExtraMipmaps(paletteOutput, paletteBytes, extraMipmaps);
+        Align(paletteOutput, PaletteAlignment);
 
         var preservedOutputOffset = 0;
         if (preservedDataOffset < modelDataOffset)
@@ -258,8 +290,9 @@ internal static class UyaStaticAssetComposer
         var soundRemapOffset = soundRemap.Length == 0 ? 0 : checked((int)headerOutput.Position);
         headerOutput.Write(soundRemap);
         var gsRamOffset = AppendMipmapTable(headerOutput, primaryMipmaps, extraMipmaps);
+        var terrainTextureOffset = AppendTextureTable(headerOutput, terrainTextureDefinitions);
         var tableLocations = new Dictionary<TextureAssetFamily, TableLocations>();
-        foreach (var family in Enum.GetValues<TextureAssetFamily>())
+        foreach (var family in StaticFamilies)
         {
             var familyAssets = ordered.Where(value => value.Family == family).ToArray();
             var modelOffset = AppendModelTable(
@@ -275,6 +308,8 @@ internal static class UyaStaticAssetComposer
         var outputHeader = headerOutput.ToArray();
         WriteInt32(outputHeader, 0x00, primaryMipmaps.Count);
         WriteInt32(outputHeader, 0x04, gsRamOffset);
+        WriteInt32(outputHeader, 0x30, terrainTextureDefinitions.Count);
+        WriteInt32(outputHeader, 0x34, terrainTextureDefinitions.Count == 0 ? 0 : terrainTextureOffset);
         WriteInt32(outputHeader, 0x60, textureDataOffset);
         WriteInt32(outputHeader, 0x64, UyaStaticAssetLayout.RelocatePreservedOffset(
             sourceHeader.ParticleTextureDataOffset, preservedDataOffset, modelDataOffset, preservedOutputOffset));
@@ -289,7 +324,7 @@ internal static class UyaStaticAssetComposer
         WriteInt32(outputHeader, 0xa0, UyaStaticAssetLayout.RelocatePreservedOffset(
             sourceHeader.Unused3, preservedDataOffset, modelDataOffset, preservedOutputOffset));
         WriteInt32(outputHeader, 0xac, sourceHeader.MobyGsStashListOffset);
-        foreach (var family in Enum.GetValues<TextureAssetFamily>())
+        foreach (var family in StaticFamilies)
         {
             var offsets = FamilyOffsets(family);
             var count = ordered.Count(value => value.Family == family);
@@ -301,8 +336,11 @@ internal static class UyaStaticAssetComposer
         }
 
         var result = new StaticAssetComposition(
-            outputHeader, assetOutput.ToArray(), paletteOutput.ToArray(), inventory, optimization);
-        ValidateComposition(result, ordered, modelBytes);
+            outputHeader, assetOutput.ToArray(), paletteOutput.ToArray(), inventory, optimization)
+        {
+            TerrainTextures = terrainAllocations,
+        };
+        ValidateComposition(result, ordered, modelBytes, orderedTerrainTextures);
         return result;
     }
 
@@ -310,7 +348,7 @@ internal static class UyaStaticAssetComposer
     {
         ArgumentNullException.ThrowIfNull(asset);
         var definitionSize = asset.Family == TextureAssetFamily.Shrub ? 0x30 : 0x20;
-        if (!Enum.IsDefined(asset.Family)
+        if (!StaticFamilies.Contains(asset.Family)
             || asset.ClassId is < 0 or > ushort.MaxValue
             || string.IsNullOrWhiteSpace(asset.AssetId)
             || asset.DefinitionBytes.Length != definitionSize
@@ -323,8 +361,18 @@ internal static class UyaStaticAssetComposer
         return asset;
     }
 
+    private static TerrainTextureInput ValidateTerrainTexture(TerrainTextureInput? texture)
+    {
+        ArgumentNullException.ThrowIfNull(texture);
+        if (string.IsNullOrWhiteSpace(texture.AssetId) || texture.AssetId.Length > 256
+            || texture.PifBytes.IsEmpty)
+            throw new ArgumentException("UYA terrain texture input is invalid.", nameof(texture));
+        return texture;
+    }
+
     private static IReadOnlyList<TextureInventoryInput> BuildInventoryInputs(
         IReadOnlyList<StaticAssetInput> assets,
+        IReadOnlyList<TerrainTextureInput> terrainTextures,
         IReadOnlySet<int> stashedClassIds)
     {
         var result = new List<TextureInventoryInput>();
@@ -346,6 +394,14 @@ internal static class UyaStaticAssetComposer
                         && (asset.PreserveTextureIndexes || index < teamTextureCount)));
             }
         }
+        for (var index = 0; index < terrainTextures.Count; index++)
+            result.Add(new(
+                terrainTextures[index].AssetId,
+                TextureAssetFamily.Terrain,
+                0,
+                index,
+                TextureRole.Material,
+                terrainTextures[index].PifBytes));
         return result;
     }
 
@@ -527,10 +583,11 @@ internal static class UyaStaticAssetComposer
     private static void ValidateComposition(
         StaticAssetComposition result,
         IReadOnlyList<StaticAssetInput> assets,
-        IReadOnlyDictionary<StaticAssetInput, byte[]> modelBytes)
+        IReadOnlyDictionary<StaticAssetInput, byte[]> modelBytes,
+        IReadOnlyList<TerrainTextureInput> terrainTextures)
     {
         var header = LevelAssetReader.ReadHeader(result.HeaderBytes);
-        foreach (var family in Enum.GetValues<TextureAssetFamily>())
+        foreach (var family in StaticFamilies)
         {
             var offsets = FamilyOffsets(family);
             var expected = assets.Where(value => value.Family == family).ToArray();
@@ -567,6 +624,12 @@ internal static class UyaStaticAssetComposer
         if (header.SceneViewSize > result.AssetWadBytes.Length
             || header.DecompressedSize != result.AssetWadBytes.Length)
             throw new InvalidDataException("Composed UYA asset WAD size metadata failed verification.");
+        if (result.TerrainTextures.Count != terrainTextures.Count
+            || result.TerrainTextures.Select(value => value.AssetId)
+                .SequenceEqual(terrainTextures.Select(value => value.AssetId), StringComparer.Ordinal) == false
+            || result.TerrainTextures.Any(value => value.TextureId < 0
+                || value.TextureId >= header.TerrainTextureCount))
+            throw new InvalidDataException("Composed UYA terrain texture allocation failed verification.");
     }
 
     private static (int ModelCount, int ModelOffset, int TextureCount, int TextureOffset) FamilyOffsets(
@@ -598,18 +661,27 @@ internal static class UyaStaticAssetComposer
         ReadOnlySpan<byte> bytes,
         List<(int Start, int End)> occupiedRanges)
     {
+        var offset = ReservePrimaryPaletteBlock(bytes.Length, occupiedRanges);
+        output.Position = offset;
+        output.Write(bytes);
+        output.Position = output.Length;
+        return offset;
+    }
+
+    private static int ReservePrimaryPaletteBlock(
+        int length,
+        List<(int Start, int End)> occupiedRanges)
+    {
+        if (length <= 0) throw new ArgumentOutOfRangeException(nameof(length));
         var offset = 0;
         foreach (var range in occupiedRanges.OrderBy(value => value.Start))
         {
             offset = checked((offset + PaletteAlignment - 1) / PaletteAlignment * PaletteAlignment);
-            if (checked(offset + bytes.Length) <= range.Start) break;
+            if (checked(offset + length) <= range.Start) break;
             offset = Math.Max(offset, range.End);
         }
         offset = checked((offset + PaletteAlignment - 1) / PaletteAlignment * PaletteAlignment);
-        output.Position = offset;
-        output.Write(bytes);
-        occupiedRanges.Add((offset, checked(offset + bytes.Length)));
-        output.Position = output.Length;
+        occupiedRanges.Add((offset, checked(offset + length)));
         return offset;
     }
 

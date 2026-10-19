@@ -29,7 +29,8 @@ public static partial class TfragGltfExporter
         IReadOnlyList<Vector2?> packetReferenceTexCoords,
         IReadOnlyList<Vector2?> referenceTexCoords,
         IReadOnlyList<Vector3> positions,
-        TextureSize? textureSize)
+        TextureSize? textureSize,
+        bool preserveRepeatedTexCoordTiles)
     {
         var remap = new Dictionary<TfragPrimitiveVertexKey, uint>();
         var materialKey = new TfragMaterialKey(texture.TextureId, texture.ClampU, texture.ClampV);
@@ -76,7 +77,7 @@ public static partial class TfragGltfExporter
             return null;
         }
 
-        AdjustPrimitiveGroupTextureSeams(group, textureSize);
+        AdjustPrimitiveGroupTextureSeams(group, textureSize, preserveRepeatedTexCoordTiles);
         if (group.Normals.Count != group.Positions.Count)
         {
             ComputeNormals(group);
@@ -107,7 +108,10 @@ public static partial class TfragGltfExporter
             : null;
     }
 
-    private static void AdjustPrimitiveGroupTextureSeams(TfragPrimitiveGroup group, TextureSize? textureSize)
+    private static void AdjustPrimitiveGroupTextureSeams(
+        TfragPrimitiveGroup group,
+        TextureSize? textureSize,
+        bool preserveRepeatedTexCoordTiles)
     {
         if (textureSize is not { } resolvedTextureSize
             || group.Indices.Count < 3
@@ -170,7 +174,8 @@ public static partial class TfragGltfExporter
                 resolvedTextureSize,
                 repeatU: !group.ClampU,
                 repeatV: !group.ClampV,
-                normalizeClampedAxes: true);
+                normalizeClampedAxes: true,
+                preserveRepeatedTexCoordTiles: preserveRepeatedTexCoordTiles);
 
             expandedIndices.Add(GetExpandedVertexIndex(a, adjustedTexCoords[0]));
             expandedIndices.Add(GetExpandedVertexIndex(b, adjustedTexCoords[1]));

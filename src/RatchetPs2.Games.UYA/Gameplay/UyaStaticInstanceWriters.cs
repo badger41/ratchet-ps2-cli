@@ -9,11 +9,53 @@ public static class UyaClassIdListWriter
     {
         ArgumentNullException.ThrowIfNull(classIds);
         var values = classIds.Distinct().Order().ToArray();
+        return WriteOrdered(values);
+    }
+
+    public static byte[] Compose(ReadOnlySpan<byte> source, IEnumerable<int> requiredClassIds)
+    {
+        ArgumentNullException.ThrowIfNull(requiredClassIds);
+        var values = Read(source).ToList();
+        var known = values.ToHashSet();
+        foreach (var classId in requiredClassIds)
+        {
+            if (classId < 0) throw new InvalidDataException("UYA class IDs cannot be negative.");
+            if (known.Add(classId)) values.Add(classId);
+        }
+        return values.Count == ReadCount(source) ? source.ToArray() : WriteOrdered(values);
+    }
+
+    public static IReadOnlyList<int> Read(ReadOnlySpan<byte> source)
+    {
+        var count = ReadCount(source);
+        var values = new int[count];
+        for (var index = 0; index < count; index++)
+        {
+            var value = BinaryPrimitives.ReadInt32LittleEndian(
+                source.Slice(sizeof(int) + index * sizeof(int), sizeof(int)));
+            if (value < 0) throw new InvalidDataException("UYA class IDs cannot be negative.");
+            values[index] = value;
+        }
+        return values;
+    }
+
+    private static int ReadCount(ReadOnlySpan<byte> source)
+    {
+        if (source.Length < sizeof(int))
+            throw new InvalidDataException("UYA class ID list is missing its count.");
+        var count = BinaryPrimitives.ReadInt32LittleEndian(source);
+        if (count < 0 || (long)sizeof(int) + (long)count * sizeof(int) > source.Length)
+            throw new InvalidDataException("UYA class ID list count exceeds its payload.");
+        return count;
+    }
+
+    private static byte[] WriteOrdered(IReadOnlyList<int> values)
+    {
         if (values.Any(value => value < 0))
             throw new InvalidDataException("UYA class IDs cannot be negative.");
-        var output = new byte[checked((sizeof(int) + values.Length * sizeof(int) + 0xf) & ~0xf)];
-        BinaryPrimitives.WriteInt32LittleEndian(output, values.Length);
-        for (var index = 0; index < values.Length; index++)
+        var output = new byte[checked((sizeof(int) + values.Count * sizeof(int) + 0xf) & ~0xf)];
+        BinaryPrimitives.WriteInt32LittleEndian(output, values.Count);
+        for (var index = 0; index < values.Count; index++)
             BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(sizeof(int) + index * sizeof(int)), values[index]);
         return output;
     }

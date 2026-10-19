@@ -24,9 +24,15 @@ public static partial class GltfTexCoordUtils
             c,
             repeatU && !preserveRepeatedTexCoordTiles,
             repeatV && !preserveRepeatedTexCoordTiles,
-            normalizeClampedAxes);
+            normalizeClampedAxes && !repeatU,
+            normalizeClampedAxes && !repeatV);
         return textureSize is { } resolvedTextureSize
-            ? BiasTriangleTextureTileEdges(adjustedTexCoords, resolvedTextureSize, repeatU, repeatV)
+            ? BiasTriangleTextureTileEdges(
+                adjustedTexCoords,
+                resolvedTextureSize,
+                repeatU,
+                repeatV,
+                preserveRepeatedTexCoordTiles)
             : adjustedTexCoords;
     }
 
@@ -41,16 +47,17 @@ public static partial class GltfTexCoordUtils
         Vector2 c,
         bool repeatU,
         bool repeatV,
-        bool normalizeClampedAxes)
+        bool normalizeClampedU,
+        bool normalizeClampedV)
     {
         var u = repeatU
             ? UnwrapRepeatedAxis(a.X, b.X, c.X)
-            : normalizeClampedAxes
+            : normalizeClampedU
                 ? NormalizeClampedAxis(a.X, b.X, c.X)
                 : [a.X, b.X, c.X];
         var v = repeatV
             ? UnwrapRepeatedAxis(a.Y, b.Y, c.Y)
-            : normalizeClampedAxes
+            : normalizeClampedV
                 ? NormalizeClampedAxis(a.Y, b.Y, c.Y)
                 : [a.Y, b.Y, c.Y];
         return
@@ -176,20 +183,25 @@ public static partial class GltfTexCoordUtils
         Vector2[] texCoords,
         TextureSize textureSize,
         bool repeatU,
-        bool repeatV)
+        bool repeatV,
+        bool preserveRepeatedTexCoordTiles)
     {
-        var u = BiasTriangleTextureTileEdges(
-            texCoords[0].X,
-            texCoords[1].X,
-            texCoords[2].X,
-            textureSize.Width,
-            allowOuterTextureEdgeBias: !repeatU && ShouldAllowOuterTextureEdgeBias(texCoords[0].Y, texCoords[1].Y, texCoords[2].Y));
-        var v = BiasTriangleTextureTileEdges(
-            texCoords[0].Y,
-            texCoords[1].Y,
-            texCoords[2].Y,
-            textureSize.Height,
-            allowOuterTextureEdgeBias: !repeatV && ShouldAllowOuterTextureEdgeBias(texCoords[0].X, texCoords[1].X, texCoords[2].X));
+        var u = repeatU && preserveRepeatedTexCoordTiles
+            ? [texCoords[0].X, texCoords[1].X, texCoords[2].X]
+            : BiasTriangleTextureTileEdges(
+                texCoords[0].X,
+                texCoords[1].X,
+                texCoords[2].X,
+                textureSize.Width,
+                allowOuterTextureEdgeBias: !repeatU && ShouldAllowOuterTextureEdgeBias(texCoords[0].Y, texCoords[1].Y, texCoords[2].Y));
+        var v = repeatV && preserveRepeatedTexCoordTiles
+            ? [texCoords[0].Y, texCoords[1].Y, texCoords[2].Y]
+            : BiasTriangleTextureTileEdges(
+                texCoords[0].Y,
+                texCoords[1].Y,
+                texCoords[2].Y,
+                textureSize.Height,
+                allowOuterTextureEdgeBias: !repeatV && ShouldAllowOuterTextureEdgeBias(texCoords[0].X, texCoords[1].X, texCoords[2].X));
 
         return
         [

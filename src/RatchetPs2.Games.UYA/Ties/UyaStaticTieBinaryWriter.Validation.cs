@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using RatchetPs2.Games.UYA.Textures;
 using System.Numerics;
 using RatchetPs2.Core.Games;
 using RatchetPs2.Core.Ties;

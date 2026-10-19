@@ -3,15 +3,12 @@ using System.Numerics;
 using System.Security.Cryptography;
 using RatchetPs2.Core.Games;
 using RatchetPs2.Core.Gltf;
+using RatchetPs2.Games.UYA.Textures;
 
 namespace RatchetPs2.Games.UYA.Ties;
 
 internal static partial class UyaStaticTieComposer
 {
-    private const int Repeat = 10_497;
-    private const int MirroredRepeat = 33_648;
-    private const int ClampToEdge = 33_071;
-
     public static StaticModelNativeConversionResult Convert(
         StaticModelCanonicalAsset asset,
         int targetClassId,
@@ -20,7 +17,8 @@ internal static partial class UyaStaticTieComposer
         ArgumentNullException.ThrowIfNull(asset);
         cancellationToken.ThrowIfCancellationRequested();
         var prepared = Prepare(asset, targetClassId, cancellationToken);
-        var textureResult = BuildTextures(asset, prepared.Materials, prepared.Diagnostics, cancellationToken);
+        var textureResult = UyaStaticModelTextureConverter.Build(
+            asset, prepared.Materials, prepared.Diagnostics, int.MaxValue, cancellationToken);
         var binary = UyaStaticTieBinaryWriter.Write(prepared, textureResult.Materials, cancellationToken);
         var definition = new byte[0x20];
         BinaryPrimitives.WriteInt32LittleEndian(definition.AsSpan(4), targetClassId);
@@ -79,7 +77,7 @@ internal static partial class UyaStaticTieComposer
                 $"UYA TIE models support at most {StaticModelNativeLimits.MaximumMaterials} referenced materials; the source uses {sourceMaterials.Length}.");
         var materialIndexes = sourceMaterials.Select((value, index) => (Key: value ?? -1, Index: index))
             .ToDictionary(value => value.Key, value => value.Index);
-        var materials = sourceMaterials.Select((value, index) => PrepareMaterial(asset, value, index, diagnostics)).ToArray();
+        var materials = UyaStaticModelTextureConverter.PrepareMaterials(asset, diagnostics);
 
         var primitives = new List<PreparedPrimitive>(asset.Primitives.Count);
         foreach (var primitive in asset.Primitives)
@@ -151,67 +149,6 @@ internal static partial class UyaStaticTieComposer
                 packets.Sum(packet => packet.Strips.Sum(strip => strip.Vertices.Count)),
                 packets.Length);
         }
-    }
-
-    private static PreparedMaterial PrepareMaterial(
-        StaticModelCanonicalAsset asset,
-        int? sourceIndex,
-        int nativeIndex,
-        List<StaticModelNativeDiagnostic> diagnostics)
-    {
-        if (sourceIndex is null)
-            return new(nativeIndex, null, null, Vector4.One, "OPAQUE", 0.5f, false, false, false);
-        if (sourceIndex < 0 || sourceIndex >= asset.Materials.Count)
-            throw new InvalidDataException($"Source material {sourceIndex} is outside the canonical material table.");
-        var material = asset.Materials[sourceIndex.Value];
-        if (material.BaseColorFactor is null || material.BaseColorFactor.Length != 4
-            || material.BaseColorFactor.Any(value => !float.IsFinite(value) || value is < 0 or > 1))
-            throw new InvalidDataException($"Source material {sourceIndex} has an invalid base-color factor.");
-        if (material.AlphaMode is not ("OPAQUE" or "MASK" or "BLEND"))
-            throw new InvalidDataException($"Source material {sourceIndex} has unsupported alpha mode {material.AlphaMode}.");
-        if (!float.IsFinite(material.AlphaCutoff) || material.AlphaCutoff is < 0 or > 1)
-            throw new InvalidDataException($"Source material {sourceIndex} has an invalid alpha cutoff.");
-        if (material.MetallicFactor != 1f || material.RoughnessFactor != 1f)
-            diagnostics.Add(new("pbr-approximation", "UYA TIE materials do not retain metallic/roughness factors.", SourceMaterialIndex: sourceIndex));
-        int? imageIndex = null;
-        var clampU = false;
-        var clampV = false;
-        if (material.BaseColorTextureIndex is { } textureIndex)
-        {
-            if (textureIndex < 0 || textureIndex >= asset.Textures.Count)
-                throw new InvalidDataException($"Source material {sourceIndex} references missing texture {textureIndex}.");
-            var texture = asset.Textures[textureIndex];
-            if (texture.ImageIndex < 0 || texture.ImageIndex >= asset.Images.Count)
-                throw new InvalidDataException($"Source texture {textureIndex} references missing image {texture.ImageIndex}.");
-            if (texture.SamplerIndex < 0 || texture.SamplerIndex >= asset.Samplers.Count)
-                throw new InvalidDataException($"Source texture {textureIndex} references missing sampler {texture.SamplerIndex}.");
-            imageIndex = texture.ImageIndex;
-            var sampler = asset.Samplers[texture.SamplerIndex];
-            ValidateWrap(sampler.WrapS, sourceIndex.Value, textureIndex, "S");
-            ValidateWrap(sampler.WrapT, sourceIndex.Value, textureIndex, "T");
-            clampU = sampler.WrapS == ClampToEdge;
-            clampV = sampler.WrapT == ClampToEdge;
-            if (sampler.WrapS == MirroredRepeat || sampler.WrapT == MirroredRepeat)
-                diagnostics.Add(new("mirrored-repeat-approximation", "UYA TIE output maps mirrored repeat to repeat.", SourceMaterialIndex: sourceIndex, SourceTextureIndex: textureIndex));
-        }
-
-        return new(
-            nativeIndex,
-            sourceIndex,
-            imageIndex,
-            new(material.BaseColorFactor[0], material.BaseColorFactor[1], material.BaseColorFactor[2], material.BaseColorFactor[3]),
-            material.AlphaMode,
-            material.AlphaCutoff,
-            material.DoubleSided,
-            clampU,
-            clampV);
-    }
-
-    private static void ValidateWrap(int wrap, int materialIndex, int textureIndex, string axis)
-    {
-        if (wrap is not (Repeat or MirroredRepeat or ClampToEdge))
-            throw new InvalidDataException(
-                $"Source material {materialIndex}, texture {textureIndex} has unsupported {axis}-axis wrap mode {wrap}.");
     }
 
     private static StaticModelPrimitive RebaseRepeatTexCoords(
@@ -348,17 +285,6 @@ internal sealed record PreparedPrimitive(
     StaticModelPrimitive Source,
     int MaterialIndex,
     IReadOnlyList<UyaTrianglePacket> Packets);
-
-internal sealed record PreparedMaterial(
-    int NativeIndex,
-    int? SourceIndex,
-    int? ImageIndex,
-    Vector4 BaseColor,
-    string AlphaMode,
-    float AlphaCutoff,
-    bool DoubleSided,
-    bool ClampU,
-    bool ClampV);
 
 internal readonly record struct StaticVertexKey(
     float X,

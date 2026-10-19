@@ -26,6 +26,14 @@ public sealed record StaticAssetTexture(
     TextureRole Role,
     ReadOnlyMemory<byte> PifBytes);
 
+public sealed record TerrainTextureInput(
+    string AssetId,
+    ReadOnlyMemory<byte> PifBytes);
+
+public sealed record TerrainTextureAllocation(
+    string AssetId,
+    int TextureId);
+
 public sealed record StaticAssetInput(
     string AssetId,
     TextureAssetFamily Family,
@@ -40,4 +48,7 @@ public sealed record StaticAssetComposition(
     byte[] AssetWadBytes,
     byte[] PaletteBytes,
     TextureInventory Inventory,
-    PaletteOptimizationResult Optimization);
+    PaletteOptimizationResult Optimization)
+{
+    public IReadOnlyList<TerrainTextureAllocation> TerrainTextures { get; init; } = [];
+}
