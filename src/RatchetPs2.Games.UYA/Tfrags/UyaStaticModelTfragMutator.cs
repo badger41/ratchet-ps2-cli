@@ -44,27 +44,21 @@ internal static class UyaStaticModelTfragMutator
 
         if (firstOcclusionMappingIndex is { } firstMappingIndex)
         {
-            var missing = terrain.Chunks.Where(value => value.OcclusionIndex < 0).ToArray();
-            if (missing.Length > 0)
+            if (firstMappingIndex > terrain.Chunks.Count)
+                throw new InvalidDataException(
+                    "The first generated UYA tfrag occlusion mapping is outside the terrain inventory.");
+            if (terrain.Chunks.Take(firstMappingIndex).Any(value => value.OcclusionIndex != value.Index))
+                throw new InvalidDataException(
+                    "Source UYA tfrag occlusion indices do not match their gameplay mapping slots.");
+            if (terrain.Chunks.Count > short.MaxValue)
+                throw new InvalidDataException(
+                    "UYA tfrag occlusion mapping indices exceed signed 16-bit storage.");
+            foreach (var chunk in terrain.Chunks.Skip(firstMappingIndex))
             {
-                if (missing[0].Index != firstMappingIndex
-                    || !missing.Select(value => value.Index).SequenceEqual(
-                        Enumerable.Range(firstMappingIndex, missing.Length)))
-                    throw new InvalidDataException(
-                        "Generated UYA tfrags must form the unmapped tail of the terrain inventory.");
-                if (terrain.Chunks.Take(firstMappingIndex).Any(value => value.OcclusionIndex != value.Index))
-                    throw new InvalidDataException(
-                        "Source UYA tfrag occlusion indices do not match their gameplay mapping slots.");
-                if (terrain.Chunks.Count > short.MaxValue)
-                    throw new InvalidDataException(
-                        "UYA tfrag occlusion mapping indices exceed signed 16-bit storage.");
-                foreach (var chunk in missing)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    output[chunk.RecordOffset + 0x2B] = 0;
-                    BinaryPrimitives.WriteInt16LittleEndian(
-                        output.AsSpan(chunk.RecordOffset + 0x3A), checked((short)chunk.Index));
-                }
+                cancellationToken.ThrowIfCancellationRequested();
+                output[chunk.RecordOffset + 0x2B] = 0;
+                BinaryPrimitives.WriteInt16LittleEndian(
+                    output.AsSpan(chunk.RecordOffset + 0x3A), checked((short)chunk.Index));
             }
         }
 

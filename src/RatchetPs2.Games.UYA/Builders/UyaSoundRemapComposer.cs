@@ -1,9 +1,10 @@
 using System.Buffers.Binary;
 using RatchetPs2.Core.LevelAssets;
+using RatchetPs2.Core.Sounds;
 
 namespace RatchetPs2.Games.UYA.Builders;
 
-internal static class UyaSoundRemapComposer
+public static class UyaSoundRemapComposer
 {
     private const int HeaderSize = 8;
     private const int MobyConfigSize = 4;
@@ -63,6 +64,114 @@ internal static class UyaSoundRemapComposer
         WriteInt16(bytes, 4, outputSoundIdOffset);
         WriteInt16(bytes, 6, checked((short)soundIdCount));
         return bytes;
+    }
+
+    public static byte[] ComposeHeader(
+        ReadOnlySpan<byte> headerBytes,
+        SoundRemapComposition composition,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(composition);
+        cancellationToken.ThrowIfCancellationRequested();
+        var header = LevelAssetReader.ReadHeader(headerBytes);
+        var definitions = LevelAssetReader.ReadModelDefinitions(
+            headerBytes, header.MobyModelOffset, header.MobyModelCount);
+        var remap = Compose(composition, definitions.Select(value => value.ModelId).ToArray(), cancellationToken);
+        using var output = new MemoryStream(headerBytes.Length + remap.Length + 16);
+        output.Write(headerBytes);
+        while ((output.Position & 0x0f) != 0) output.WriteByte(0);
+        var offset = checked((int)output.Position);
+        output.Write(remap);
+        var bytes = output.ToArray();
+        BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(0x70, 4), offset);
+
+        var inspected = UyaSoundRemapReader.Inspect(bytes, composition.ProgramCount, cancellationToken);
+        if (!Equivalent(inspected, composition, definitions))
+            throw new InvalidDataException("UYA sound-remap composition failed semantic re-read validation.");
+        return bytes;
+    }
+
+    private static byte[] Compose(
+        SoundRemapComposition composition,
+        IReadOnlyList<int> targetClassIds,
+        CancellationToken cancellationToken)
+    {
+        if (composition.MobySlotsByClassId is null || composition.GlobalSlots is null
+            || composition.OpaqueOtherRecords is null
+            || composition.MobySlotsByClassId.Values.Any(value => value is null)
+            || composition.ProgramCount < 0 || composition.ProgramCount > short.MaxValue
+            || composition.OpaqueOtherRecords.Length % OtherConfigSize != 0
+            || composition.OpaqueOtherRecords.Length / OtherConfigSize > short.MaxValue
+            || targetClassIds.Count > short.MaxValue
+            || composition.GlobalSlots.Count > short.MaxValue)
+            throw new InvalidDataException("UYA sound-remap composition exceeds native table bounds.");
+        var knownClasses = targetClassIds.ToHashSet();
+        if (composition.MobySlotsByClassId.Keys.Any(value => !knownClasses.Contains(value)))
+            throw new InvalidDataException("UYA sound remap references a missing Moby definition.");
+
+        using var output = new MemoryStream();
+        output.Write(new byte[checked(HeaderSize + targetClassIds.Count * MobyConfigSize)]);
+        var otherOffset = ToInt16(output.Position, "other config offset");
+        output.Write(composition.OpaqueOtherRecords);
+        var globalOffset = ToInt16(output.Position, "sound ID offset");
+        WriteSlots(output, composition.GlobalSlots, composition.ProgramCount, nullable: false, "global", cancellationToken);
+        for (var index = 0; index < targetClassIds.Count; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!composition.MobySlotsByClassId.TryGetValue(targetClassIds[index], out var slots)
+                || slots.Count == 0) continue;
+            if (slots.Count > short.MaxValue)
+                throw new InvalidDataException("UYA Moby sound-remap slot count exceeds signed 16-bit bounds.");
+            var offset = ToInt16(output.Position, "moby sound list offset");
+            WriteSlots(output, slots, composition.ProgramCount, nullable: true,
+                $"Moby 0x{targetClassIds[index]:X4}", cancellationToken);
+            WriteInt16(output.GetBuffer(), HeaderSize + index * MobyConfigSize, offset);
+            WriteInt16(output.GetBuffer(), HeaderSize + index * MobyConfigSize + 2, checked((short)slots.Count));
+        }
+        var bytes = output.ToArray();
+        WriteInt16(bytes, 0, otherOffset);
+        WriteInt16(bytes, 2, checked((short)(composition.OpaqueOtherRecords.Length / OtherConfigSize)));
+        WriteInt16(bytes, 4, globalOffset);
+        WriteInt16(bytes, 6, checked((short)composition.GlobalSlots.Count));
+        return bytes;
+    }
+
+    private static void WriteSlots(
+        Stream output,
+        IReadOnlyList<int> slots,
+        int programCount,
+        bool nullable,
+        string owner,
+        CancellationToken cancellationToken)
+    {
+        Span<byte> bytes = stackalloc byte[4];
+        foreach (var value in slots)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (value >= programCount || value < 0 && !(nullable && value == -1))
+                throw new InvalidDataException($"UYA sound-remap {owner} references invalid program {value}.");
+            BinaryPrimitives.WriteInt32LittleEndian(bytes, value);
+            output.Write(bytes);
+        }
+    }
+
+    private static bool Equivalent(
+        SoundRemapInventory actual,
+        SoundRemapComposition expected,
+        IReadOnlyList<LevelAssetModelDefinition> definitions)
+    {
+        if (!actual.Globals.Select(value => value.NativeProgramIndex).SequenceEqual(expected.GlobalSlots)
+            || actual.OtherRecordCount * OtherConfigSize != expected.OpaqueOtherRecords.Length)
+            return false;
+        var actualByClass = actual.Mobys.ToDictionary(value => value.ClassId);
+        foreach (var definition in definitions)
+        {
+            var expectedSlots = expected.MobySlotsByClassId.GetValueOrDefault(definition.ModelId) ?? [];
+            if (!actualByClass.TryGetValue(definition.ModelId, out var remap)
+                || !remap.Slots.Select(value => value.NativeProgramIndex).SequenceEqual(expectedSlots))
+                return false;
+        }
+        return true;
     }
 
     private static ReadOnlySpan<byte> Slice(ReadOnlySpan<byte> bytes, int offset, int length, string name)

@@ -15,13 +15,30 @@ internal static partial class UyaStaticModelTfragWriter
         cancellationToken.ThrowIfCancellationRequested();
         if (pieces.Count == 0) return sourceTerrainBytes.ToArray();
 
+        var generatedBytes = Write(pieces, cancellationToken);
+        return AppendNative(sourceTerrainBytes, generatedBytes, cancellationToken);
+    }
+
+    public static byte[] AppendNative(
+        byte[] sourceTerrainBytes,
+        byte[] donorTerrainBytes,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(sourceTerrainBytes);
+        ArgumentNullException.ThrowIfNull(donorTerrainBytes);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (donorTerrainBytes.Length == 0)
+            throw new InvalidDataException("A donor tfrag owner payload is required.");
+
         var source = TfragTerrainReader.Read(sourceTerrainBytes);
         if (source.TfragTableOffset != TerrainHeaderSize)
             throw new InvalidDataException(
                 $"UYA tfrag append requires a 0x{TerrainHeaderSize:X} table offset; source uses 0x{source.TfragTableOffset:X}.");
-
-        var generatedBytes = Write(pieces, cancellationToken);
+        var generatedBytes = donorTerrainBytes;
         var generated = TfragTerrainReader.Read(generatedBytes);
+        if (generated.TfragTableOffset != TerrainHeaderSize)
+            throw new InvalidDataException(
+                $"UYA donor tfrag append requires a 0x{TerrainHeaderSize:X} table offset; donor uses 0x{generated.TfragTableOffset:X}.");
         var combinedCount = checked(source.TfragCount + generated.TfragCount);
         using var output = new MemoryStream();
         output.SetLength(checked(TerrainHeaderSize + combinedCount * RecordSize));

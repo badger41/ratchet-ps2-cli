@@ -57,7 +57,7 @@ public static class UyaCollisionAdditionTransformer
                 ? new(face.Type, a, face.IsQuad ? d : c, face.IsQuad ? c : b,
                     face.IsQuad ? b : default, face.IsQuad)
                 : new(face.Type, a, b, c, d, face.IsQuad);
-            if (Representable(transformed)) faces.Add(transformed);
+            if (Representable(transformed) is { } representable) faces.Add(representable);
         }
         return new(additionId, faces);
     }
@@ -78,16 +78,19 @@ public static class UyaCollisionAdditionTransformer
             * Matrix4x4.CreateTranslation(position);
     }
 
-    private static bool Representable(UyaCollisionSolidFace face)
+    private static UyaCollisionSolidFace? Representable(UyaCollisionSolidFace face)
     {
-        if (face.A == face.B || face.A == face.C || face.B == face.C
-            || face.IsQuad && (face.D == face.A || face.D == face.B || face.D == face.C))
-            return false;
+        var firstDegenerate = face.A == face.B || face.A == face.C || face.B == face.C;
         var ab = face.B.Position - face.A.Position;
         var ac = face.C.Position - face.A.Position;
-        if (Vector3.Cross(ab, ac).LengthSquared() <= float.Epsilon) return false;
-        return !face.IsQuad
-            || Vector3.Cross(ac, face.D.Position - face.A.Position).LengthSquared() > float.Epsilon;
+        firstDegenerate |= Vector3.Cross(ab, ac).LengthSquared() <= float.Epsilon;
+        if (!face.IsQuad) return firstDegenerate ? null : face;
+        var secondDegenerate = face.D == face.A || face.D == face.B || face.D == face.C
+            || Vector3.Cross(ac, face.D.Position - face.A.Position).LengthSquared() <= float.Epsilon;
+        if (!firstDegenerate && !secondDegenerate) return face;
+        if (!firstDegenerate) return face with { D = default, IsQuad = false };
+        if (!secondDegenerate) return new(face.Type, face.A, face.C, face.D, default, IsQuad: false);
+        return null;
     }
 
     private static UyaCollisionVertex TransformVertex(UyaCollisionVertex value, Matrix4x4 matrix) =>

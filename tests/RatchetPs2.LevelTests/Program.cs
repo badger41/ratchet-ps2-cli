@@ -210,6 +210,29 @@ if (args.Contains("--uya-inventory", StringComparer.Ordinal))
     return;
 }
 
+if (args.Contains("--uya-lighting", StringComparer.Ordinal))
+{
+    ValidateUyaGameplayLightingParsing();
+    Console.WriteLine("UYA gameplay lighting contract tests passed.");
+    return;
+}
+
+if (args.Contains("--uya-geometry", StringComparer.Ordinal))
+{
+    ValidateGameplayGeometryParsing();
+    Console.WriteLine("UYA gameplay geometry contract tests passed.");
+    return;
+}
+
+if (args.Contains("--uya-sound-contract", StringComparer.Ordinal))
+{
+    UyaSoundBankContractTests.Run();
+    SoundBankReaderTests.Run();
+    ValidateUyaStaticAssetComposition();
+    Console.WriteLine("UYA 989snd bank and remap contract tests passed.");
+    return;
+}
+
 DlExecutableQualification.RunUnitTests();
 DlBootIsoQualification.RunUnitTests();
 StaticModelGltfImporterTests.Run();
@@ -236,6 +259,8 @@ ValidateUyaLevelInfoLookup();
 ValidateUyaLevelWadParsing();
 ValidateUyaLevelWadInventory();
 ValidateUyaLevelWadInventoryWhenAvailable();
+UyaSoundBankContractTests.Run();
+SoundBankReaderTests.Run();
 ValidateUyaLevelArchiveBuilder();
 ValidateUyaLevelAssetComposer();
 ValidateIsoPatchPlanning();
@@ -1397,6 +1422,18 @@ static void ValidateUyaLevelAssetComposer()
     var unchanged = LevelAssetComposer.ComposeAssetWad(GameId.UYA, header, assets, new());
     Expect(unchanged.HeaderBytes.SequenceEqual(header) && unchanged.AssetWadBytes.SequenceEqual(assets),
         "UYA asset composer no-op should remain byte-identical");
+
+    var noSkyHeader = header.ToArray();
+    WriteInt32(noSkyHeader, 0x10, 0);
+    var insertedSky = Enumerable.Repeat((byte)0x99, 0x21).ToArray();
+    var skyInsertion = LevelAssetComposer.ComposeAssetWad(
+        GameId.UYA, noSkyHeader, assets, new(Sky: insertedSky));
+    var skyInsertionHeader = LevelAssetReader.ReadHeader(skyInsertion.HeaderBytes);
+    Expect(skyInsertionHeader.SkyOffset == assets.Length
+        && skyInsertionHeader.SceneViewSize == skyInsertion.AssetWadBytes.Length
+        && skyInsertionHeader.DecompressedSize == skyInsertion.AssetWadBytes.Length
+        && skyInsertion.AssetWadBytes.AsSpan(skyInsertionHeader.SkyOffset).SequenceEqual(insertedSky),
+        "UYA asset composer should insert a sky when the source level has no sky payload");
 
     var zeroTerrainHeader = new byte[0x120];
     WriteInt32(zeroTerrainHeader, 0x08, 0);
@@ -3016,6 +3053,9 @@ static void ValidateUyaGameplayTypedParsing()
     var routedOcclusion = UyaOcclusionGridReader.ReadLevelAsset(assetHeader, assetWad);
     Expect(routedOcclusion.Octants.Single() == new UyaOcclusionOctant(3, 2, 1, 0),
         "UYA occlusion grid should be located through the level asset header");
+    Expect(UyaOcclusionGridReader.ReadLevelAssetPayload(assetHeader, assetWad)
+            .SequenceEqual(occlusionBytes),
+        "UYA occlusion payload extraction should preserve the native grid bytes");
     var alwaysVisible = LevelAssetComposer.SetAlwaysVisibleOcclusionBit(
         GameId.UYA, assetHeader, assetWad, 42);
     var alwaysVisibleHeader = LevelAssetReader.ReadHeader(alwaysVisible.HeaderBytes);
@@ -3209,8 +3249,16 @@ static void ValidateUyaStaticInstanceParsing()
         && BinaryPrimitives.ReadInt32LittleEndian(shrubTemplate.AsSpan(0x50)) == 255,
         "UYA shrub templates should contain safe draw-distance and neutral-light defaults");
     var mobyTemplate = UyaGameplayInstanceTemplates.CreateMoby(0x1400, 9);
-    Expect(UyaMobyInstancesReader.ReadInstance(mobyTemplate) is { ClassId: 0x1400, Uid: 9 },
-        "UYA moby templates should expose their assigned UID");
+    Expect(UyaMobyInstancesReader.ReadInstance(mobyTemplate) is
+        { ClassId: 0x1400, Uid: 9, Mission: -1, Unknown64: 1, Unknown84: -1 },
+        "UYA moby templates should expose their assigned UID and retail always-active sentinels");
+    WriteInt32(mobyTemplate, 0x04, 0);
+    WriteInt32(mobyTemplate, 0x64, 0);
+    WriteInt32(mobyTemplate, 0x84, 0);
+    Expect(UyaMobyInstancesReader.ReadInstance(
+            UyaGameplayInstanceTemplates.NormalizePlacedMoby(mobyTemplate)) is
+        { Mission: -1, Unknown64: 1, Unknown84: -1 },
+        "UYA placed Moby normalization should repair the legacy inactive template sentinels");
     Expect(UyaGameplayInstanceTemplates.CreateNeutralTieAmbient(4)
             .SequenceEqual(new byte[] { 0x80, 0x80, 0x80, 0 }),
         "UYA neutral tie ambient data should retain its retail word layout");
@@ -3411,6 +3459,7 @@ static void ValidateGameplayGeometryParsing()
     WriteInt32(areaBytes, 4, 1);
     WriteInt32(areaBytes, 8, 0x50);
     WriteInt32(areaBytes, 0x0c, 0x54);
+    areaBytes[0x1c] = 0x7d;
     WriteSingle(areaBytes, 0x24, 10);
     WriteSingle(areaBytes, 0x28, 20);
     WriteSingle(areaBytes, 0x2c, 30);
@@ -3459,11 +3508,14 @@ static void ValidateGameplayGeometryParsing()
         Expect(geometry.Value.Spheres.Single().Matrix[15] == 4, $"{geometry.Game} sphere should be parsed");
         Expect(geometry.Value.Cylinders.Single().InverseRotationMatrix[0] == 5, $"{geometry.Game} cylinder should be parsed");
         Expect(geometry.Value.Pills.Single().Rotation.Z == 0.75f, $"{geometry.Game} pill should be parsed");
-        Expect(geometry.Value.Splines.Single().Points[1].W == 8, $"{geometry.Game} spline points should be parsed");
+        Expect(geometry.Value.Splines.Single().Points[1].W == 8
+            && geometry.Value.Splines.Single().NativeHeader.Length == 0x0c,
+            $"{geometry.Game} spline points and native header should be parsed");
         var grindPath = geometry.Value.GrindPaths.Single();
         Expect(grindPath.BoundingSphere.W == 40 && grindPath.Unknown4 == 11
-            && grindPath.Wrap == 1 && grindPath.Inactive == 2 && grindPath.Points[1].W == 8,
-            $"{geometry.Game} grind path should be parsed");
+            && grindPath.Wrap == 1 && grindPath.Inactive == 2 && grindPath.Points[1].W == 8
+            && grindPath.NativeRecord.Length == 0x20 && grindPath.NativeHeader.Length == 0x0c,
+            $"{geometry.Game} grind path and native metadata should be parsed");
         Expect(geometry.Value.Areas.Single().SplineIndices.SequenceEqual([7]), $"{geometry.Game} area spline links should be parsed");
         Expect(geometry.Value.Areas.Single().CuboidIndices.SequenceEqual([9]), $"{geometry.Game} area cuboid links should be parsed");
     }
@@ -3505,6 +3557,61 @@ static void ValidateGameplayGeometryParsing()
         && rebuiltGrindPath.BoundingSphere.Z == 58
         && rebuiltGrindPath.Unknown4 == 11 && rebuiltGrindPath.Wrap == 1 && rebuiltGrindPath.Inactive == 2,
         "UYA grind-path writer should rebuild points and bounds while preserving metadata");
+
+    var parsedSpline = GameplayGeometryReader.ReadSplines(splineBytes).Single();
+    var composedSplines = GameplayGeometryReader.ReadSplines(UyaSplineInstancesWriter.Compose(splineBytes,
+    [
+        new(parsedSpline.Points.Select(point => new UyaVector4(point.X, point.Y, point.Z, point.W)).ToArray(),
+            parsedSpline.NativeHeader, new(0, 0, 0), new(0, 0, 0, 1), new(1, 1, 1)),
+        new([new(2, 3, 4, 5)], Enumerable.Repeat((byte)0x5a, 0x0c).ToArray(),
+            new(10, 20, 30), new(0, 0, 0, 1), new(2, 3, 4)),
+    ]));
+    Expect(composedSplines.Length == 2
+        && composedSplines[0].NativeHeader[8] == 0x7f
+        && composedSplines[1].Points.Single() == new GameplayVector4(14, 29, 46, 5)
+        && composedSplines[1].NativeHeader.All(value => value == 0x5a),
+        "UYA spline composition should append transformed paths and preserve each native header");
+
+    var parsedPath = GameplayGeometryReader.ReadGrindPaths(grindPathBytes).Single();
+    var secondPathRecord = parsedPath.NativeRecord.ToArray();
+    WriteInt32(secondPathRecord, 0x10, 27);
+    var composedPaths = GameplayGeometryReader.ReadGrindPaths(UyaGrindPathInstancesWriter.Compose(grindPathBytes,
+    [
+        new(parsedPath.Points.Select(point => new UyaVector4(point.X, point.Y, point.Z, point.W)).ToArray(),
+            parsedPath.NativeRecord, parsedPath.NativeHeader,
+            new(0, 0, 0), new(0, 0, 0, 1), new(1, 1, 1)),
+        new([new(2, 3, 4, 5)], secondPathRecord, Enumerable.Repeat((byte)0x6b, 0x0c).ToArray(),
+            new(10, 20, 30), new(0, 0, 0, 1), new(2, 3, 4)),
+    ]));
+    Expect(composedPaths.Length == 2
+        && composedPaths[0].NativeRecord[0x1c] == 0x7f
+        && composedPaths[1].Unknown4 == 27
+        && composedPaths[1].Points.Single() == new GameplayVector4(14, 29, 46, 5)
+        && composedPaths[1].NativeHeader.All(value => value == 0x6b),
+        "UYA grind-path composition should append transformed paths and preserve native metadata");
+
+    var parsedArea = GameplayGeometryReader.ReadAreas(areaBytes).Single();
+    var composedAreaBytes = UyaAreaInstancesWriter.Compose(areaBytes,
+    [
+        new(new(parsedArea.BoundingSphere.X, parsedArea.BoundingSphere.Y,
+                parsedArea.BoundingSphere.Z, parsedArea.BoundingSphere.W),
+            parsedArea.LastUpdateTime, parsedArea.SplineIndices, parsedArea.CuboidIndices,
+            parsedArea.SphereIndices, parsedArea.CylinderIndices, parsedArea.NegativeCuboidIndices),
+        new(new(50, 60, 70, 80), 13, [2, 5], [4], [6], [8], [10]),
+    ]);
+    var composedAreas = GameplayGeometryReader.ReadAreas(composedAreaBytes);
+    Expect(composedAreas.Length == 2
+        && composedAreas[0].SplineIndices.SequenceEqual([7])
+        && composedAreas[0].CuboidIndices.SequenceEqual([9])
+        && composedAreas[1].BoundingSphere == new GameplayVector4(50, 60, 70, 80)
+        && composedAreas[1].LastUpdateTime == 13
+        && composedAreas[1].SplineIndices.SequenceEqual([2, 5])
+        && composedAreas[1].CuboidIndices.SequenceEqual([4])
+        && composedAreas[1].SphereIndices.SequenceEqual([6])
+        && composedAreas[1].CylinderIndices.SequenceEqual([8])
+        && composedAreas[1].NegativeCuboidIndices.SequenceEqual([10])
+        && composedAreaBytes[0x1c] == 0x7d,
+        "UYA area composition should rebuild all typed link tables and preserve header metadata");
 }
 
 static void ValidateUyaGameplayLightingParsing()
@@ -3588,6 +3695,21 @@ static void ValidateUyaGameplayLightingParsing()
     Expect(editedDirectional.InverseDirection.X == -0.75f
         && editedDirectional.TopDirection.W == -1 && editedDirectional.TopColor.X == 0.25f,
         "UYA directional-light writer should rotate directions and preserve other fields");
+    directional[4] = 0x44;
+    var replacementLights = new[]
+    {
+        new UyaDirectionalLight(0,
+            new(1, 2, 3, 4), new(5, 6, 7, 8), new(9, 10, 11, 12), new(13, 14, 15, 16)),
+        new UyaDirectionalLight(1,
+            new(17, 18, 19, 20), new(21, 22, 23, 24), new(25, 26, 27, 28), new(29, 30, 31, 32)),
+    };
+    var replacedDirectional = UyaDirectionalLightsWriter.Replace(directional, replacementLights);
+    var rereadDirectional = UyaGameplayLightingReader.ReadDirectionalLights(replacedDirectional);
+    Expect(rereadDirectional.Length == 2 && rereadDirectional[1].InverseDirection.W == 32
+        && replacedDirectional[4] == 0x44,
+        "UYA directional-light replacement should rebuild differing counts and preserve target header words");
+    Expect(UyaDirectionalLightsWriter.Replace([], []).Length == 0x10,
+        "UYA directional-light replacement should create an empty native table from an absent source section");
     Expect(lighting.PointLights.MasksMatchDerived
         && lighting.PointLights.Lights.Single().Position == new GameplayVector3(32, 16, 8)
         && lighting.PointLights.Lights.Single().ColorR == 0xffff,
@@ -3641,6 +3763,11 @@ static void ValidateUyaGameplayLightingParsing()
     var rebuiltGroups = UyaTieGroupsReader.Read(UyaTieGroupsWriter.Remap(groups, [0, 0, 2]));
     Expect(rebuiltGroups.Groups.Single().SequenceEqual(new[] { 0, 1, 2 }),
         "UYA tie group writer should duplicate and renumber tie references");
+    var writtenGroups = UyaTieGroupsReader.Read(UyaTieGroupsWriter.Write(
+        new IReadOnlyList<int>[] { [3, 1], [] }));
+    Expect(writtenGroups.Groups[0].SequenceEqual(new[] { 3, 1 })
+        && writtenGroups.Groups[1].Length == 0,
+        "UYA tie group writer should encode explicit group membership");
 
     var occlusion = new byte[0x30];
     WriteInt32(occlusion, 0, 1);
@@ -5972,6 +6099,14 @@ static void ValidateFxTextureComposition()
     Expect(inventory.Entries[0].PaletteOffset != inventory.Entries[1].PaletteOffset
         && inventory.Entries[0].PaletteOffset != inventory.Entries[2].PaletteOffset,
         "FX edits should own private appended palette storage");
+
+    var replacedBank = FxTextureCatalog.ReplaceAll(
+        GameId.UYA, fixture.Header, fixture.Asset, [replacement]);
+    var replacedInventory = FxTextureCatalog.Read(
+        GameId.UYA, replacedBank.HeaderBytes, replacedBank.AssetBytes);
+    Expect(replacedInventory.Entries.Count == 1
+        && PifMatches(replacedInventory.Entries[0].CanonicalTextureBytes, replacement),
+        "whole-bank FX replacement should shrink the inventory and preserve exact indexed data");
 
     var splitFixture = CreateFxTextureFixture(includeInterveningPayload: true);
     var splitComposition = FxTextureCatalog.Compose(

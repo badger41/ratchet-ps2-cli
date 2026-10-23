@@ -37,7 +37,7 @@ public static class UyaCollisionComposer
         bool completeState,
         CancellationToken cancellationToken)
     {
-        var prepared = Prepare(sourceBytes, edits, additions, completeState, cancellationToken);
+        var prepared = Prepare(sourceBytes, edits, additions, [], completeState, cancellationToken);
         if (prepared.EffectiveEdits.Count == 0 && additions.Count > 0)
         {
             return UyaCollisionWriter.AnalyzePreservingSourceOctants(
@@ -60,29 +60,40 @@ public static class UyaCollisionComposer
         IReadOnlyList<UyaCollisionPieceEdit> edits,
         IReadOnlyList<UyaCollisionSolidAddition> additions,
         CancellationToken cancellationToken = default)
-        => Compose(sourceBytes, edits, additions, completeState: false, cancellationToken);
+        => Compose(sourceBytes, edits, additions, [], completeState: false, cancellationToken);
 
     public static UyaCollisionComposition ComposeComplete(
         byte[] sourceBytes,
         IReadOnlyList<UyaCollisionPieceEdit> pieces,
         IReadOnlyList<UyaCollisionSolidAddition> additions,
+        CancellationToken cancellationToken = default) => ComposeComplete(
+            sourceBytes, pieces, additions, [], cancellationToken);
+
+    public static UyaCollisionComposition ComposeComplete(
+        byte[] sourceBytes,
+        IReadOnlyList<UyaCollisionPieceEdit> pieces,
+        IReadOnlyList<UyaCollisionSolidAddition> additions,
+        IReadOnlyList<UyaCollisionPlayerBarrier> playerBarriers,
         CancellationToken cancellationToken = default) =>
-        Compose(sourceBytes, pieces, additions, completeState: true, cancellationToken);
+        Compose(sourceBytes, pieces, additions, playerBarriers, completeState: true, cancellationToken);
 
     private static UyaCollisionComposition Compose(
         byte[] sourceBytes,
         IReadOnlyList<UyaCollisionPieceEdit> edits,
         IReadOnlyList<UyaCollisionSolidAddition> additions,
+        IReadOnlyList<UyaCollisionPlayerBarrier> playerBarriers,
         bool completeState,
         CancellationToken cancellationToken)
     {
-        var prepared = Prepare(sourceBytes, edits, additions, completeState, cancellationToken);
+        var prepared = Prepare(
+            sourceBytes, edits, additions, playerBarriers, completeState, cancellationToken);
         if (!prepared.Changed)
         {
             return new(sourceBytes, false, []);
         }
 
-        if (prepared.EffectiveEdits.Count == 0 && additions.Count > 0)
+        if (prepared.EffectiveEdits.Count == 0
+            && additions.Count > 0 && playerBarriers.Count == 0)
         {
             var preserved = UyaCollisionWriter.WritePreservingSourceOctants(
                 prepared.NativeSource!, prepared.Collision, prepared.AdditionIds, cancellationToken);
@@ -122,12 +133,14 @@ public static class UyaCollisionComposer
         byte[] sourceBytes,
         IReadOnlyList<UyaCollisionPieceEdit> edits,
         IReadOnlyList<UyaCollisionSolidAddition> additions,
+        IReadOnlyList<UyaCollisionPlayerBarrier> playerBarriers,
         bool completeState,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(sourceBytes);
         ArgumentNullException.ThrowIfNull(edits);
         ArgumentNullException.ThrowIfNull(additions);
+        ArgumentNullException.ThrowIfNull(playerBarriers);
         ValidateAdditions(additions, cancellationToken);
         var byKey = new Dictionary<(UyaCollisionPieceKind Kind, int Index), UyaCollisionPieceEdit>();
         foreach (var sourceEdit in edits)
@@ -143,7 +156,8 @@ public static class UyaCollisionComposer
         }
 
         var hasExplicitEdits = byKey.Values.Any(IsEffective);
-        var nativeSource = additions.Count > 0 && (completeState || !hasExplicitEdits)
+        var nativeSource = (additions.Count > 0 || playerBarriers.Count > 0)
+            && (completeState || !hasExplicitEdits)
             ? UyaCollisionReader.ReadNative(sourceBytes)
             : null;
         var source = nativeSource?.Collision ?? UyaCollisionReader.Read(sourceBytes);
@@ -162,7 +176,7 @@ public static class UyaCollisionComposer
             .OrderBy(edit => edit.Kind)
             .ThenBy(edit => edit.SourcePieceIndex)
             .ToArray();
-        if (effective.Length == 0 && additions.Count == 0)
+        if (effective.Length == 0 && additions.Count == 0 && playerBarriers.Count == 0)
         {
             return new(source, [], new Dictionary<int, string>(), false, null);
         }
@@ -213,6 +227,14 @@ public static class UyaCollisionComposer
                     TransformVertices(barrier.Vertices, transform, cancellationToken),
                     barrier.Triangles));
             }
+        }
+
+        for (var index = 0; index < playerBarriers.Count; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var barrier = playerBarriers[index];
+            ArgumentNullException.ThrowIfNull(barrier);
+            barriers.Add(barrier with { SourceIndex = checked(source.PlayerBarriers.Count + index) });
         }
 
         var expected = new UyaMapCollision(solidPieces, barriers, 0, 0, 0);

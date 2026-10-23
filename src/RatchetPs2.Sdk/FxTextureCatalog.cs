@@ -131,6 +131,23 @@ public static class FxTextureCatalog
             _ => throw new NotSupportedException($"FX texture composition is not supported for {gameId}."),
         };
 
+    public static FxTextureComposition ReplaceAll(
+        GameId gameId,
+        ReadOnlySpan<byte> headerBytes,
+        ReadOnlySpan<byte> storedAssetBytes,
+        IReadOnlyList<FxIndexedTexture> textures,
+        FxTextureCompositionOptions? options = null,
+        CancellationToken cancellationToken = default) => gameId switch
+        {
+            GameId.UYA => UyaFxTextureComposer.ReplaceAll(
+                headerBytes,
+                storedAssetBytes,
+                textures,
+                options,
+                cancellationToken),
+            _ => throw new NotSupportedException($"Whole-bank FX replacement is not supported for {gameId}."),
+        };
+
     public static string GetLabel(GameId gameId, int index)
     {
         var special = index switch

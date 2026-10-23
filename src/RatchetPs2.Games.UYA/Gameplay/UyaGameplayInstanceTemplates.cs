@@ -37,6 +37,7 @@ public static class UyaGameplayInstanceTemplates
         if (uid < 0) throw new ArgumentOutOfRangeException(nameof(uid));
         var bytes = new byte[UyaMobyInstancesReader.RecordSize];
         BinaryPrimitives.WriteInt32LittleEndian(bytes, UyaMobyInstancesReader.RecordSize);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(0x04), -1);
         BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(0x10), uid);
         BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(0x28), classId);
         BinaryPrimitives.WriteSingleLittleEndian(bytes.AsSpan(0x2c), 1);
@@ -45,8 +46,10 @@ public static class UyaGameplayInstanceTemplates
         BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(0x38), 32);
         BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(0x3c), 64);
         BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(0x58), -1);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(0x64), 1);
         BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(0x68), -1);
         WriteNeutralRgb(bytes, 0x74);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(0x84), -1);
         return bytes;
     }
 
@@ -86,7 +89,16 @@ public static class UyaGameplayInstanceTemplates
     public static byte[] NormalizePlacedMoby(ReadOnlySpan<byte> source)
     {
         RequireSize(source, UyaMobyInstancesReader.RecordSize, "moby");
-        return NormalizePlacedRgb96(source, 0x74);
+        var normalized = NormalizePlacedRgb96(source, 0x74);
+        if (BinaryPrimitives.ReadInt32LittleEndian(source[0x04..]) == 0
+            && BinaryPrimitives.ReadInt32LittleEndian(source[0x64..]) == 0
+            && BinaryPrimitives.ReadInt32LittleEndian(source[0x84..]) == 0)
+        {
+            BinaryPrimitives.WriteInt32LittleEndian(normalized.AsSpan(0x04), -1);
+            BinaryPrimitives.WriteInt32LittleEndian(normalized.AsSpan(0x64), 1);
+            BinaryPrimitives.WriteInt32LittleEndian(normalized.AsSpan(0x84), -1);
+        }
+        return normalized;
     }
 
     private static byte[] NormalizePlacedRgb96(ReadOnlySpan<byte> source, int offset)

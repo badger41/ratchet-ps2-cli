@@ -61,4 +61,51 @@ public static class UyaFxTextureComposer
             throw new InvalidDataException("Composed FX asset payload exceeds the configured stored-size limit.");
         return new(relocated.HeaderBytes, outputAsset, false);
     }
+
+    public static FxTextureComposition ReplaceAll(
+        ReadOnlySpan<byte> headerBytes,
+        ReadOnlySpan<byte> storedAssetBytes,
+        IReadOnlyList<FxIndexedTexture> textures,
+        FxTextureCompositionOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        options ??= new();
+        if (storedAssetBytes.Length > options.MaximumStoredAssetBytes)
+            throw new InvalidDataException("Stored FX asset payload exceeds the configured size limit.");
+
+        var stored = storedAssetBytes.ToArray();
+        var wasCompressed = BinaryMagic.IsWad(stored);
+        var sourceAsset = wasCompressed
+            ? WadCompression.Decompress(
+                stored,
+                new WadDecompressionOptions(options.MaximumDecompressedAssetBytes),
+                cancellationToken)
+            : stored;
+        var header = LevelAssetReader.ReadHeader(headerBytes);
+        var fxDataEnd = UyaLevelAssetComposer.FindPayloadEnd(
+            headerBytes, sourceAsset, header.FxTextureDataOffset);
+        var fxComposition = FxTextureComposer.ReplaceAll(
+            headerBytes,
+            sourceAsset.AsSpan(0, fxDataEnd),
+            textures,
+            options,
+            cancellationToken);
+        var relocated = UyaLevelAssetComposer.ComposeAssetWad(
+            fxComposition.HeaderBytes,
+            sourceAsset,
+            new(Fx: fxComposition.AssetBytes.AsMemory(header.FxTextureDataOffset)),
+            cancellationToken);
+        var outputAsset = wasCompressed
+            ? WadCompression.CompressVerified(
+                relocated.AssetWadBytes,
+                new WadDecompressionOptions(options.MaximumDecompressedAssetBytes),
+                cancellationToken).CompressedBytes
+            : relocated.AssetWadBytes;
+        if (outputAsset.Length > options.MaximumStoredAssetBytes)
+            throw new InvalidDataException("Composed FX asset payload exceeds the configured stored-size limit.");
+        var inventory = FxTextureInventoryReader.Read(relocated.HeaderBytes, relocated.AssetWadBytes, cancellationToken);
+        if (inventory.Count != textures.Count)
+            throw new InvalidDataException("Composed UYA FX replacement has an unexpected texture count.");
+        return new(relocated.HeaderBytes, outputAsset, false);
+    }
 }

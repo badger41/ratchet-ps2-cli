@@ -127,6 +127,96 @@ public static class FxTextureComposer
         return new(outputHeader, outputStoredAsset, false);
     }
 
+    public static FxTextureComposition ReplaceAll(
+        ReadOnlySpan<byte> headerBytes,
+        ReadOnlySpan<byte> storedAssetBytes,
+        IReadOnlyList<FxIndexedTexture> textures,
+        FxTextureCompositionOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(textures);
+        options ??= new();
+        ValidateOptions(options);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (textures.Count == 0)
+            throw new InvalidDataException("FX replacement must contain at least one texture.");
+        if (textures.Count > FxTextureInventoryReader.MaximumTextureCount)
+            throw new InvalidDataException("FX replacement exceeds the texture-count limit.");
+        if (headerBytes.Length > options.MaximumHeaderBytes)
+            throw new InvalidDataException("FX asset header exceeds the configured size limit.");
+        if (storedAssetBytes.Length > options.MaximumStoredAssetBytes)
+            throw new InvalidDataException("Stored FX asset payload exceeds the configured size limit.");
+
+        var sourceHeader = headerBytes.ToArray();
+        var sourceStoredAsset = storedAssetBytes.ToArray();
+        var wasCompressed = BinaryMagic.IsWad(sourceStoredAsset);
+        var sourceAsset = wasCompressed
+            ? WadCompression.Decompress(
+                sourceStoredAsset,
+                new WadDecompressionOptions(options.MaximumDecompressedAssetBytes),
+                cancellationToken)
+            : sourceStoredAsset;
+        _ = FxTextureInventoryReader.Read(sourceHeader, sourceAsset, cancellationToken);
+        var dataOffset = BinaryPrimitives.ReadInt32LittleEndian(
+            sourceHeader.AsSpan(FxTextureInventoryReader.DataOffset));
+        var cursor = (long)dataOffset;
+        var plans = new List<PlannedTexture>(textures.Count);
+        for (var index = 0; index < textures.Count; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ValidateTexture(textures[index], $"FX replacement {index}");
+            plans.Add(Plan(index, textures[index], dataOffset, ref cursor, options));
+        }
+
+        var definitionsOffset = checked((int)Align(sourceHeader.Length, 4));
+        var headerLength = checked(definitionsOffset
+            + checked(textures.Count * FxTextureInventoryReader.DefinitionLength));
+        if (headerLength > options.MaximumHeaderBytes)
+            throw new InvalidDataException("Composed FX asset header exceeds the configured size limit.");
+        var outputHeader = new byte[headerLength];
+        sourceHeader.CopyTo(outputHeader, 0);
+        BinaryPrimitives.WriteInt32LittleEndian(
+            outputHeader.AsSpan(FxTextureInventoryReader.CountOffset), textures.Count);
+        BinaryPrimitives.WriteInt32LittleEndian(
+            outputHeader.AsSpan(FxTextureInventoryReader.DefinitionsOffset), definitionsOffset);
+        foreach (var plan in plans)
+            WriteDefinition(outputHeader.AsSpan(
+                definitionsOffset + plan.Index * FxTextureInventoryReader.DefinitionLength,
+                FxTextureInventoryReader.DefinitionLength), plan);
+
+        var outputAsset = new byte[checked((int)cursor)];
+        sourceAsset.AsSpan(0, dataOffset).CopyTo(outputAsset);
+        foreach (var plan in plans)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            plan.Texture.PaletteBytes.Span.CopyTo(
+                outputAsset.AsSpan(dataOffset + plan.PaletteOffset));
+            plan.Texture.PixelBytes.Span.CopyTo(
+                outputAsset.AsSpan(dataOffset + plan.PixelOffset));
+        }
+        var outputStoredAsset = wasCompressed
+            ? WadCompression.CompressVerified(
+                outputAsset,
+                new WadDecompressionOptions(options.MaximumDecompressedAssetBytes),
+                cancellationToken).CompressedBytes
+            : outputAsset;
+        if (outputStoredAsset.Length > options.MaximumStoredAssetBytes)
+            throw new InvalidDataException("Composed FX asset payload exceeds the configured stored-size limit.");
+
+        var actualAsset = wasCompressed
+            ? WadCompression.Decompress(
+                outputStoredAsset,
+                new WadDecompressionOptions(options.MaximumDecompressedAssetBytes),
+                cancellationToken)
+            : outputStoredAsset;
+        var actual = FxTextureInventoryReader.Read(outputHeader, actualAsset, cancellationToken);
+        if (actual.Count != textures.Count)
+            throw new InvalidDataException("FX replacement produced an unexpected texture count.");
+        for (var index = 0; index < textures.Count; index++)
+            VerifyTexture(actual[index], textures[index], $"FX replacement {index}");
+        return new(outputHeader, outputStoredAsset, false);
+    }
+
     private static PlannedTexture Plan(
         int index,
         FxIndexedTexture texture,

@@ -19,7 +19,8 @@ public sealed record GameplayCuboid(
 
 public sealed record GameplaySpline(
     int Index,
-    GameplayVector4[] Points);
+    GameplayVector4[] Points,
+    byte[] NativeHeader);
 
 public sealed record GameplayShape(
     int Index,
@@ -33,7 +34,9 @@ public sealed record GameplayGrindPath(
     int Unknown4,
     int Wrap,
     int Inactive,
-    GameplayVector4[] Points);
+    GameplayVector4[] Points,
+    byte[] NativeRecord,
+    byte[] NativeHeader);
 
 public sealed record GameplayArea(
     int Index,
@@ -134,7 +137,10 @@ public static class GameplayGeometryReader
                 points[pointIndex] = ReadVector4(data, offset + 0x10 + (pointIndex * 0x10));
             }
 
-            splines[index] = new GameplaySpline(index, points);
+            splines[index] = new GameplaySpline(
+                index,
+                points,
+                data.Slice(offset + 4, 0x0c).ToArray());
         }
 
         return splines;
@@ -212,7 +218,9 @@ public static class GameplayGeometryReader
                 ReadInt32LittleEndian(data, metadataOffset + 0x10),
                 ReadInt32LittleEndian(data, metadataOffset + 0x14),
                 ReadInt32LittleEndian(data, metadataOffset + 0x18),
-                points);
+                points,
+                data.Slice(metadataOffset, 0x20).ToArray(),
+                data.Slice(offset + 4, 0x0c).ToArray());
         }
         return paths;
     }

@@ -62,25 +62,35 @@ public static class UyaTieGroupsWriter
                 .Select(value => value.targetIndex)
                 .ToArray();
         }).ToArray();
-        var dataOffset = Align16(checked(0x10 + groups.Length * sizeof(int)));
-        var memberBytes = groups.Sum(value => checked(value.Length * sizeof(ushort)));
+        return Write(groups);
+    }
+
+    public static byte[] Write(IReadOnlyList<IReadOnlyList<int>> groups)
+    {
+        ArgumentNullException.ThrowIfNull(groups);
+        if (groups.Any(value => value is null))
+            throw new ArgumentException("UYA tie groups cannot contain a null group.", nameof(groups));
+        if (groups.Any(value => value.Count != value.Distinct().Count()))
+            throw new InvalidDataException("A UYA tie group cannot contain a duplicate member.");
+        var dataOffset = Align16(checked(0x10 + groups.Count * sizeof(int)));
+        var memberBytes = groups.Sum(value => checked(value.Count * sizeof(ushort)));
         var dataSize = Align16(memberBytes);
         var output = new byte[checked(dataOffset + dataSize)];
-        BinaryPrimitives.WriteInt32LittleEndian(output, groups.Length);
+        BinaryPrimitives.WriteInt32LittleEndian(output, groups.Count);
         BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(4), dataSize);
         var offset = dataOffset;
-        for (var index = 0; index < groups.Length; index++)
+        for (var index = 0; index < groups.Count; index++)
         {
             var group = groups[index];
             BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(0x10 + index * sizeof(int)),
-                group.Length == 0 ? -1 : offset - dataOffset);
-            for (var memberIndex = 0; memberIndex < group.Length; memberIndex++)
+                group.Count == 0 ? -1 : offset - dataOffset);
+            for (var memberIndex = 0; memberIndex < group.Count; memberIndex++)
             {
                 var member = group[memberIndex];
                 if (member is < 0 or > 0x7fff)
                     throw new InvalidDataException("UYA tie group member exceeds the 15-bit index limit.");
                 BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(offset),
-                    (ushort)(member | (memberIndex == group.Length - 1 ? 0x8000 : 0)));
+                    (ushort)(member | (memberIndex == group.Count - 1 ? 0x8000 : 0)));
                 offset += sizeof(ushort);
             }
         }

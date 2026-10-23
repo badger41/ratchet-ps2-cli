@@ -364,6 +364,37 @@ internal static class StaticModelTfragPartitionerTests
             && sourceTerrainBytes.AsSpan(sourceTerrain.Chunks[0].DataOffset, sourceTerrain.Chunks[0].DataLength)
                 .SequenceEqual(appendedBytes.AsSpan(appended.Chunks[0].DataOffset, appended.Chunks[0].DataLength)),
             "tfrag native append should retain source group bytes and add every generated partition");
+        var donorTerrainBytes = StaticModelTfragConverter.BuildTerrain(GameId.UYA, pieces.Skip(1).ToArray());
+        var donorTerrain = TfragTerrainReader.Read(donorTerrainBytes);
+        var nativeAppendedBytes = TfragTerrainComposer.AppendNativeTerrain(
+            GameId.UYA, sourceTerrainBytes, donorTerrainBytes);
+        var nativeAppended = TfragTerrainReader.Read(nativeAppendedBytes);
+        Expect(nativeAppendedBytes.SequenceEqual(appendedBytes)
+            && donorTerrainBytes.AsSpan(donorTerrain.Chunks[0].DataOffset, donorTerrain.Chunks[0].DataLength)
+                .SequenceEqual(nativeAppendedBytes.AsSpan(
+                    nativeAppended.Chunks[sourceTerrain.TfragCount].DataOffset,
+                    nativeAppended.Chunks[sourceTerrain.TfragCount].DataLength)),
+            "raw tfrag owner append should relocate records while preserving donor native payloads");
+        var indexedDonorBytes = donorTerrainBytes.ToArray();
+        foreach (var chunk in donorTerrain.Chunks)
+        {
+            indexedDonorBytes[chunk.RecordOffset + 0x2B] = byte.MaxValue;
+            BinaryPrimitives.WriteInt16LittleEndian(
+                indexedDonorBytes.AsSpan(chunk.RecordOffset + 0x3A), checked((short)chunk.Index));
+        }
+        var mappedSourceTerrainBytes = TfragTerrainComposer.BindMissingOcclusionMappings(
+            GameId.UYA, sourceTerrainBytes, 0);
+        var indexedNativeAppend = TfragTerrainComposer.AppendNativeTerrain(
+            GameId.UYA, mappedSourceTerrainBytes, indexedDonorBytes);
+        var reboundNativeAppend = TfragTerrainReader.Read(TfragTerrainComposer.FinalizeTerrain(
+            GameId.UYA,
+            indexedNativeAppend,
+            new Dictionary<int, IReadOnlyDictionary<int, int>>(),
+            sourceTerrain.TfragCount));
+        Expect(reboundNativeAppend.Chunks.Select(value => (int)value.OcclusionIndex)
+                .SequenceEqual(Enumerable.Range(0, reboundNativeAppend.Chunks.Count))
+            && reboundNativeAppend.Chunks.All(value => value.OcclusionIndexStash == 0),
+            "imported native tfrags should rebind donor occlusion indices to their composed mapping slots");
         var sourceOcclusion = new byte[0x18];
         BinaryPrimitives.WriteInt32LittleEndian(sourceOcclusion, 1);
         BinaryPrimitives.WriteInt32LittleEndian(sourceOcclusion.AsSpan(0x10), 7);

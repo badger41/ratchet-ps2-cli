@@ -19,8 +19,16 @@ public static class UyaOcclusionGridReader
         ReadOnlySpan<byte> assetHeaderBytes,
         ReadOnlySpan<byte> assetWadBytes)
     {
+        var payload = ReadLevelAssetPayload(assetHeaderBytes, assetWadBytes);
+        return payload.Length >= 8 ? Read(payload) : new(0, []);
+    }
+
+    public static byte[] ReadLevelAssetPayload(
+        ReadOnlySpan<byte> assetHeaderBytes,
+        ReadOnlySpan<byte> assetWadBytes)
+    {
         var header = LevelAssetReader.ReadHeader(assetHeaderBytes);
-        if (header.OcclusionOffset <= 0) return new(0, []);
+        if (header.OcclusionOffset <= 0) return [];
         var assets = BinaryMagic.IsWad(assetWadBytes)
             ? WadCompression.Decompress(assetWadBytes)
             : assetWadBytes.ToArray();
@@ -33,7 +41,8 @@ public static class UyaOcclusionGridReader
         var offsets = LevelAssetReader.CollectKnownAssetOffsets(
             header, assets.Length, mobys, ties, shrubs, [header.SceneViewSize]);
         var payload = LevelAssetReader.ReadAssetSlice(assets, header.OcclusionOffset, offsets);
-        return payload.Length >= 8 ? Read(payload) : new(0, []);
+        if (payload.Length >= 8) _ = Read(payload);
+        return payload;
     }
 
     public static UyaOcclusionGrid Read(ReadOnlySpan<byte> data)

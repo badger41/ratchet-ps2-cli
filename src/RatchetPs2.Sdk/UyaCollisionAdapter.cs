@@ -77,6 +77,20 @@ internal static class UyaCollisionAdapter
         piece.SourceIndex,
         piece.Faces.Select(FromFace).ToArray());
 
+    public static CollisionPlayerBarrierPiece FromPiece(UyaCollisionPlayerBarrier piece) => new(
+        piece.SourceIndex,
+        FromVertex(piece.BoundingSphere.Center),
+        piece.BoundingSphere.Radius64 / 64f,
+        piece.Vertices.Select(FromVertex).ToArray(),
+        piece.Triangles.Select(value => new CollisionTriangle(value.A, value.B, value.C)).ToArray());
+
+    public static UyaCollisionPlayerBarrier ToPiece(CollisionPlayerBarrierPiece piece, int sourceIndex) => new(
+        sourceIndex,
+        new(ToBarrierVertex(piece.BoundingSphereCenter, $"player barrier {piece.SourcePieceIndex}"),
+            ToTicks(piece.BoundingSphereRadius, 64, "player barrier radius")),
+        piece.Vertices.Select(value => ToBarrierVertex(value, $"player barrier {piece.SourcePieceIndex}")).ToArray(),
+        piece.Triangles.Select(value => new UyaCollisionTriangle(value.A, value.B, value.C)).ToArray());
+
     public static UyaCollisionInstanceTransform ToTransform(CollisionInstanceTransform transform) => new(
         new(transform.Position.X, transform.Position.Y, transform.Position.Z),
         new(transform.Rotation.X, transform.Rotation.Y, transform.Rotation.Z, transform.Rotation.W),
@@ -147,6 +161,11 @@ internal static class UyaCollisionAdapter
         ToTicks(vertex.X, 16, $"addition '{additionId}' vertex X"),
         ToTicks(vertex.Y, 16, $"addition '{additionId}' vertex Y"),
         ToTicks(vertex.Z, 64, $"addition '{additionId}' vertex Z"));
+
+    private static UyaCollisionVertex ToBarrierVertex(CollisionVertex vertex, string name) => new(
+        ToTicks(vertex.X, 64, $"{name} vertex X"),
+        ToTicks(vertex.Y, 64, $"{name} vertex Y"),
+        ToTicks(vertex.Z, 64, $"{name} vertex Z"));
 
     private static CollisionVertex FromVertex(UyaCollisionVertex vertex) =>
         new(vertex.X64 / 64f, vertex.Y64 / 64f, vertex.Z64 / 64f);

@@ -14,6 +14,17 @@ public sealed record TfragOcclusionComposition(
 
 public static class TfragTerrainComposer
 {
+    public static byte[] AppendNativeTerrain(
+        GameId gameId,
+        byte[] sourceTerrainBytes,
+        byte[] donorTerrainBytes,
+        CancellationToken cancellationToken = default) => gameId switch
+    {
+        GameId.UYA => UyaStaticModelTfragWriter.AppendNative(
+            sourceTerrainBytes, donorTerrainBytes, cancellationToken),
+        _ => throw new NotSupportedException($"Native tfrag terrain appending does not support {gameId}."),
+    };
+
     public static byte[] AppendTerrain(
         GameId gameId,
         byte[] sourceTerrainBytes,

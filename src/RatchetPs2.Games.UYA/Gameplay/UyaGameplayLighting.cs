@@ -315,6 +315,35 @@ public static class UyaPointLightsWriter
 
 public static class UyaDirectionalLightsWriter
 {
+    public const int MaximumSelectableLights = 16;
+
+    public static byte[] Replace(ReadOnlySpan<byte> source, IReadOnlyList<UyaDirectionalLight> replacements)
+    {
+        ArgumentNullException.ThrowIfNull(replacements);
+        if (replacements.Count > MaximumSelectableLights)
+            throw new InvalidDataException(
+                $"UYA directional-light count exceeds the {MaximumSelectableLights}-slot selector capacity.");
+        var current = UyaGameplayLightingReader.ReadDirectionalLights(source);
+        var oldRecordsEnd = source.IsEmpty ? 0 : checked(0x10 + current.Length * 0x40);
+        var output = new byte[checked(0x10 + replacements.Count * 0x40 + source.Length - oldRecordsEnd)];
+        if (!source.IsEmpty) source[..0x10].CopyTo(output);
+        BinaryPrimitives.WriteInt32LittleEndian(output, replacements.Count);
+        source[oldRecordsEnd..].CopyTo(output.AsSpan(0x10 + replacements.Count * 0x40));
+        for (var index = 0; index < replacements.Count; index++)
+        {
+            var light = replacements[index];
+            if (light.Index != index || !Valid(light.TopColor) || !Valid(light.TopDirection)
+                || !Valid(light.InverseColor) || !Valid(light.InverseDirection))
+                throw new InvalidDataException("UYA replacement directional-light records are invalid or unordered.");
+            var record = output.AsSpan(0x10 + index * 0x40, 0x40);
+            Write(record, 0x00, light.TopColor);
+            Write(record, 0x10, light.TopDirection);
+            Write(record, 0x20, light.InverseColor);
+            Write(record, 0x30, light.InverseDirection);
+        }
+        return output;
+    }
+
     public static byte[] Write(ReadOnlySpan<byte> source, IReadOnlyList<UyaDirectionalLightEdit> edits)
     {
         ArgumentNullException.ThrowIfNull(edits);
@@ -341,6 +370,13 @@ public static class UyaDirectionalLightsWriter
         var direction = Vector3.Transform(new(value.X, value.Y, value.Z), rotation);
         UyaInstanceTransformWriter.WriteVector4(record, offset, direction.X, direction.Y, direction.Z, value.W);
     }
+
+    private static bool Valid(GameplayVector4 value) =>
+        float.IsFinite(value.X) && float.IsFinite(value.Y)
+        && float.IsFinite(value.Z) && float.IsFinite(value.W);
+
+    private static void Write(Span<byte> record, int offset, GameplayVector4 value) =>
+        UyaInstanceTransformWriter.WriteVector4(record, offset, value.X, value.Y, value.Z, value.W);
 }
 
 public static class UyaEnvironmentSamplePointsWriter

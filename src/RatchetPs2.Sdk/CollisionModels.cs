@@ -38,6 +38,15 @@ public sealed record CollisionSolidAddition(string Id, IReadOnlyList<CollisionSo
 
 public sealed record CollisionSolidPiece(int SourcePieceIndex, IReadOnlyList<CollisionSolidFace> Faces);
 
+public readonly record struct CollisionTriangle(byte A, byte B, byte C);
+
+public sealed record CollisionPlayerBarrierPiece(
+    int SourcePieceIndex,
+    CollisionVertex BoundingSphereCenter,
+    float BoundingSphereRadius,
+    IReadOnlyList<CollisionVertex> Vertices,
+    IReadOnlyList<CollisionTriangle> Triangles);
+
 public sealed record CollisionInstance(string Id, CollisionInstanceTransform Transform);
 
 public sealed record CollisionTieGroup(

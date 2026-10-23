@@ -257,6 +257,69 @@ public static class CollisionWork
         return result;
     }
 
+    public static IReadOnlyList<CollisionPlayerBarrierPiece> DecodePlayerBarrierPieces(
+        byte[] collisionBytes,
+        GameId gameId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(collisionBytes);
+        cancellationToken.ThrowIfCancellationRequested();
+        var result = gameId switch
+        {
+            GameId.UYA => UyaCollisionReader.Read(collisionBytes).PlayerBarriers
+                .Select(UyaCollisionAdapter.FromPiece).ToArray(),
+            _ => throw new NotSupportedException($"Collision player-barrier extraction does not support {gameId}."),
+        };
+        cancellationToken.ThrowIfCancellationRequested();
+        return result;
+    }
+
+    public static CollisionPlayerBarrierPiece TransformPlayerBarrierPiece(
+        CollisionPlayerBarrierPiece piece,
+        GameId gameId,
+        CollisionInstanceTransform transform,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(piece);
+        if (gameId != GameId.UYA)
+            throw new NotSupportedException($"Collision player-barrier transforms do not support {gameId}.");
+        if (transform.Scale != new CollisionVertex(1, 1, 1))
+            throw new ArgumentException("Collision player barriers do not support scaling.", nameof(transform));
+        var rotation = new System.Numerics.Quaternion(
+            transform.Rotation.X, transform.Rotation.Y, transform.Rotation.Z, transform.Rotation.W);
+        if (!float.IsFinite(rotation.X) || !float.IsFinite(rotation.Y)
+            || !float.IsFinite(rotation.Z) || !float.IsFinite(rotation.W)
+            || rotation.LengthSquared() == 0)
+            throw new ArgumentException("Collision rotation must be finite and non-empty.", nameof(transform));
+        rotation = System.Numerics.Quaternion.Normalize(rotation);
+        var matrix = System.Numerics.Matrix4x4.CreateFromQuaternion(rotation)
+            * System.Numerics.Matrix4x4.CreateTranslation(
+                transform.Position.X, transform.Position.Y, transform.Position.Z);
+        CollisionVertex Transform(CollisionVertex value)
+        {
+            var transformed = System.Numerics.Vector3.Transform(
+                new(value.X, value.Y, value.Z), matrix);
+            if (!float.IsFinite(transformed.X) || !float.IsFinite(transformed.Y)
+                || !float.IsFinite(transformed.Z))
+                throw new InvalidDataException("Transformed collision coordinate is not finite.");
+            return new(
+                MathF.Round(transformed.X * 64) / 64,
+                MathF.Round(transformed.Y * 64) / 64,
+                MathF.Round(transformed.Z * 64) / 64);
+        }
+        var vertices = new CollisionVertex[piece.Vertices.Count];
+        for (var index = 0; index < vertices.Length; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            vertices[index] = Transform(piece.Vertices[index]);
+        }
+        return piece with
+        {
+            BoundingSphereCenter = Transform(piece.BoundingSphereCenter),
+            Vertices = vertices,
+        };
+    }
+
     public static IReadOnlyList<CollisionInstancePieceCandidate> FindTieCollisionCandidates(
         byte[] collisionBytes,
         GameId gameId,
@@ -420,17 +483,28 @@ public static class CollisionWork
         GameId gameId,
         IReadOnlyList<CollisionPieceEdit> pieces,
         IReadOnlyList<CollisionSolidAddition> additions,
+        CancellationToken cancellationToken = default) => ComposeComplete(
+            collisionBytes, gameId, pieces, additions, [], cancellationToken);
+
+    public static CollisionComposition ComposeComplete(
+        byte[] collisionBytes,
+        GameId gameId,
+        IReadOnlyList<CollisionPieceEdit> pieces,
+        IReadOnlyList<CollisionSolidAddition> additions,
+        IReadOnlyList<CollisionPlayerBarrierPiece> playerBarriers,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(collisionBytes);
         ArgumentNullException.ThrowIfNull(pieces);
         ArgumentNullException.ThrowIfNull(additions);
+        ArgumentNullException.ThrowIfNull(playerBarriers);
         return gameId switch
         {
             GameId.UYA => UyaCollisionAdapter.FromComposition(UyaCollisionComposer.ComposeComplete(
                 collisionBytes,
                 UyaCollisionAdapter.ToEdits(pieces),
                 additions.Select(UyaCollisionAdapter.ToAddition).ToArray(),
+                playerBarriers.Select((value, index) => UyaCollisionAdapter.ToPiece(value, index)).ToArray(),
                 cancellationToken)),
             _ => throw new NotSupportedException($"Complete collision composition does not support {gameId}."),
         };

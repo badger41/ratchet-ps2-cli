@@ -60,6 +60,9 @@ internal static class UyaLevelAssetComposer
         var shrubs = LevelAssetReader.ReadShrubDefinitions(
             headerBytes, header.ShrubModelOffset, header.ShrubModelCount);
         var assetWadLength = assetWadBytes.Length;
+        var insertedSky = header.SkyOffset == 0 ? replacements.Sky : null;
+        if (insertedSky is { IsEmpty: true })
+            throw new ArgumentException("UYA sky replacement cannot be empty.", nameof(replacements));
         var references = CollectReferences(header, mobys, ties, shrubs, assetWadLength).ToList();
         var terrainAtAssetStart = replacements.Terrain is not null && header.TerrainOffset == 0;
         if (terrainAtAssetStart)
@@ -84,10 +87,11 @@ internal static class UyaLevelAssetComposer
         AddReplacement(replacementByOffset, "terrain", header.TerrainOffset, replacements.Terrain,
             assetWadLength, allowZeroOffset: terrainAtAssetStart);
         AddReplacement(replacementByOffset, "occlusion", header.OcclusionOffset, replacements.Occlusion, assetWadLength);
-        AddReplacement(replacementByOffset, "sky", header.SkyOffset, replacements.Sky, assetWadLength);
+        AddReplacement(replacementByOffset, "sky", header.SkyOffset,
+            insertedSky is null ? replacements.Sky : null, assetWadLength);
         AddReplacement(replacementByOffset, "collision", header.CollisionOffset, replacements.Collision, assetWadLength);
         AddReplacement(replacementByOffset, "FX textures", header.FxTextureDataOffset, replacements.Fx, assetWadLength);
-        if (replacementByOffset.Count == 0)
+        if (replacementByOffset.Count == 0 && insertedSky is null)
             return new(headerBytes.ToArray(), assetWadBytes.ToArray());
 
         using var output = new MemoryStream(assetWadBytes.Length);
@@ -106,11 +110,21 @@ internal static class UyaLevelAssetComposer
                 output.Write(assetWadBytes[sourceOffset..sourceEnd]);
         }
 
+        int? insertedSkyOffset = null;
+        if (insertedSky is { } skyBytes)
+        {
+            Align(output, AssetAlignment);
+            insertedSkyOffset = checked((int)output.Position);
+            output.Write(skyBytes.Span);
+        }
+
         var composedHeader = headerBytes.ToArray();
         foreach (var reference in references)
             BinaryPrimitives.WriteInt32LittleEndian(
                 composedHeader.AsSpan(reference.HeaderOffset, sizeof(int)),
                 relocated[reference.AssetOffset]);
+        if (insertedSkyOffset is { } skyOffset)
+            BinaryPrimitives.WriteInt32LittleEndian(composedHeader.AsSpan(0x10, sizeof(int)), skyOffset);
         var composedAsset = output.ToArray();
         var sceneViewSize = header.SceneViewSize switch
         {

@@ -1,11 +1,13 @@
 using System.Numerics;
 using System.Text.Json;
+using RatchetPs2.Core.Games;
 using RatchetPs2.Core.Gltf;
 using RatchetPs2.Core.Shrubs;
 using RatchetPs2.Core.Textures;
 using RatchetPs2.Core.Textures.Png;
 using RatchetPs2.Core.Tfrags;
 using RatchetPs2.Core.Ties;
+using RatchetPs2.Sdk;
 
 var repoRoot = FindRepoRoot(AppContext.BaseDirectory);
 StaticModelTfragPartitionerTests.Run();
@@ -76,6 +78,22 @@ foreach (var fixture in fixtures)
     if (fixture.Game == "UYA")
     {
         ValidateChunkPreservingRuntimeExport(terrain, export.GltfBytes);
+        var nativeBytes = File.ReadAllBytes(fixture.Path);
+        var retained = TfragTerrainComposer.FilterTerrainGroups(GameId.UYA, nativeBytes, [0, 1]);
+        var donor = TfragTerrainComposer.FilterTerrainGroups(GameId.UYA, nativeBytes, [2, 3]);
+        var appended = TfragTerrainComposer.AppendNativeTerrain(GameId.UYA, retained, donor);
+        var expected = TfragPieceConverter.Extract(
+            [new("fixture", TfragPieceSourceKind.Primary, 0,
+                TfragTerrainComposer.FilterTerrainGroups(GameId.UYA, nativeBytes, [0, 1, 2, 3]))],
+            GameId.UYA);
+        var actual = TfragPieceConverter.Extract(
+            [new("fixture", TfragPieceSourceKind.Primary, 0, appended)], GameId.UYA);
+        Expect(actual.Occurrences.Select(value => value.ContentId)
+                .SequenceEqual(expected.Occurrences.Select(value => value.ContentId))
+            && actual.Assets.OrderBy(value => value.ContentId).Select(value => value.CanonicalBytes)
+                .Zip(expected.Assets.OrderBy(value => value.ContentId).Select(value => value.CanonicalBytes))
+                .All(value => value.First.SequenceEqual(value.Second)),
+            "raw UYA owner append should preserve retail topology, materials, LODs, bounds, and textures");
     }
 }
 
