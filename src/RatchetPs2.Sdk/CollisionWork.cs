@@ -293,8 +293,8 @@ public static class CollisionWork
             throw new ArgumentException("Collision rotation must be finite and non-empty.", nameof(transform));
         rotation = System.Numerics.Quaternion.Normalize(rotation);
         var matrix = System.Numerics.Matrix4x4.CreateFromQuaternion(rotation)
-            * System.Numerics.Matrix4x4.CreateTranslation(
-                transform.Position.X, transform.Position.Y, transform.Position.Z);
+            * System.Numerics.Matrix4x4.CreateTranslation(new System.Numerics.Vector3(
+                transform.Position.X, transform.Position.Y, transform.Position.Z));
         CollisionVertex Transform(CollisionVertex value)
         {
             var transformed = System.Numerics.Vector3.Transform(
