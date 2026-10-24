@@ -258,9 +258,9 @@ node tests/check-discovery.mjs
 
 You can pass a .NET 10 host path as the first argument to that test.
 
-`node tests/check-buffers.mjs` creates a temporary C# probe and compares 395 results
+`node tests/check-buffers.mjs` creates a temporary C# probe and compares 520 results
 against .NET for span creation, ranges, slicing, indexing, equality, null arrays,
-bounds, named-argument/evaluation order and mutation. It also checks UTF-8, native
+bounds, common-prefix lengths, named-argument/evaluation order and mutation. It also checks UTF-8, native
 typed-array offsets, internal-array views, overlapping/failed copies, clear/fill,
 empty/default spans, array conversions, Index/Range values, compound/ref writes,
 stackalloc lowering, endian primitives, BitConverter overloads, signed boundaries,

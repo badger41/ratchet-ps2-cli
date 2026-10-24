@@ -36,6 +36,30 @@ internal sealed class BrowserSourceRewriter(SemanticModel model, HashSet<Microso
     public override SyntaxNode? VisitMethodDeclaration(MethodDeclarationSyntax node)
     {
         var symbol = model.GetDeclaredSymbol(node);
+        if (symbol?.ContainingType.ToDisplayString() == "RatchetPs2.Core.Wad.WadDecompressor"
+            && symbol.Name is "CopyLiteral" or "CopyMatch")
+        {
+            // The browser's public byte-array decoder uses BrowserWad; keep its scalar C# fallback buildable.
+            var method = (MethodDeclarationSyntax)base.VisitMethodDeclaration(node)!;
+            var body = symbol.Name == "CopyLiteral" ? """
+                {
+                    if (cursor + size > end || cursor < payloadStart)
+                        throw new global::RatchetPs2.JavaScript.InvalidDataException("Unexpected end of compressed WAD buffer.");
+                    EnsureOutputCapacity(destination, size, outputLimit);
+                    for (var i = 0; i < size; i++) destination.Add(source[cursor + i]);
+                    cursor += size;
+                }
+                """ : """
+                {
+                    if (matchLength == 1) return;
+                    if (lookbackOffset < 0 || lookbackOffset >= destination.Count)
+                        throw new global::RatchetPs2.JavaScript.InvalidDataException("Match packet points outside of the decompressed buffer.");
+                    EnsureOutputCapacity(destination, matchLength, outputLimit);
+                    for (var i = 0; i < matchLength; i++) destination.Add(destination[lookbackOffset + i]);
+                }
+                """;
+            return method.WithBody((BlockSyntax)SyntaxFactory.ParseStatement(body));
+        }
         if (symbol?.ContainingType.ToDisplayString() == "RatchetPs2.Core.Textures.TextureConverter" &&
             symbol.Name is "Crc32" or "Adler32")
         {
@@ -345,7 +369,7 @@ internal sealed class BrowserSourceRewriter(SemanticModel model, HashSet<Microso
             var extension = method.ContainingType.ToDisplayString() == "System.MemoryExtensions";
             var receiver = call.Instance ?? (extension ? call.Arguments.FirstOrDefault(a => a.Parameter?.Ordinal == 0)?.Value : null);
             if (receiver is not null && IsByteBuffer(receiver.Type) &&
-                (extension && method.Name is "AsSpan" or "SequenceEqual" or "CopyTo" or "TryCopyTo" or "IndexOf" ||
+                (extension && method.Name is "AsSpan" or "SequenceEqual" or "CommonPrefixLength" or "CopyTo" or "TryCopyTo" or "IndexOf" ||
                  IsByteSpan(receiver.Type) && method.Name is "Slice" or "ToArray" or "CopyTo" or "TryCopyTo" or "Clear" or "Fill" or "IndexOf"))
             {
                 // Keep source argument order (including named arguments) and evaluate receivers once.

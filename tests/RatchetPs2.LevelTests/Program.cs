@@ -5294,6 +5294,7 @@ static void ValidateCoreLevelSegments()
 
 static void ValidateWadCompression()
 {
+    WadCodecCompatibilityTests.Run();
     var empty = WadCompression.CompressVerified([]);
     Expect(empty.CompressedBytes.SequenceEqual(new byte[]
     {

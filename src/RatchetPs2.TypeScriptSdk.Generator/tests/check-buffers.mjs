@@ -225,6 +225,16 @@ public static class SdkBufferCheck {
             try { results.Add(BitConverter.ToUInt32(primitiveInputs[2], offset).ToString()); }
             catch (Exception error) { results.Add(error.GetType().Name); }
         }
+        var prefixBytes = new byte[] { 99, 1, 2, 3, 4, 77 };
+        foreach (var leftLength in new[] { 0, 1, 2, 3, 4 })
+        foreach (var rightLength in new[] { 0, 1, 2, 3, 4 })
+        foreach (var mismatch in new[] { 0, 1, 2, 3, 4 }) {
+            var other = new byte[] { 88, 1, 2, 3, 4, 66 };
+            if (mismatch < 4) other[mismatch + 1] = 255;
+            ReadOnlySpan<byte> left = prefixBytes.AsSpan(1, leftLength);
+            ReadOnlySpan<byte> right = other.AsSpan(1, rightLength);
+            results.Add(left.CommonPrefixLength(right).ToString());
+        }
         return results.ToArray();
     }
     private static void Increment(ref byte value) => value++;

@@ -157,11 +157,8 @@ internal static class WadCompressor
                     continue;
                 }
 
-                var matchedBytes = 2;
-                while (matchedBytes < maxMatchLength && source[target + matchedBytes] == source[next + matchedBytes])
-                {
-                    matchedBytes++;
-                }
+                var matchedBytes = 2 + source.Slice(target + 2, maxMatchLength - 2)
+                    .CommonPrefixLength(source.Slice(next + 2, maxMatchLength - 2));
 
                 if (matchedBytes > bestMatch.MatchLength)
                 {
@@ -169,6 +166,7 @@ internal static class WadCompressor
                     bestMatch.MatchOffset = next;
                 }
 
+                if (matchedBytes == maxMatchLength) break;
                 next = chain[next & HashWindowMask];
             }
 

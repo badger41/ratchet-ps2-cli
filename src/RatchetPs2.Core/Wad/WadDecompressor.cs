@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using RatchetPs2.Core.IO;
 using RatchetPs2.Core.Wad.Models;
 
@@ -176,10 +177,9 @@ internal static class WadDecompressor
         }
 
         EnsureOutputCapacity(destination, size, outputLimit);
-        for (var i = 0; i < size; i++)
-        {
-            destination.Add(source[cursor + i]);
-        }
+        var start = destination.Count;
+        CollectionsMarshal.SetCount(destination, start + size);
+        source.Slice(cursor, size).CopyTo(CollectionsMarshal.AsSpan(destination).Slice(start, size));
 
         cursor += size;
     }
@@ -281,9 +281,16 @@ internal static class WadDecompressor
         }
 
         EnsureOutputCapacity(destination, matchLength, outputLimit);
-        for (var i = 0; i < matchLength; i++)
+        var start = destination.Count;
+        CollectionsMarshal.SetCount(destination, start + matchLength);
+        var output = CollectionsMarshal.AsSpan(destination);
+        var copied = 0;
+        // Each copy reads only initialized bytes, including matches that repeat their own output.
+        while (copied < matchLength)
         {
-            destination.Add(destination[lookbackOffset + i]);
+            var size = Math.Min(matchLength - copied, start - lookbackOffset + copied);
+            output.Slice(lookbackOffset, size).CopyTo(output.Slice(start + copied, size));
+            copied += size;
         }
     }
 

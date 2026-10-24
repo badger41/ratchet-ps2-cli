@@ -847,6 +847,14 @@ namespace System
             return offset;
         }
 
+        public static int CommonPrefixLength(ReadOnlySpan<byte> span, ReadOnlySpan<byte> other)
+        {
+            var length = Math.Min(span.Length, other.Length);
+            var matched = 0;
+            while (matched < length && At(span, matched) == At(other, matched)) matched++;
+            return matched;
+        }
+
         public static bool SequenceEqual(ReadOnlySpan<byte> span, ReadOnlySpan<byte> other)
         {
             if (span.Length != other.Length) return false;
