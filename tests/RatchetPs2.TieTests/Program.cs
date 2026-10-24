@@ -7,6 +7,7 @@ using System.Xml.Linq;
 
 var repoRoot = FindRepoRoot(AppContext.BaseDirectory);
 var failures = new List<string>();
+ValidateKorosClampedTextureCoordinates();
 ValidateRc1NormalFixture();
 var tiesRoot = Path.Combine(repoRoot, "test-assets", "DL Ties");
 var tiePaths = Directory.Exists(tiesRoot)
@@ -598,6 +599,38 @@ void Expect(bool condition, string message)
     {
         failures.Add(message);
     }
+}
+
+void ValidateKorosClampedTextureCoordinates()
+{
+    var path = Path.Combine(repoRoot, "test-assets", "UYA Ties", "unsorted", "6371", "core.bin");
+    if (!File.Exists(path)) return;
+    var resources = BuildFixtureTextureResources(path);
+    using var input = File.OpenRead(path);
+    var export = TieGltfExporter.Export(input, options: new()
+    {
+        GameProfile = TieGameProfile.Default.WithGameLabel("UYA"),
+        PreserveRepeatedTexCoordTiles = true,
+        ExternalTextureUris = resources?.Uris,
+        ExternalTextureSizes = resources?.Sizes,
+    });
+    using var document = JsonDocument.Parse(export.GltfBytes);
+    var root = document.RootElement;
+    var checkedTriangles = 0;
+    foreach (var primitive in root.GetProperty("meshes")[0].GetProperty("primitives").EnumerateArray())
+    {
+        if (primitive.GetProperty("extras").GetProperty("ShaderIndex").GetInt32() != 2) continue;
+        var coordinates = ReadExportedVec2Accessor(export, root,
+            primitive.GetProperty("attributes").GetProperty("TEXCOORD_0").GetInt32());
+        var indices = ReadExportedPrimitiveIndices(export, root, primitive);
+        var values = indices.Select(index => coordinates[index].V).ToArray();
+        Expect(values.All(value => value is >= -0.01f and <= 1.01f),
+            "UYA Koros TIE 0x18E3 must retain signed Q12 V coordinates on clamped axes; walls must not shift to tile 16.");
+        Expect(values.Max() - values.Min() > 0.95f,
+            "UYA Koros TIE 0x18E3 clamped walls must retain their full authored texture height.");
+        checkedTriangles += indices.Count / 3;
+    }
+    Expect(checkedTriangles == 30, "UYA Koros TIE 0x18E3 must validate all 30 side-wall triangles.");
 }
 
 void ValidateRc1NormalFixture()

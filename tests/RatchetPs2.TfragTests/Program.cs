@@ -10,6 +10,7 @@ using RatchetPs2.Core.Ties;
 using RatchetPs2.Sdk;
 
 var repoRoot = FindRepoRoot(AppContext.BaseDirectory);
+TfragLightingTests.Run();
 StaticModelTfragPartitionerTests.Run();
 TfragBoundaryTests.Run(repoRoot);
 TfragPieceExtractionTests.Run(repoRoot);
@@ -459,7 +460,8 @@ static void ValidateTriangleWinding(byte[] gltfBytes, byte[] binBytes, string ga
                     $"{game} tfrag triangle index should be inside POSITION accessor");
 
                 var faceNormal = Vector3.Cross(positions[b] - positions[a], positions[c] - positions[a]);
-                var averageNormal = normals[a] + normals[b] + normals[c];
+                // Lighting vectors point into the surface; face winding points out.
+                var averageNormal = -(normals[a] + normals[b] + normals[c]);
                 if (faceNormal.LengthSquared() <= 0.00000001f
                     || averageNormal.LengthSquared() <= 0.00000001f)
                 {

@@ -237,6 +237,9 @@ internal static class TieGltfGeometryBuilder
                     ? size
                     : default(TextureSize?);
             var expandedIndices = new List<uint>(group.Indices.Count);
+            Vector2 MaterialTexCoord(Vector2 value) => new(
+                repeatU ? value.X : SignedPacketTexCoord(value.X),
+                repeatV ? value.Y : SignedPacketTexCoord(value.Y));
 
             for (var i = 0; i + 2 < group.Indices.Count; i += 3)
             {
@@ -244,9 +247,9 @@ internal static class TieGltfGeometryBuilder
                 var bIndex = checked((int)group.Indices[i + 1]);
                 var cIndex = checked((int)group.Indices[i + 2]);
                 var adjustedTexCoords = GltfTexCoordUtils.AdjustTriangleTexCoords(
-                    texCoords[aIndex],
-                    texCoords[bIndex],
-                    texCoords[cIndex],
+                    MaterialTexCoord(texCoords[aIndex]),
+                    MaterialTexCoord(texCoords[bIndex]),
+                    MaterialTexCoord(texCoords[cIndex]),
                     textureSize,
                     repeatU,
                     repeatV,
@@ -513,6 +516,10 @@ internal static class TieGltfGeometryBuilder
             return Enumerable.Repeat(-1f, positions.Count).ToList();
         }
     }
+
+    // Clamp axes need signed Q12 coordinates; repeat axes retain their unwrapped tile phase.
+    private static float SignedPacketTexCoord(float value) =>
+        value - MathF.Floor((value + 8f) / 16f) * 16f;
 
     private static bool NearlyEqual(Vector2 left, Vector2 right)
     {

@@ -164,7 +164,8 @@ public static partial class TfragGltfExporter
                     : (int?)null;
                 var lightNormalAccessor = group.LightNormals.Count == group.Positions.Count
                     ? gltfBufferWriter.WriteVector3Accessor(
-                        group.LightNormals,
+                        // PS2 lighting uses incoming vectors; surface normals and winding stay outward.
+                        group.LightNormals.Select(normal => -normal).ToArray(),
                         target: GltfBufferWriter.ArrayBufferTarget)
                     : (int?)null;
                 var lightPostScaleAccessor = group.LightPostScales.Count == group.Positions.Count
