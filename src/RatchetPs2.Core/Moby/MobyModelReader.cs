@@ -43,6 +43,14 @@ public static class MobyModelReader
         return model;
     }
 
+    /// <summary>Reads only the fixed model header, leaving mesh and animation data untouched.</summary>
+    public static MobyModel ReadHeader(Stream input)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        using var reader = new BinaryReader(input, System.Text.Encoding.UTF8, leaveOpen: true);
+        return ReadHeader(reader);
+    }
+
     internal static MobyModel ReadHeader(BinaryReader reader)
     {
         return new MobyModel

@@ -1,3 +1,5 @@
+using RatchetPs2.Games.UYA.Occlusion;
+using RatchetPs2.Core.Occlusion;
 using System.Buffers.Binary;
 using System.Diagnostics;
 using System.IO.Compression;
@@ -38,6 +40,51 @@ using RatchetPs2.Games.UYA.Gameplay;
 using RatchetPs2.Games.UYA.Hud;
 using RatchetPs2.Games.UYA.Level;
 using RatchetPs2.Sdk;
+
+if (args is ["--uya-occlusion-compaction"]) { UyaOcclusionCompactionTests.Run(); return; }
+if (args is ["--occlusion-scene"]) { UyaOcclusionSceneTests.Run(); return; }
+if (args is ["--occlusion-samples"]) { OcclusionSampleQualificationTests.Run(); return; }
+if (args is ["--uya-occlusion-full-grid"]) { UyaOcclusionFullGridTests.Run(); return; }
+if (args is ["--qualify-uya-occlusion", var occlusionIso, var occlusionReport])
+{
+    UyaOcclusionAnalysisTests.Run();
+    OcclusionSampleQualificationTests.Run();
+    UyaOcclusionSceneTests.Run();
+    UyaOcclusionReferenceTests.Run();
+    UyaOcclusionCalibrationTests.Run();
+    UyaOcclusionFullGridTests.Run();
+    UyaOcclusionCompactionTests.Run();
+    UyaOcclusionLodTests.Run();
+    using var cancellation = new CancellationTokenSource();
+    ConsoleCancelEventHandler onCancel = (_, e) => { e.Cancel = true; cancellation.Cancel(); };
+    Console.CancelKeyPress += onCancel;
+    try
+    {
+        await UyaOcclusionQualification.RunAsync(occlusionIso, occlusionReport, cancellation.Token);
+    }
+    catch (OperationCanceledException)
+    {
+        Console.Error.WriteLine("Occlusion analysis cancelled; the previous report was preserved.");
+        Environment.ExitCode = 130;
+    }
+    finally { Console.CancelKeyPress -= onCancel; }
+    return;
+}
+
+if (args is ["--uya-occlusion"])
+{
+    UyaOcclusionAnalysisTests.Run();
+    OcclusionSampleQualificationTests.Run();
+    UyaOcclusionSceneTests.Run();
+    UyaOcclusionReferenceTests.Run();
+    UyaOcclusionCalibrationTests.Run();
+    UyaOcclusionFullGridTests.Run();
+    UyaOcclusionCompactionTests.Run();
+    UyaOcclusionLodTests.Run();
+    ValidateUyaGameplayTypedParsing();
+    ValidateUyaStaticInstanceParsing();
+    return;
+}
 
 if (args is ["--static-model-gltf"])
 {
@@ -233,6 +280,14 @@ if (args.Contains("--uya-sound-contract", StringComparer.Ordinal))
     return;
 }
 
+UyaOcclusionAnalysisTests.Run();
+OcclusionSampleQualificationTests.Run();
+UyaOcclusionSceneTests.Run();
+UyaOcclusionReferenceTests.Run();
+UyaOcclusionCalibrationTests.Run();
+UyaOcclusionFullGridTests.Run();
+UyaOcclusionCompactionTests.Run();
+UyaOcclusionLodTests.Run();
 DlExecutableQualification.RunUnitTests();
 DlBootIsoQualification.RunUnitTests();
 StaticModelGltfImporterTests.Run();
@@ -1065,12 +1120,12 @@ static void ValidateUyaLevelWadInventory()
         && !rewrittenChunk.Bytes.Span[growingChunk.Length..].ContainsAnyExcept((byte)0),
         "UYA root replacements should retain their bytes plus only sector alignment padding");
     Expect(rewrittenChunk is
-        {
-            DeclaredOffset: 7,
-            DeclaredLength: 3,
-            Offset: 7 * UyaLevelConstants.SectorSize,
-            Length: 3 * UyaLevelConstants.SectorSize,
-        }
+    {
+        DeclaredOffset: 7,
+        DeclaredLength: 3,
+        Offset: 7 * UyaLevelConstants.SectorSize,
+        Length: 3 * UyaLevelConstants.SectorSize,
+    }
         && rewrittenChunkBank is
         {
             DeclaredOffset: 10,
@@ -1938,7 +1993,7 @@ static void ValidateJointPaletteOptimization()
     var reserved = PaletteOptimizer.Optimize(
         new TextureInventory(1, [], 0), [reservedInput], PaletteOptimizationProfile.Default);
     Expect(reserved.Palettes.Single().Entries.Single(value => value.PaletteIndex == 3) is
-        { Color.Alpha: 0, Reserved: true }
+    { Color.Alpha: 0, Reserved: true }
         && reserved.CustomAssignments.Single().PixelIndices[0] == 3,
         "joint optimization should preserve required transparent indexes");
 
@@ -3026,7 +3081,7 @@ static void ValidateUyaGameplayTypedParsing()
     Expect(rebuiltCameraCollision.OccupiedCellCount == 4,
         "UYA camera collision writer should populate intersecting grid cells");
     Expect(rebuiltCameraCollision.Primitives.Single() is
-        { Type: 3, Index: 0, Flags: 7, IntValue: 8, FloatValue: 9, BoundingSphere: { X: 32, Y: 32, Z: 0 } },
+    { Type: 3, Index: 0, Flags: 7, IntValue: 8, FloatValue: 9, BoundingSphere: { X: 32, Y: 32, Z: 0 } },
         "UYA camera collision writer should preserve metadata and regenerate bounds");
     Expect(MathF.Abs(rebuiltCameraCollision.Primitives.Single().BoundingSphere.W - MathF.Sqrt(192)) < 0.0001f,
         "UYA camera collision writer should derive the transformed radius");
@@ -3250,14 +3305,14 @@ static void ValidateUyaStaticInstanceParsing()
         "UYA shrub templates should contain safe draw-distance and neutral-light defaults");
     var mobyTemplate = UyaGameplayInstanceTemplates.CreateMoby(0x1400, 9);
     Expect(UyaMobyInstancesReader.ReadInstance(mobyTemplate) is
-        { ClassId: 0x1400, Uid: 9, Mission: -1, Unknown64: 1, Unknown84: -1 },
+    { ClassId: 0x1400, Uid: 9, Mission: -1, Unknown64: 1, Unknown84: -1 },
         "UYA moby templates should expose their assigned UID and retail always-active sentinels");
     WriteInt32(mobyTemplate, 0x04, 0);
     WriteInt32(mobyTemplate, 0x64, 0);
     WriteInt32(mobyTemplate, 0x84, 0);
     Expect(UyaMobyInstancesReader.ReadInstance(
             UyaGameplayInstanceTemplates.NormalizePlacedMoby(mobyTemplate)) is
-        { Mission: -1, Unknown64: 1, Unknown84: -1 },
+    { Mission: -1, Unknown64: 1, Unknown84: -1 },
         "UYA placed Moby normalization should repair the legacy inactive template sentinels");
     Expect(UyaGameplayInstanceTemplates.CreateNeutralTieAmbient(4)
             .SequenceEqual(new byte[] { 0x80, 0x80, 0x80, 0 }),
@@ -3950,7 +4005,7 @@ static void ValidateUyaCollisionParsingAndGltf()
     var completeWithoutFirstSolid = CollisionWork.ComposeComplete(
         bytes, GameId.UYA,
         completeState.Where(piece => piece is not
-            { Kind: CollisionPieceKind.Solid, SourcePieceIndex: 0 }).ToArray(), []);
+        { Kind: CollisionPieceKind.Solid, SourcePieceIndex: 0 }).ToArray(), []);
     Expect(CollisionConverter.Inspect(completeWithoutFirstSolid.Bytes, GameId.UYA).Pieces
             .Count(piece => piece.Kind == CollisionPieceKind.Solid)
         == completeState.Count(piece => piece.Kind == CollisionPieceKind.Solid) - 1,
@@ -3986,11 +4041,11 @@ static void ValidateUyaCollisionParsingAndGltf()
     var additionAnalysis = withAddition.Analysis
         ?? throw new InvalidOperationException("collision addition composition did not return analysis");
     Expect(additionAnalysis is
-        {
-            LogicalFaceCount: 3,
-            OccupiedOctantCount: 3,
-            DuplicateFaceCount: 1,
-        } && additionAnalysis.Octants.Single(octant => octant.AdditionIds.Count > 0)
+    {
+        LogicalFaceCount: 3,
+        OccupiedOctantCount: 3,
+        DuplicateFaceCount: 1,
+    } && additionAnalysis.Octants.Single(octant => octant.AdditionIds.Count > 0)
             .AdditionIds.SequenceEqual(["tie:crate"]),
         "collision composition should report the responsible addition for each affected octant");
     var analyzedAddition = CollisionConverter.Analyze(withAddition.Bytes, GameId.UYA);
@@ -4303,16 +4358,16 @@ static void ValidateUyaTieCollisionSurfaceGeneration()
     var candidate = UyaTieCollisionGenerator.GenerateSurface(tie, "tie:synthetic", 0, 0x31);
     var face = candidate.Addition.Faces.Single();
     Expect(candidate is
-        {
-            SourceVertexCount: 4,
-            SourceTriangleCount: 4,
-            GeneratedVertexCount: 4,
-            GeneratedFaceCount: 1,
-            MergedQuadCount: 1,
-            RemovedDegenerateFaceCount: 1,
-            RemovedDuplicateFaceCount: 1,
-            MaximumVertexDeviation: 0,
-        } && face is { Type: 0x31, IsQuad: true }
+    {
+        SourceVertexCount: 4,
+        SourceTriangleCount: 4,
+        GeneratedVertexCount: 4,
+        GeneratedFaceCount: 1,
+        MergedQuadCount: 1,
+        RemovedDegenerateFaceCount: 1,
+        RemovedDuplicateFaceCount: 1,
+        MaximumVertexDeviation: 0,
+    } && face is { Type: 0x31, IsQuad: true }
             && face.A == new UyaCollisionVertex(0, 0, 0)
             && face.B == new UyaCollisionVertex(0, 64, 0)
             && face.C == new UyaCollisionVertex(64, 64, 0)
@@ -4498,12 +4553,12 @@ static void ValidateUyaTieCollisionConvexHullGeneration()
         rawType: 0x31,
         profileSections: 1);
     Expect(cube is
-        {
-            GeneratedVertexCount: 8,
-            GeneratedFaceCount: 12,
-            MergedQuadCount: 0,
-            MaximumSourceVertexDeviation: < 0.001f,
-        }
+    {
+        GeneratedVertexCount: 8,
+        GeneratedFaceCount: 12,
+        MergedQuadCount: 0,
+        MaximumSourceVertexDeviation: < 0.001f,
+    }
         && cube.Addition.Faces.All(face => face is { Type: 0x31, IsQuad: false })
         && cube.Analysis.HardViolationCount == 0,
         $"convex hull should reduce a cube to twelve native triangles "
@@ -4573,11 +4628,11 @@ static void ValidateUyaTieCollisionConvexHullGeneration()
         rawType: 0x31,
         profileSections: 6);
     Expect(denseProfile is
-        {
-            ProfileSections: 1,
-            GeneratedVertexCount: <= 512,
-            GeneratedFaceCount: <= 1024,
-        }
+    {
+        ProfileSections: 1,
+        GeneratedVertexCount: <= 512,
+        GeneratedFaceCount: <= 1024,
+    }
         && denseProfile.Analysis.HardViolationCount == 0,
         $"redundant hull sections should collapse while retaining bounded radial complexity "
         + $"({denseProfile.GeneratedVertexCount} vertices, {denseProfile.GeneratedFaceCount} faces)");
@@ -4632,14 +4687,14 @@ static void ValidateUyaShrubCollisionGeneration()
     };
     var surface = UyaShrubCollisionGenerator.GenerateSurface(shrub, "shrub:synthetic", rawType: 0x31);
     Expect(surface is
-        {
-            LodIndex: 0,
-            SourceVertexCount: 6,
-            SourceTriangleCount: 2,
-            GeneratedVertexCount: 4,
-            GeneratedFaceCount: 1,
-            MergedQuadCount: 1,
-        } && surface.Addition.Faces.Single() is { Type: 0x31, IsQuad: true },
+    {
+        LodIndex: 0,
+        SourceVertexCount: 6,
+        SourceTriangleCount: 2,
+        GeneratedVertexCount: 4,
+        GeneratedFaceCount: 1,
+        MergedQuadCount: 1,
+    } && surface.Addition.Faces.Single() is { Type: 0x31, IsQuad: true },
         "shrub surface collision should share native filtering, quantization, and quad merging");
     var hull = UyaShrubCollisionGenerator.GenerateHull(shrub, "shrub:hull", rawType: 0x31);
     Expect(hull is { GeneratedFaceCount: 1, MergedQuadCount: 1 },
@@ -4708,19 +4763,19 @@ static TieClass CreateSyntheticTieCubeClass(
     bool includeBridge = false,
     bool mirrorX = false,
     short size = 4) => new()
-{
-    Header = new TieClassHeader
     {
-        PacketTableOffsets = [],
-        PacketCounts = [],
-        CacheSizes = [],
-        RgbaRemapOffsets = [],
-        Scale = 1024,
-        Lods = [],
-        UnknownOffsets78 = [],
-    },
-    ByteLength = TieClassHeader.Size,
-    LodTopologies =
+        Header = new TieClassHeader
+        {
+            PacketTableOffsets = [],
+            PacketCounts = [],
+            CacheSizes = [],
+            RgbaRemapOffsets = [],
+            Scale = 1024,
+            Lods = [],
+            UnknownOffsets78 = [],
+        },
+        ByteLength = TieClassHeader.Size,
+        LodTopologies =
     [
         new TieLodTopology
         {
@@ -4776,7 +4831,7 @@ static TieClass CreateSyntheticTieCubeClass(
             ],
         },
     ],
-};
+    };
 
 static TieClass CreateSyntheticTieBoxes(
     params (short MinimumX, short MaximumX, short MinimumY, short MaximumY, short MinimumZ, short MaximumZ)[] boxes)
@@ -4844,19 +4899,19 @@ static TieClass CreateSyntheticTieClass(
     (short X, short Y, short Z)[] positions,
     TieTriangle[] triangles,
     int stripCount) => new()
-{
-    Header = new TieClassHeader
     {
-        PacketTableOffsets = [],
-        PacketCounts = [],
-        CacheSizes = [],
-        RgbaRemapOffsets = [],
-        Scale = 1024,
-        Lods = [],
-        UnknownOffsets78 = [],
-    },
-    ByteLength = TieClassHeader.Size,
-    LodTopologies =
+        Header = new TieClassHeader
+        {
+            PacketTableOffsets = [],
+            PacketCounts = [],
+            CacheSizes = [],
+            RgbaRemapOffsets = [],
+            Scale = 1024,
+            Lods = [],
+            UnknownOffsets78 = [],
+        },
+        ByteLength = TieClassHeader.Size,
+        LodTopologies =
     [
         new TieLodTopology
         {
@@ -4873,7 +4928,7 @@ static TieClass CreateSyntheticTieClass(
             Triangles = triangles,
         },
     ],
-};
+    };
 
 static TieLogicalVertex CreateSyntheticTieLogicalVertex(int index, short x, short y, short z) => new()
 {
@@ -5989,18 +6044,18 @@ static void ValidateFxTextureCatalog()
         && uya.Entries[1].Label == "FX_CLOUDY_CIRCLE_1",
         "UYA FX inventory should attach game-owned labels by stable source index");
     Expect(uya.Entries[0] is
-        {
-            Width: 4, Height: 4, PixelFormat: "Indexed8", PaletteFormat: "Rgba32",
-            PaletteOffset: 0, PaletteLength: 0x400, PixelOffset: 0x400, PixelLength: 16,
-            IsSwizzled: false,
-        }, "UYA FX inventory should expose dimensions, formats, offsets, lengths, and swizzle state");
+    {
+        Width: 4, Height: 4, PixelFormat: "Indexed8", PaletteFormat: "Rgba32",
+        PaletteOffset: 0, PaletteLength: 0x400, PixelOffset: 0x400, PixelLength: 16,
+        IsSwizzled: false,
+    }, "UYA FX inventory should expose dimensions, formats, offsets, lengths, and swizzle state");
     var normalized = PifReader.Read(uya.Entries[0].CanonicalTextureBytes);
     Expect(!normalized.Header.IsSwizzled
         && normalized.PaletteData.SequenceEqual(fixture.Asset.AsSpan(0, 0x400).ToArray())
         && normalized.PixelData.SequenceEqual(fixture.Asset.AsSpan(0x400, 16).ToArray()),
         "UYA FX canonical preview should preserve source palette and indexed pixels");
     Expect(uya.Capabilities is
-        { CanRead: true, CanReplace: true, CanAppend: true, AuthoringDisabledReason: null },
+    { CanRead: true, CanReplace: true, CanAppend: true, AuthoringDisabledReason: null },
         "UYA FX inventory should advertise writer capabilities");
 
     var compressed = WadCompression.CompressVerified(fixture.Asset).CompressedBytes;
@@ -6016,7 +6071,7 @@ static void ValidateFxTextureCatalog()
         && PifReader.Read(dl.Entries[0].CanonicalTextureBytes).Header.IsSwizzled,
         "DL FX inventory should apply DL labels and swizzled preview metadata");
     Expect(dl.Capabilities is
-        { CanRead: true, CanReplace: false, CanAppend: false, AuthoringDisabledReason: not null },
+    { CanRead: true, CanReplace: false, CanAppend: false, AuthoringDisabledReason: not null },
         "DL FX inventory should remain read-only until its project pipeline is writable");
 
     var malformedEntryHeader = fixture.Header.ToArray();

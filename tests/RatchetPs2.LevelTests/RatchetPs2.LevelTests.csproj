@@ -15,4 +15,9 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <None Update="Fixtures/OcclusionCorner6267.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Fixtures/OcclusionCorner6404.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Fixtures/OcclusionCorner10375.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

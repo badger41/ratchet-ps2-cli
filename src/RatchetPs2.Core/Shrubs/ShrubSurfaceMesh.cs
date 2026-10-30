@@ -1,4 +1,5 @@
 using System.Numerics;
+using RatchetPs2.Core.Geometry;
 
 namespace RatchetPs2.Core.Shrubs;
 
@@ -10,6 +11,24 @@ public sealed record ShrubSurfaceMesh(
 
 public static class ShrubSurfaceMeshExtractor
 {
+    public static IReadOnlyList<TexturedSurfaceTriangle> ExtractTextured(ShrubClass shrub)
+    {
+        var mesh = Extract(shrub);
+        var uv = new List<Vector2>(); var materials = new List<int>(); var material = -1;
+        foreach (var primitive in shrub.Packets.SelectMany(packet => packet.Primitives))
+        {
+            if (primitive is ShrubTexturePrimitive texture) material = texture.TextureId;
+            if (primitive is not ShrubVertexPrimitive vertices) continue;
+            foreach (var vertex in vertices.Vertices)
+            {
+                uv.Add(new(vertex.S / 4096f, vertex.T / 4096f));
+                materials.Add(material);
+            }
+        }
+        return mesh.Triangles.Select(t => new TexturedSurfaceTriangle(mesh.Positions[t.A], mesh.Positions[t.B], mesh.Positions[t.C],
+            uv[t.A], uv[t.B], uv[t.C], materials[t.A])).ToArray();
+    }
+
     public static ShrubSurfaceMesh Extract(ShrubClass shrub)
     {
         ArgumentNullException.ThrowIfNull(shrub);

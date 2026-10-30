@@ -205,7 +205,7 @@ internal static class TieGltfPacketIndexGroupBuilder
             && MathF.Abs(colors[colorIndex].W - fullGlowAlpha) <= 0.000001f;
     }
 
-    private static int SelectShaderIndex(TiePacket? packet, TieTriangleStrip strip)
+    internal static int SelectShaderIndex(TiePacket? packet, TieTriangleStrip strip)
     {
         if (strip.ShaderIndex is { } decodedShaderIndex)
         {

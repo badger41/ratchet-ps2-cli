@@ -1,3 +1,6 @@
+using RatchetPs2.Games.UYA.Level;
+using RatchetPs2.Games.UYA.Occlusion;
+using RatchetPs2.Core.Occlusion;
 using System.Buffers.Binary;
 using RatchetPs2.Core.Tfrags;
 using static RatchetPs2.Core.IO.BinarySpanReader;
@@ -111,16 +114,26 @@ public sealed record UyaOcclusionMappings(
 
 public static class UyaOcclusionMappingsReader
 {
-    public static UyaOcclusionMappings Read(ReadOnlySpan<byte> data)
+    public static UyaOcclusionMappings Read(ReadOnlySpan<byte> data) => Read(data, 1_000_000);
+
+    public static UyaOcclusionMappings Read(
+        ReadOnlySpan<byte> data,
+        int maximumRecords,
+        CancellationToken cancellationToken = default)
     {
+        if (maximumRecords <= 0) throw new ArgumentOutOfRangeException(nameof(maximumRecords));
+        cancellationToken.ThrowIfCancellationRequested();
         EnsureRange(data, 0, 0x10, "UYA occlusion mappings header");
         var tfragCount = ReadCount(data, 0, "tfrag");
         var tieCount = ReadCount(data, 4, "tie");
         var mobyCount = ReadCount(data, 8, "moby");
+        if ((long)tfragCount + tieCount + mobyCount > maximumRecords)
+            throw new InvalidDataException($"UYA occlusion mappings exceed the {maximumRecords}-record analysis limit.");
+        EnsureRange(data, 0x10, checked((tfragCount + tieCount + mobyCount) * 8), "UYA occlusion mapping records");
         var offset = 0x10;
-        var tfrags = ReadMappings(data, ref offset, tfragCount, "tfrag");
-        var ties = ReadMappings(data, ref offset, tieCount, "tie");
-        var mobys = ReadMappings(data, ref offset, mobyCount, "moby");
+        var tfrags = ReadMappings(data, ref offset, tfragCount, "tfrag", cancellationToken);
+        var ties = ReadMappings(data, ref offset, tieCount, "tie", cancellationToken);
+        var mobys = ReadMappings(data, ref offset, mobyCount, "moby", cancellationToken);
         return new(tfrags, ties, mobys, ReadInt32LittleEndian(data, 0xc), data[offset..].ToArray());
     }
 
@@ -135,12 +148,16 @@ public static class UyaOcclusionMappingsReader
         ReadOnlySpan<byte> data,
         ref int offset,
         int count,
-        string family)
+        string family,
+        CancellationToken cancellationToken)
     {
         EnsureRange(data, offset, checked(count * 8), $"UYA {family} occlusion mappings");
         var values = new UyaOcclusionMapping[count];
         for (var index = 0; index < count; index++, offset += 8)
+        {
+            if ((index & 1023) == 0) cancellationToken.ThrowIfCancellationRequested();
             values[index] = new(ReadInt32LittleEndian(data, offset), ReadInt32LittleEndian(data, offset + 4));
+        }
         return values;
     }
 }
