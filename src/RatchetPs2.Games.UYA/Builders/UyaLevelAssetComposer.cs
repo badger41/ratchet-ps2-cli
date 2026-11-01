@@ -62,6 +62,11 @@ internal static class UyaLevelAssetComposer
             headerBytes, header.ShrubModelOffset, header.ShrubModelCount);
         var assetWadLength = assetWadBytes.Length;
         var insertedSky = header.SkyOffset == 0 ? replacements.Sky : null;
+        var insertedOcclusion = header.OcclusionOffset == 0 ? replacements.Occlusion : null;
+        if (insertedOcclusion is { IsEmpty: true })
+            throw new ArgumentException("UYA occlusion replacement cannot be empty.", nameof(replacements));
+        if (insertedOcclusion is not null && (header.SceneViewSize <= 0 || header.SceneViewSize > assetWadLength))
+            throw new InvalidDataException("Adding UYA occlusion requires a valid positive scene-view boundary.");
         if (insertedSky is { IsEmpty: true })
             throw new ArgumentException("UYA sky replacement cannot be empty.", nameof(replacements));
         var references = CollectReferences(header, mobys, ties, shrubs, assetWadLength).ToList();
@@ -81,34 +86,47 @@ internal static class UyaLevelAssetComposer
             .Append(assetWadLength)
             .Append(terrainAtAssetStart ? 0 : assetWadLength)
             .Distinct().Order().ToArray();
-        if (offsets.Length < 2)
+        if (offsets.Length < 2 && insertedOcclusion is null)
             throw new InvalidDataException("UYA asset WAD has no addressable payloads.");
 
         var replacementByOffset = new Dictionary<int, ReadOnlyMemory<byte>>();
         AddReplacement(replacementByOffset, "terrain", header.TerrainOffset, replacements.Terrain,
             assetWadLength, allowZeroOffset: terrainAtAssetStart);
-        AddReplacement(replacementByOffset, "occlusion", header.OcclusionOffset, replacements.Occlusion, assetWadLength);
+        AddReplacement(replacementByOffset, "occlusion", header.OcclusionOffset,
+            insertedOcclusion is null ? replacements.Occlusion : null, assetWadLength);
         AddReplacement(replacementByOffset, "sky", header.SkyOffset,
             insertedSky is null ? replacements.Sky : null, assetWadLength);
         AddReplacement(replacementByOffset, "collision", header.CollisionOffset, replacements.Collision, assetWadLength);
         AddReplacement(replacementByOffset, "FX textures", header.FxTextureDataOffset, replacements.Fx, assetWadLength);
-        if (replacementByOffset.Count == 0 && insertedSky is null)
+        if (replacementByOffset.Count == 0 && insertedSky is null && insertedOcclusion is null)
             return new(headerBytes.ToArray(), assetWadBytes.ToArray());
 
         using var output = new MemoryStream(assetWadBytes.Length);
         output.Write(assetWadBytes[..offsets[0]]);
         var relocated = new Dictionary<int, int>();
+        int? insertedOcclusionOffset = null;
         for (var index = 0; index < offsets.Length - 1; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var sourceOffset = offsets[index];
             var sourceEnd = offsets[index + 1];
+            if (sourceOffset == header.SceneViewSize) InsertOcclusion();
             Align(output, AssetAlignment);
             relocated.Add(sourceOffset, checked((int)output.Position));
             if (replacementByOffset.TryGetValue(sourceOffset, out var replacement))
                 output.Write(replacement.Span);
             else
                 output.Write(assetWadBytes[sourceOffset..sourceEnd]);
+        }
+
+        if (header.SceneViewSize == assetWadLength) InsertOcclusion();
+
+        void InsertOcclusion()
+        {
+            if (insertedOcclusion is not { } bytes) return;
+            Align(output, AssetAlignment);
+            insertedOcclusionOffset = checked((int)output.Position);
+            output.Write(bytes.Span);
         }
 
         int? insertedSkyOffset = null;
@@ -124,6 +142,8 @@ internal static class UyaLevelAssetComposer
             BinaryPrimitives.WriteInt32LittleEndian(
                 composedHeader.AsSpan(reference.HeaderOffset, sizeof(int)),
                 relocated[reference.AssetOffset]);
+        if (insertedOcclusionOffset is { } occlusionOffset)
+            BinaryPrimitives.WriteInt32LittleEndian(composedHeader.AsSpan(0x0c, sizeof(int)), occlusionOffset);
         if (insertedSkyOffset is { } skyOffset)
             BinaryPrimitives.WriteInt32LittleEndian(composedHeader.AsSpan(0x10, sizeof(int)), skyOffset);
         var composedAsset = output.ToArray();

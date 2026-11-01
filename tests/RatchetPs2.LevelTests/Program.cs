@@ -45,6 +45,10 @@ if (args is ["--uya-occlusion-compaction"]) { UyaOcclusionCompactionTests.Run();
 if (args is ["--occlusion-scene"]) { UyaOcclusionSceneTests.Run(); return; }
 if (args is ["--occlusion-samples"]) { OcclusionSampleQualificationTests.Run(); return; }
 if (args is ["--uya-occlusion-full-grid"]) { UyaOcclusionFullGridTests.Run(); return; }
+if (args is ["--uya-occlusion-graph-coverage"]) { UyaOcclusionGraphCoverageTests.Run(); return; }
+if (args is ["--uya-occlusion-cylinder-coverage"]) { UyaOcclusionCylinderCoverageTests.Run(); return; }
+if (args is ["--uya-occlusion-box-coverage"]) { UyaOcclusionBoxCoverageTests.Run(); return; }
+if (args is ["--uya-occlusion-create-grid"]) { UyaOcclusionGridCreationTests.Run(); return; }
 if (args is ["--qualify-uya-occlusion", var occlusionIso, var occlusionReport])
 {
     UyaOcclusionAnalysisTests.Run();
@@ -53,6 +57,10 @@ if (args is ["--qualify-uya-occlusion", var occlusionIso, var occlusionReport])
     UyaOcclusionReferenceTests.Run();
     UyaOcclusionCalibrationTests.Run();
     UyaOcclusionFullGridTests.Run();
+    UyaOcclusionGridCreationTests.Run();
+    UyaOcclusionBoxCoverageTests.Run();
+    UyaOcclusionCylinderCoverageTests.Run();
+    UyaOcclusionGraphCoverageTests.Run();
     UyaOcclusionCompactionTests.Run();
     UyaOcclusionLodTests.Run();
     using var cancellation = new CancellationTokenSource();
@@ -79,6 +87,10 @@ if (args is ["--uya-occlusion"])
     UyaOcclusionReferenceTests.Run();
     UyaOcclusionCalibrationTests.Run();
     UyaOcclusionFullGridTests.Run();
+    UyaOcclusionGridCreationTests.Run();
+    UyaOcclusionBoxCoverageTests.Run();
+    UyaOcclusionCylinderCoverageTests.Run();
+    UyaOcclusionGraphCoverageTests.Run();
     UyaOcclusionCompactionTests.Run();
     UyaOcclusionLodTests.Run();
     ValidateUyaGameplayTypedParsing();
@@ -286,6 +298,10 @@ UyaOcclusionSceneTests.Run();
 UyaOcclusionReferenceTests.Run();
 UyaOcclusionCalibrationTests.Run();
 UyaOcclusionFullGridTests.Run();
+UyaOcclusionGridCreationTests.Run();
+UyaOcclusionBoxCoverageTests.Run();
+UyaOcclusionCylinderCoverageTests.Run();
+UyaOcclusionGraphCoverageTests.Run();
 UyaOcclusionCompactionTests.Run();
 UyaOcclusionLodTests.Run();
 DlExecutableQualification.RunUnitTests();

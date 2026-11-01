@@ -1,5 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <Import Project="OcclusionCoveragePreview.props" />
+
   <ItemGroup>
     <ProjectReference Include="..\RatchetPs2.Core\RatchetPs2.Core.csproj" />
     <ProjectReference Include="..\RatchetPs2.Games.RC1\RatchetPs2.Games.RC1.csproj" />

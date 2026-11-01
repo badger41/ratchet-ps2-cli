@@ -1,3 +1,4 @@
+using RatchetPs2.Core.Occlusion;
 using RatchetPs2.Core.IO;
 using RatchetPs2.Core.Wad;
 using RatchetPs2.Core.Wad.Models;
@@ -50,6 +51,33 @@ public static class UyaOcclusionComposer
         var original = UyaOcclusionGridReader.ReadLevelAssetPayload(source.HeaderBytes, source.AssetWadBytes);
         ValidateGrid(original, generated, octants, token);
         generated = CompactGrid(original, generated, token);
+        return ApplyCore(levelWad, source, generated, token);
+    }
+
+    public static LevelArchiveBuildResult ApplyCoverageToLevel(ReadOnlyMemory<byte> levelWad,
+        IReadOnlyDictionary<(int X, int Y, int Z), byte[]> masks, CancellationToken token = default)
+    {
+        var generated = UyaOcclusionGridWriter.Create(masks, token);
+        var source = UyaLevelWadRenderPackageBuilder.ReadAssetSourceFiles(UyaLevelWadUnpacker.Unpack(levelWad.Span).Files);
+        return ApplyCore(levelWad, source, generated, token);
+    }
+
+    public static LevelArchiveBuildResult ApplyCoverageToLevel(ReadOnlyMemory<byte> levelWad,
+        byte[] generated, int octants, CancellationToken token = default)
+    {
+        ArgumentNullException.ThrowIfNull(generated);
+        var grid = UyaOcclusionGridReader.Read(generated, OcclusionSamplePlanner.MaximumCells, token);
+        if (octants < 1 || grid.Octants.Count != octants)
+            throw new InvalidDataException("Generated coverage has an invalid octant inventory.");
+        var masks = grid.Octants.ToDictionary(c => (c.X, c.Y, c.Z),
+            c => generated.AsSpan(grid.MasksOffset + c.MaskIndex * 128, 128).ToArray());
+        return ApplyCoverageToLevel(levelWad, masks, token);
+    }
+
+    private static LevelArchiveBuildResult ApplyCore(ReadOnlyMemory<byte> levelWad,
+        UyaLevelAssetSourceFiles source, byte[] generated, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
         var assets = BinaryMagic.IsWad(source.AssetWadBytes) ? WadCompression.Decompress(source.AssetWadBytes) : source.AssetWadBytes;
         var composed = UyaLevelAssetComposer.ComposeAssetWad(source.HeaderBytes, assets, new(Occlusion: generated), token);
         var built = UyaLevelArchiveBuilder.Build(levelWad, new Dictionary<string, ReadOnlyMemory<byte>>

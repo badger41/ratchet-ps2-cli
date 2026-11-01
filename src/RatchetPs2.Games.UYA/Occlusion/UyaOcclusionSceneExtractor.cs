@@ -17,16 +17,32 @@ namespace RatchetPs2.Games.UYA.Occlusion;
 /// <summary>Decodes scene faces, alpha and native identities without generating visibility data.</summary>
 internal static class UyaOcclusionSceneExtractor
 {
-    internal static UyaOcclusionExtractedScene Extract(ReadOnlySpan<byte> wad, CancellationToken cancellationToken)
+    internal static UyaOcclusionExtractedScene Extract(ReadOnlySpan<byte> wad, CancellationToken cancellationToken, bool coverageOnly = false)
     {
-        var audit = UyaOcclusionLevelAnalyzer.Analyze(wad, cancellationToken);
-        if (audit.ChunkTerrainSources.Count != 0)
+        cancellationToken.ThrowIfCancellationRequested();
+        if (wad.Length > UyaOcclusionLevelAnalyzer.MaximumLevelWadBytes) throw new InvalidDataException("Coverage scene exceeds the level byte limit.");
+        var audit = coverageOnly ? null : UyaOcclusionLevelAnalyzer.Analyze(wad, cancellationToken);
+        var sources = audit?.Sources;
+        if (audit?.ChunkTerrainSources.Count > 0)
             throw new NotSupportedException("Rebuilding streamed chunk terrain is not supported yet.");
-        if (audit.Sources is { } links && (links.UnresolvedMappings.Count != 0 || links.UnmappedSources.Count != 0 || links.AmbiguousSources.Count != 0))
+        if (audit?.Sources is { } links && (links.UnresolvedMappings.Count != 0 || links.UnmappedSources.Count != 0 || links.AmbiguousSources.Count != 0))
             throw new InvalidDataException($"Occlusion scene has {links.UnresolvedMappings.Count} unused mapping rows, {links.UnmappedSources.Count} unmapped sources and {links.AmbiguousSources.Count} ambiguous sources. Rebuilding requires existing native groups; custom group assignment is not supported yet. First unmapped: {string.Join(", ", links.UnmappedSources.Take(3))}");
-        if (audit.Grid is null || audit.Sources is not { } sources || sources.Links.Any(link => link.BitIndex is < 0 or >= 1024))
+        if (!coverageOnly && (audit!.Grid is null || sources is null || sources.Links.Any(link => link.BitIndex is < 0 or >= 1024)))
             throw new InvalidDataException("Occlusion generation requires primary terrain with fully resolved, valid native groups.");
         var files = UyaLevelWadUnpacker.Unpack(wad).Files.ToDictionary(file => file.Path, file => file.Bytes);
+        if (coverageOnly) for (var i = 1; i < 3; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (files.TryGetValue($"level_wad/chunks/chunk{i}.wad", out var chunk)
+                && TfragChunkWadReader.ReadTerrainPayload(chunk).AsSpan().ContainsAnyExcept((byte)0))
+                throw new NotSupportedException("Coverage preview of streamed chunk terrain is not supported yet.");
+        }
+        if (coverageOnly) foreach (var name in new[] { "tie", "shrub" })
+        {
+            if (files.TryGetValue($"gameplay/core/{name}_instances.bin", out var records)
+                && (records.Length < 4 || System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(records) is < 0 or > 100_000))
+                throw new InvalidDataException("Coverage scene exceeds its static-instance limit.");
+        }
         var headerBytes = files["assets/asset_header.bin"];
         var h = LevelAssetReader.ReadHeader(headerBytes);
         var sourceAssets = files["assets/asset_wad.bin"];
@@ -36,10 +52,11 @@ internal static class UyaOcclusionSceneExtractor
         var shrubDefs = LevelAssetReader.ReadShrubDefinitions(headerBytes, h.ShrubModelOffset, h.ShrubModelCount);
         var offsets = LevelAssetReader.CollectKnownAssetOffsets(h, assets.Length, mobyDefs, tieDefs, shrubDefs, [h.SceneViewSize]);
         var terrain = LevelAssetReader.ReadAssetSlice(assets, h.TerrainOffset, offsets, allowZeroOffset: true);
-        var extraction = TfragPieceExtractor.Extract([new("primary", TfragPieceSourceKind.Primary, 0, terrain)], cancellationToken);
+        var extraction = TfragPieceExtractor.Extract(coverageOnly && !terrain.AsSpan().ContainsAnyExcept((byte)0) ? [] : [new("primary", TfragPieceSourceKind.Primary, 0, terrain)], cancellationToken);
         var pieces = extraction.Assets.ToDictionary(asset => asset.ContentId, asset => asset.Geometry);
         var textureSource = new UyaOcclusionTextureAtlas(headerBytes, files["assets/palette.bin"], assets);
-        var bySource = sources.Links.ToDictionary(link => link.SourceKey, StringComparer.Ordinal);
+        var bySource = sources?.Links.ToDictionary(link => link.SourceKey, StringComparer.Ordinal) ?? [];
+        int Group(string key) => coverageOnly ? -1 : bySource[key].BitIndex;
         var sourceRecords = new List<UyaOcclusionSource>();
         int Source(string key, string family, int? classId = null)
         {
@@ -78,7 +95,7 @@ internal static class UyaOcclusionSceneExtractor
             cancellationToken.ThrowIfCancellationRequested();
             var key = $"tfrag:primary:group:{occurrence.Provenance.GroupIndex}";
             currentSource = Source(key, "tfrag"); sourceFace = 0;
-            var group = bySource[key].BitIndex;
+            var group = Group(key);
             var start = triangles.Count;
             var p = occurrence.Transform.Position;
             if (occurrence.Transform.Rotation != new TfragPieceVector4(0, 0, 0, 1)
@@ -111,7 +128,7 @@ internal static class UyaOcclusionSceneExtractor
         for (var index = 0; index < ties.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var instance = ties[index]; var key = $"tie:instance:{index}"; var group = bySource[key].BitIndex;
+            var instance = ties[index]; var key = $"tie:instance:{index}"; var group = Group(key);
             currentSource = Source(key, "tie", instance.ClassId); sourceFace = 0;
             if (!meshes.TryGetValue(instance.ClassId, out var mesh))
             {
@@ -161,12 +178,12 @@ internal static class UyaOcclusionSceneExtractor
             }
         }
 
-        var mobys = files.TryGetValue("gameplay/core/moby_instances.bin", out var mobyBytes)
+        var mobys = !coverageOnly && files.TryGetValue("gameplay/core/moby_instances.bin", out var mobyBytes)
             ? UyaMobyInstancesReader.Read(mobyBytes).Instances : [];
         var mobyDefinitions = mobyDefs.ToDictionary(definition => definition.ModelId);
         var mobyHeaders = new Dictionary<int, MobyModel>();
         var mobySpheres = new List<UyaOcclusionBounds>();
-        foreach (var link in sources.Links.Where(link => link.Family == "moby"))
+        foreach (var link in sources?.Links.Where(link => link.Family == "moby") ?? [])
         {
             cancellationToken.ThrowIfCancellationRequested();
             var index = int.Parse(link.SourceKey.AsSpan("moby:instance:".Length)); var instance = mobys[index];
@@ -179,12 +196,12 @@ internal static class UyaOcclusionSceneExtractor
             mobySpheres.Add(UyaOcclusionMobyBounds.Transform(model, instance, source, link.BitIndex));
             Force(link.SourceKey);
         }
-        if (geometrySources.Count + forcedSources.Count != sources.Links.Count)
+        if (!coverageOnly && geometrySources.Count + forcedSources.Count != sources!.Links.Count)
             throw new InvalidDataException("Occlusion scene did not account for every native source object.");
-        var gridBytes = LevelAssetReader.ReadAssetSlice(assets, h.OcclusionOffset, offsets);
+        var gridBytes = coverageOnly ? [] : LevelAssetReader.ReadAssetSlice(assets, h.OcclusionOffset, offsets);
         UyaOcclusionAlphaSampling.Validate(triangles, textureSource.Textures);
         return new(triangles, textureSource.Textures, mobySpheres, sourceRecords, gridBytes,
-            UyaOcclusionOceanPlanes.ReadHeights(files, cancellationToken));
+            coverageOnly ? [] : UyaOcclusionOceanPlanes.ReadHeights(files, cancellationToken));
     }
 
     internal static TexturedSurfaceTriangle TransformSurface(TexturedSurfaceTriangle triangle, UyaInstanceTransform transform)

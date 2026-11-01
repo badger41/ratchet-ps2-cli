@@ -13,6 +13,15 @@ public static class OcclusionComposer
             _ => throw new NotSupportedException($"Occlusion grid extraction does not support {gameId}."),
         };
 
+    /// <summary>Serializes explicit nonempty coverage and masks without a source grid or inferred reserved-bit defaults.</summary>
+    public static byte[] CreateGrid(GameId gameId,
+        IReadOnlyDictionary<(int X, int Y, int Z), byte[]> masks, CancellationToken token = default)
+        => gameId switch
+        {
+            GameId.UYA => UyaOcclusionGridWriter.Create(masks, token),
+            _ => throw new NotSupportedException($"Occlusion grid creation does not support {gameId}."),
+        };
+
     public static byte[] ReplaceMasks(GameId gameId, ReadOnlySpan<byte> grid,
         IReadOnlyDictionary<(int X, int Y, int Z), byte[]> masks, CancellationToken token = default)
         => gameId switch
@@ -47,6 +56,23 @@ public static class OcclusionComposer
             default: throw new NotSupportedException($"Occlusion grid validation does not support {gameId}.");
         }
     }
+
+    /// <summary>Applies explicit nonempty coverage and complete masks, allowing new coordinates and allocation growth.</summary>
+    /// <remarks>The caller supplies every mask bit; this API does not qualify runtime budgets or infer new-cell defaults.</remarks>
+    public static LevelArchiveBuildResult ApplyCoverageToLevel(GameId gameId, ReadOnlyMemory<byte> levelWad,
+        IReadOnlyDictionary<(int X, int Y, int Z), byte[]> masks, CancellationToken token = default) => gameId switch
+        {
+            GameId.UYA => UyaOcclusionComposer.ApplyCoverageToLevel(levelWad, masks, token),
+            _ => throw new NotSupportedException($"Occlusion coverage composition does not support {gameId}."),
+        };
+
+    /// <summary>Applies a validated generated grid without source-coordinate or source-allocation restrictions.</summary>
+    public static LevelArchiveBuildResult ApplyCoverageToLevel(GameId gameId, ReadOnlyMemory<byte> levelWad,
+        byte[] generated, int octants, CancellationToken token = default) => gameId switch
+        {
+            GameId.UYA => UyaOcclusionComposer.ApplyCoverageToLevel(levelWad, generated, octants, token),
+            _ => throw new NotSupportedException($"Occlusion coverage composition does not support {gameId}."),
+        };
 
     public static LevelArchiveBuildResult ApplyToLevel(GameId gameId, ReadOnlyMemory<byte> levelWad,
         byte[] generated, int octants, CancellationToken token = default) => gameId switch

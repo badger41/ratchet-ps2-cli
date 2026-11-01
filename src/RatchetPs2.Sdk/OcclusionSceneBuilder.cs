@@ -7,6 +7,13 @@ namespace RatchetPs2.Sdk;
 
 public static class OcclusionSceneBuilder
 {
+    public static OcclusionCoverageGeometry BuildCoverageGeometry(GameId gameId, ReadOnlySpan<byte> levelWad,
+        CancellationToken token = default, bool includeStickyGeometry = false) => gameId switch
+    {
+        GameId.UYA => UyaOcclusionSceneBuilder.BuildCoverageGeometry(levelWad, token, includeStickyGeometry),
+        _ => throw new NotSupportedException($"Coverage scene extraction does not support {gameId}."),
+    };
+
     public static OcclusionSceneGeometry Build(GameId gameId, ReadOnlySpan<byte> levelWad,
         CancellationToken token = default) => gameId switch
     {

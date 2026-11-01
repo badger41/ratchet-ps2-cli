@@ -4,18 +4,37 @@ namespace RatchetPs2.Games.UYA.Occlusion;
 
 public static class UyaOcclusionSceneBuilder
 {
+    public static OcclusionCoverageGeometry BuildCoverageGeometry(ReadOnlySpan<byte> wad, CancellationToken token = default, bool includeStickyGeometry = false)
+    {
+        var extracted = UyaOcclusionSceneExtractor.Extract(wad, token, coverageOnly: true);
+        var (triangles, _) = PrepareGeometry(extracted, token);
+        var stickySources = includeStickyGeometry ? extracted.Sources.Select((source, index) => (source, index))
+            .Where(value => value.source.Family is "tie" or "tfrag").Select(value => value.index).ToHashSet() : null;
+        OcclusionSurfaceTriangle[]? sticky = null;
+        if (stickySources is not null)
+            sticky = triangles.All(t => stickySources.Contains(t.SourceIndex)) ? triangles
+                : triangles.Where(t => stickySources.Contains(t.SourceIndex)).ToArray();
+        return new(triangles, extracted.Textures) { StickyTriangles = sticky };
+    }
+
     public static OcclusionSceneGeometry Build(ReadOnlySpan<byte> wad, CancellationToken token = default)
     {
         var extracted = UyaOcclusionSceneExtractor.Extract(wad, token);
-        var ordered = UyaOcclusionTriangleOrder.Sort(extracted.Triangles, token);
-        var (selected, fallback) = SelectBakeGeometry(ordered, extracted.Sources);
-        var triangles = selected.Select(triangle => triangle with { Flags = triangle.Flags | 2u }).ToArray();
+        var (triangles, fallback) = PrepareGeometry(extracted, token);
         var grid = UyaOcclusionGridReader.Read(extracted.Grid, cancellationToken: token, maximumOctants: 1_000_000);
         var octants = grid.Octants.OrderBy(cell => cell.Z).ThenBy(cell => cell.Y).ThenBy(cell => cell.X)
             .Select(cell => new OcclusionOctant(cell.X, cell.Y, cell.Z,
                 (extracted.Grid[grid.MasksOffset + cell.MaskIndex * 128 + 127] & 128) != 0)).ToArray();
         return new(triangles, extracted.Textures, extracted.MobySpheres.Where(sphere => sphere.Group < 1023).ToArray(),
             octants, extracted.Grid, fallback, extracted.BarrierHeights);
+    }
+
+    private static (OcclusionSurfaceTriangle[] Triangles, byte[] Fallback) PrepareGeometry(
+        UyaOcclusionExtractedScene extracted, CancellationToken token)
+    {
+        var ordered = UyaOcclusionTriangleOrder.Sort(extracted.Triangles, token);
+        var (selected, fallback) = SelectBakeGeometry(ordered, extracted.Sources);
+        return (selected.Select(triangle => triangle with { Flags = triangle.Flags | 2u }).ToArray(), fallback);
     }
 
     public static OcclusionSampleQualifier CreateQualifier(OcclusionSceneGeometry scene, CancellationToken token = default)

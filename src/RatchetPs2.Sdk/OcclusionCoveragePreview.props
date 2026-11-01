@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup>
+    <RatchetSdkOcclusionCoverageGenerationApiVersion>1</RatchetSdkOcclusionCoverageGenerationApiVersion>
+    <RatchetSdkOcclusionCoveragePreviewApiVersion>1</RatchetSdkOcclusionCoveragePreviewApiVersion>
+    <RatchetSdkOcclusionCoverageGraphShapeApiVersion>1</RatchetSdkOcclusionCoverageGraphShapeApiVersion>
+  </PropertyGroup>
+</Project>
