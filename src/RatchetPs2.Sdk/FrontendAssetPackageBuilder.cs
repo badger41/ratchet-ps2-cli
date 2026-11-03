@@ -2,6 +2,7 @@ using RatchetPs2.Core.Games;
 using RatchetPs2.Core.LevelAssets;
 using RatchetPs2.Core.Wad.Models;
 using RatchetPs2.Games.UYA.Builders;
+using RatchetPs2.Games.DL.Builders;
 
 namespace RatchetPs2.Sdk;
 
@@ -18,6 +19,11 @@ public static class FrontendAssetPackageBuilder
         FrontendAssetPackageBuildOptions? options = null) => gameId switch
         {
             GameId.UYA => UyaFrontendAssetPackageBuilder.Build(
+                kind,
+                modelBytes,
+                textures,
+                options?.PreserveAuthoredRepeatedTexCoordTiles ?? false),
+            GameId.DL => DlFrontendAssetPackageBuilder.Build(
                 kind,
                 modelBytes,
                 textures,

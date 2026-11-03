@@ -14,6 +14,13 @@ public sealed record SkyboxCompositionResult(byte[] Bytes, bool IsBasePassThroug
 
 public static class SkyboxComposer
 {
+    public static byte[] Convert(GameId sourceGame, GameId targetGame, byte[] bytes, int? sourceLevel = null,
+        CancellationToken cancellationToken = default) => (sourceGame, targetGame) switch
+    {
+        (GameId.DL, GameId.UYA) => UyaSkyboxConverter.ConvertFromDl(bytes, sourceLevel, cancellationToken),
+        _ => throw new NotSupportedException($"Skybox conversion from {sourceGame} to {targetGame} is not supported."),
+    };
+
     public static SkyboxCompositionResult Compose(
         GameId gameId,
         ReadOnlySpan<byte> baseSkyboxBytes,

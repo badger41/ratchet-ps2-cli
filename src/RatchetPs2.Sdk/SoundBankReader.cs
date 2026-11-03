@@ -36,6 +36,14 @@ public static class SoundBankReader
         };
     }
 
+    /// <summary>Identifies a random-register/test/stop trigger gate, distinct from other variable playback.</summary>
+    public static bool HasRandomTriggerGate(GameId gameId, IEnumerable<(byte Type, sbyte Argument0)> operations) =>
+        gameId switch
+        {
+            GameId.UYA or GameId.DL => Snd989SoundBankReader.HasRandomTriggerGate(operations),
+            _ => throw new NotSupportedException($"Sound-program analysis is not supported for {gameId}."),
+        };
+
     public static int PreviewSampleRate(GameId gameId, sbyte centerNote, sbyte centerFine) =>
         gameId switch
         {

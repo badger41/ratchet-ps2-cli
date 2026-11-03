@@ -1,7 +1,9 @@
 using RatchetPs2.Core.Games;
 using RatchetPs2.Core.IO;
 using RatchetPs2.Core.LevelAssets;
+using RatchetPs2.Core.Sounds;
 using RatchetPs2.Core.Wad;
+using RatchetPs2.Core.Wad.Models;
 
 namespace RatchetPs2.Games.UYA.Level;
 
@@ -10,8 +12,12 @@ internal static class UyaLevelAssetExtractor
     public static LevelAssetExtractionResult Extract(byte[] levelWadBytes)
     {
         ArgumentNullException.ThrowIfNull(levelWadBytes);
-        var package = UyaLevelWadUnpacker.Unpack(levelWadBytes);
-        var source = UyaLevelWadRenderPackageBuilder.ReadAssetSourceFiles(package.Files);
+        return Extract(UyaLevelWadUnpacker.Unpack(levelWadBytes).Files);
+    }
+
+    public static LevelAssetExtractionResult Extract(IReadOnlyList<PackedFile> unpackedFiles)
+    {
+        var source = UyaLevelWadRenderPackageBuilder.ReadAssetSourceFiles(unpackedFiles);
         var header = LevelAssetReader.ReadHeader(source.HeaderBytes);
         var assetBytes = BinaryMagic.IsWad(source.AssetWadBytes)
             ? WadCompression.Decompress(source.AssetWadBytes)
@@ -40,8 +46,8 @@ internal static class UyaLevelAssetExtractor
                 Add(assets, FrontendAssetKind.Moby, definition.ModelId, definition.Index,
                     source.HeaderBytes.AsSpan(header.MobyModelOffset + definition.Index * 0x20, 0x20).ToArray(),
                     LevelAssetReader.ReadAssetSlice(assetBytes, definition.ModelOffset, knownOffsets),
-                    ReadTextures("moby", definition.TextureIds, mobyTextures, source.PaletteBytes, assetBytes,
-                        header.TextureDataOffset, gsStash));
+                    LevelAssetTextureExtractor.Extract("moby", definition.TextureIds, mobyTextures, source.PaletteBytes, assetBytes,
+                        header.TextureDataOffset, gsStash, isSwizzled: false));
             }
             catch (Exception exception) when (IsUnsupportedAsset(exception))
             {
@@ -55,8 +61,8 @@ internal static class UyaLevelAssetExtractor
                 Add(assets, FrontendAssetKind.Tie, definition.ModelId, definition.Index,
                     source.HeaderBytes.AsSpan(header.TieModelOffset + definition.Index * 0x20, 0x20).ToArray(),
                     LevelAssetReader.ReadAssetSlice(assetBytes, definition.ModelOffset, knownOffsets),
-                    ReadTextures("tie", definition.TextureIds, tieTextures, source.PaletteBytes, assetBytes,
-                        header.TextureDataOffset, null));
+                    LevelAssetTextureExtractor.Extract("tie", definition.TextureIds, tieTextures, source.PaletteBytes, assetBytes,
+                        header.TextureDataOffset, null, isSwizzled: false));
             }
             catch (Exception exception) when (IsUnsupportedAsset(exception))
             {
@@ -67,8 +73,8 @@ internal static class UyaLevelAssetExtractor
         {
             try
             {
-                var textures = ReadTextures("shrub", definition.TextureIds, shrubTextures, source.PaletteBytes,
-                    assetBytes, header.TextureDataOffset, null).ToList();
+                var textures = LevelAssetTextureExtractor.Extract("shrub", definition.TextureIds, shrubTextures, source.PaletteBytes,
+                    assetBytes, header.TextureDataOffset, null, isSwizzled: false).ToList();
                 if (definition.Width > 0 && definition.Height > 0 && definition.TextureId > 0)
                     textures.Add(new(1, LevelAssetReader.BuildShrubBillboardTexture(definition, source.PaletteBytes).PifBytes));
                 Add(assets, FrontendAssetKind.Shrub, definition.ModelId, definition.Index,
@@ -80,36 +86,26 @@ internal static class UyaLevelAssetExtractor
                 failures++;
             }
         }
-        return new(assets, failures);
+        var sky = LevelAssetReader.ReadAssetSlice(assetBytes, header.SkyOffset, knownOffsets);
+        return new(assets, failures)
+        {
+            SkyboxBytes = sky.Length == 0 ? null : sky,
+            SoundBanks = ReadSounds(unpackedFiles, source.HeaderBytes, header.SoundRemapOffset),
+        };
     }
 
-    private static IReadOnlyList<ExtractedLevelAssetTexture> ReadTextures(
-        string family,
-        byte[] textureIds,
-        IReadOnlyList<LevelAssetTextureDefinition> definitions,
-        byte[] paletteBytes,
-        byte[] assetBytes,
-        int textureDataOffset,
-        IReadOnlyList<LevelAssetMipmapDefinition>? gsStash)
+    private static IReadOnlyList<ExtractedLevelSoundBank> ReadSounds(
+        IReadOnlyList<PackedFile> files, byte[] headerBytes, int remapOffset)
     {
-        var textures = new List<ExtractedLevelAssetTexture>();
-        foreach (var textureId in textureIds)
-        {
-            if (textureId == byte.MaxValue) continue;
-            try
-            {
-                if (textureId >= definitions.Count) throw new InvalidDataException($"{family} texture ID {textureId} is out of range.");
-                var texture = LevelAssetReader.BuildAssetTexture(
-                    family, textures.Count, definitions[textureId], paletteBytes, assetBytes, textureDataOffset,
-                    gsStash, isSwizzled: false, useTextureFlags: true);
-                textures.Add(new(0, texture.PifBytes));
-            }
-            catch (Exception exception) when (IsUnsupportedAsset(exception))
-            {
-                textures.Add(new(0, null, exception.Message));
-            }
-        }
-        return textures;
+        const string archive = "level_wad/sound.bnk";
+        var bytes = files.SingleOrDefault(file => file.Path == archive)?.Bytes;
+        if (bytes is not { Length: > 0 }) return [];
+        var bank = Snd989SoundBankReader.Inspect(bytes);
+        var mobys = remapOffset == 0 ? [] : UyaSoundRemapReader.Inspect(headerBytes, bank.Programs.Count).Mobys
+            .Select(map => new ExtractedLevelMobySounds(map.DefinitionIndex, map.ClassId,
+                map.Slots.Select(slot => slot.NativeProgramIndex).ToArray(), "level_wad/assets/asset_wad.bin"))
+            .ToArray();
+        return [new(bytes, archive, bank, mobys)];
     }
 
     private static void Add(

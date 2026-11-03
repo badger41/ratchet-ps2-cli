@@ -120,13 +120,14 @@ public static class UyaSoundRemapComposer
             cancellationToken.ThrowIfCancellationRequested();
             if (!composition.MobySlotsByClassId.TryGetValue(targetClassIds[index], out var slots)
                 || slots.Count == 0) continue;
-            if (slots.Count > short.MaxValue)
+            if (slots.Count >= short.MaxValue)
                 throw new InvalidDataException("UYA Moby sound-remap slot count exceeds signed 16-bit bounds.");
             var offset = ToInt16(output.Position, "moby sound list offset");
+            output.Write([0xff, 0xff, 0xff, 0xff]); // Primary bank selector precedes the actual sound slots.
             WriteSlots(output, slots, composition.ProgramCount, nullable: true,
                 $"Moby 0x{targetClassIds[index]:X4}", cancellationToken);
             WriteInt16(output.GetBuffer(), HeaderSize + index * MobyConfigSize, offset);
-            WriteInt16(output.GetBuffer(), HeaderSize + index * MobyConfigSize + 2, checked((short)slots.Count));
+            WriteInt16(output.GetBuffer(), HeaderSize + index * MobyConfigSize + 2, checked((short)(slots.Count + 1)));
         }
         var bytes = output.ToArray();
         WriteInt16(bytes, 0, otherOffset);

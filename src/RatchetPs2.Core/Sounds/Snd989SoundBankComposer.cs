@@ -11,13 +11,15 @@ public static class Snd989SoundBankComposer
     private const int GrainRecordSize = 8;
     private const int MaximumMetadataBytes = 16 * 1024 * 1024;
     private const int MaximumSpuBytes = 2 * 1024 * 1024;
+    private const int MaximumPreviewSampleBytes = 32 * 1024 * 1024;
     private const int SectorSize = 2048;
 
     public static SoundBankCompositionResult Compose(
         ReadOnlySpan<byte> sourceBytes,
         IReadOnlyList<SoundBankProgramInput> programs,
         IReadOnlyList<SoundBankSampleInput> samples,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool enforceSpuBudget = true)
     {
         ArgumentNullException.ThrowIfNull(programs);
         ArgumentNullException.ThrowIfNull(samples);
@@ -29,18 +31,20 @@ public static class Snd989SoundBankComposer
             throw new NotSupportedException(
                 "989snd composition does not support relocating optional names or per-sound user data.");
 
-        _ = Unique(programs, value => value.Key, "program");
-        _ = Unique(samples, value => value.Key, "sample");
+        ValidateUnique(programs, value => value.Key, "program");
+        ValidateUnique(samples, value => value.Key, "sample");
         var programIndexes = programs.Select((value, index) => (value.Key, index))
             .ToDictionary(value => value.Key, value => value.index, StringComparer.Ordinal);
         var sampleOffsets = new Dictionary<string, int>(StringComparer.Ordinal);
         using var sampleOutput = new MemoryStream();
         var sourceSampleData = sourceBytes.Slice(
             source.SampleDataProvenance.Offset, source.SampleDataProvenance.Length);
-        sampleOutput.Write(sourceSampleData);
-        if (sampleOutput.Length > MaximumSpuBytes)
+        var maximumSampleBytes = enforceSpuBudget ? MaximumSpuBytes : MaximumPreviewSampleBytes;
+        var allocationLimit = enforceSpuBudget ? "PS2 SPU budget" : "preview sample limit";
+        if (sourceSampleData.Length > maximumSampleBytes)
             throw new InvalidDataException(
-                $"989snd source allocation exceeds the {MaximumSpuBytes}-byte PS2 SPU budget.");
+                $"989snd source allocation exceeds the {maximumSampleBytes}-byte {allocationLimit}.");
+        sampleOutput.Write(sourceSampleData);
         foreach (var sample in samples)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -58,12 +62,12 @@ public static class Snd989SoundBankComposer
                 sampleOffsets.Add(sample.Key, sourceSample.EncodedOffset);
             else
             {
+                if (sampleOutput.Length + sample.EncodedBytes.Length > maximumSampleBytes)
+                    throw new InvalidDataException(
+                        $"989snd sample allocation exceeds the {maximumSampleBytes}-byte {allocationLimit}.");
                 sampleOffsets.Add(sample.Key, checked((int)sampleOutput.Position));
                 sampleOutput.Write(sample.EncodedBytes);
             }
-            if (sampleOutput.Length > MaximumSpuBytes)
-                throw new InvalidDataException(
-                    $"989snd sample allocation exceeds the {MaximumSpuBytes}-byte PS2 SPU budget.");
         }
 
         if (programs.Any(value => value.Operations is null
@@ -228,22 +232,21 @@ public static class Snd989SoundBankComposer
         BinaryPrimitives.WriteUInt32LittleEndian(bytes[0x14..0x18], tone.Reserved);
     }
 
-    private static Dictionary<string, T> Unique<T>(
+    private static void ValidateUnique<T>(
         IReadOnlyList<T> values,
         Func<T, string> key,
         string description)
     {
-        var result = new Dictionary<string, T>(StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var value in values)
         {
             if (value is null)
                 throw new InvalidDataException($"989snd composition contains a null {description}.");
             var current = key(value);
             ValidateKey(current, description);
-            if (!result.TryAdd(current, value))
+            if (!seen.Add(current))
                 throw new InvalidDataException($"989snd composition contains duplicate {description} key {current}.");
         }
-        return result;
     }
 
     private static void ValidateKey(string value, string description)

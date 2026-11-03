@@ -7,6 +7,13 @@ namespace RatchetPs2.Sdk;
 
 public static class LevelAssetComposer
 {
+    public static byte[] ComposeMobyClassLookup(GameId gameId, ReadOnlySpan<byte> sourceOverlay,
+        ReadOnlySpan<byte> assetHeader, CancellationToken cancellationToken = default) => gameId switch
+        {
+            GameId.UYA => UyaMobyClassLookupComposer.Compose(sourceOverlay, assetHeader, cancellationToken),
+            _ => throw new NotSupportedException($"Moby class lookup composition is not supported for {gameId}."),
+        };
+
     public static LevelAssetWadComposition SetAlwaysVisibleOcclusionBit(
         GameId gameId,
         ReadOnlySpan<byte> headerBytes,

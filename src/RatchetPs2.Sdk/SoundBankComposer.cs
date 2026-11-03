@@ -11,10 +11,11 @@ public static class SoundBankComposer
         ReadOnlySpan<byte> sourceBankBytes,
         IReadOnlyList<SoundBankProgramInput> programs,
         IReadOnlyList<SoundBankSampleInput> samples,
-        CancellationToken cancellationToken = default) => gameId switch
+        CancellationToken cancellationToken = default,
+        bool enforceSpuBudget = true) => gameId switch
         {
             GameId.UYA or GameId.DL => Snd989SoundBankComposer.Compose(
-                sourceBankBytes, programs, samples, cancellationToken),
+                sourceBankBytes, programs, samples, cancellationToken, enforceSpuBudget),
             _ => throw new NotSupportedException($"Sound-bank composition is not supported for {gameId}."),
         };
 

@@ -82,7 +82,8 @@ public static class DlMissionMobyBankReader
                 throw new InvalidDataException($"DL mission texture {i} overlaps the next model bank block.");
             }
 
-            textures[i] = data.Slice(textureOffset, textureLength).ToArray();
+            // Embedded mission PIFs can retain a stale file size; standalone textures need their actual allocation.
+            textures[i] = PifWriter.Write(texture);
         }
 
         return textures;

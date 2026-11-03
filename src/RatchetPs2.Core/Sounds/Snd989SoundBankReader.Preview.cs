@@ -4,6 +4,20 @@ namespace RatchetPs2.Core.Sounds;
 
 public static partial class Snd989SoundBankReader
 {
+    public static bool HasRandomTriggerGate(IEnumerable<(byte Type, sbyte Argument0)> operations)
+    {
+        ArgumentNullException.ThrowIfNull(operations);
+        (byte Type, sbyte Argument0) first = default, second = default;
+        foreach (var operation in operations)
+        {
+            if (first.Type == 0x1f && second.Type == 0x22 && operation.Type == 0x18
+                && first.Argument0 == second.Argument0) return true;
+            first = second;
+            second = operation;
+        }
+        return false;
+    }
+
     public static SoundPcmPreview RenderPreview(
         byte[] bytes,
         int programIndex,

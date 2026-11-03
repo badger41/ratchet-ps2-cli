@@ -5,6 +5,18 @@ namespace RatchetPs2.Games.UYA.Gameplay;
 
 public static class UyaMobyInstancesWriter
 {
+    public static byte[] RebaseClass(ReadOnlySpan<byte> source, int expectedClassId, int targetClassId)
+    {
+        var instance = UyaMobyInstancesReader.ReadInstance(source);
+        if (instance.ClassId != expectedClassId)
+            throw new InvalidDataException("The Moby instance class changed before rebasing.");
+        if (targetClassId is < 0 or > ushort.MaxValue)
+            throw new ArgumentOutOfRangeException(nameof(targetClassId));
+        var result = source[..UyaMobyInstancesReader.RecordSize].ToArray();
+        BinaryPrimitives.WriteInt32LittleEndian(result.AsSpan(0x28), targetClassId);
+        return result;
+    }
+
     public static byte[] WriteField(
         ReadOnlySpan<byte> source,
         int expectedClassId,

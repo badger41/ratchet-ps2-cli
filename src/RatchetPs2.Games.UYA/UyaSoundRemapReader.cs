@@ -49,9 +49,12 @@ internal static class UyaSoundRemapReader
             if (count > 0)
             {
                 var bytes = Slice(source, listOffset, checked(count * sizeof(int)), $"moby config {index} list");
-                slots = ReadSlots(bytes, header.SoundRemapOffset + listOffset, programCount, nullable: true,
+                // The native loader adds one to the leading bank selector; -1 selects the primary bank.
+                if (ReadInt32LittleEndian(bytes, 0) != -1)
+                    throw new NotSupportedException("UYA moby sound remaps using secondary banks are not supported.");
+                slots = ReadSlots(bytes[sizeof(int)..], header.SoundRemapOffset + listOffset + sizeof(int), programCount, nullable: true,
                     $"moby class 0x{definitions[index].ModelId:X4}");
-                slotRange = new(header.SoundRemapOffset + listOffset, bytes.Length);
+                slotRange = new(header.SoundRemapOffset + listOffset + sizeof(int), bytes.Length - sizeof(int));
                 end = Math.Max(end, checked(listOffset + bytes.Length));
             }
             mobys[index] = new(

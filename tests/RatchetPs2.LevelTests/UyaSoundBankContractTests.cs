@@ -226,8 +226,10 @@ internal static class UyaSoundBankContractTests
             var count = ReadNonNegativeInt16(remap, 10 + index * 4, $"moby config {index} count");
             if (count == 0) continue;
             if (offset == 0) throw new InvalidDataException("UYA moby sound config is missing its list.");
-            ValidateSoundIds(Slice(remap, offset, checked(count * 4), $"moby config {index} IDs"),
-                soundCount, nullable: true);
+            var list = Slice(remap, offset, checked(count * 4), $"moby config {index} IDs");
+            if (BinaryPrimitives.ReadInt32LittleEndian(list) != -1)
+                throw new InvalidDataException("UYA moby sound config does not select the primary bank.");
+            ValidateSoundIds(list[4..], soundCount, nullable: true);
         }
         return new(configCount, otherCount, globalCount);
     }
@@ -287,7 +289,8 @@ internal static class UyaSoundBankContractTests
         BinaryPrimitives.WriteInt16LittleEndian(bytes.AsSpan(0x104), 0x2c);
         BinaryPrimitives.WriteInt16LittleEndian(bytes.AsSpan(0x106), 1);
         BinaryPrimitives.WriteInt16LittleEndian(bytes.AsSpan(0x108), 0x30);
-        BinaryPrimitives.WriteInt16LittleEndian(bytes.AsSpan(0x10a), 1);
+        BinaryPrimitives.WriteInt16LittleEndian(bytes.AsSpan(0x10a), 2);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(0x130), -1);
         return bytes;
     }
 

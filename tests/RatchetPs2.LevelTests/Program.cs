@@ -41,6 +41,9 @@ using RatchetPs2.Games.UYA.Hud;
 using RatchetPs2.Games.UYA.Level;
 using RatchetPs2.Sdk;
 
+if (args is ["--sound-banks"]) { UyaSoundBankContractTests.Run(); SoundBankReaderTests.Run(); return; }
+if (args is ["--dl-to-uya-models"]) { LevelAssetModelConversionTests.Run(); return; }
+if (args is ["--dl-asset-extraction"]) { DlAssetExtractionTests.Run(); DlAssetResourceTests.Run(); return; }
 if (args is ["--uya-occlusion-compaction"]) { UyaOcclusionCompactionTests.Run(); return; }
 if (args is ["--occlusion-scene"]) { UyaOcclusionSceneTests.Run(); return; }
 if (args is ["--occlusion-samples"]) { OcclusionSampleQualificationTests.Run(); return; }
@@ -315,6 +318,9 @@ ValidateLevelWadParsing();
 ValidateArmorWadParsing();
 ValidateOnlineWadExtraction();
 ValidateOnlineArmorWadParsing();
+DlAssetExtractionTests.Run();
+DlAssetResourceTests.Run();
+LevelAssetModelConversionTests.Run();
 ValidateLooseLevelWadExtraction();
 ValidateLooseLevelWadUnpacking();
 ValidateRc1IsoLevelExtraction();

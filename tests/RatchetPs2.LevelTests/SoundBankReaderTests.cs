@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using RatchetPs2.Core.Games;
 using RatchetPs2.Core.Sounds;
+using RatchetPs2.Core.Wad.Models;
 using RatchetPs2.Sdk;
 
 internal static class SoundBankReaderTests
@@ -42,6 +43,8 @@ internal static class SoundBankReaderTests
             "shared 989snd preview rate preserves center-fine direction");
 
         VerifyComposition(bank, inventory);
+        VerifyLevelExtraction(bank);
+        VerifyRandomTriggerGates();
 
         var preview = SoundBankReader.RenderPreview(GameId.UYA, bank, 0);
         Expect(preview.SampleRate == 44_100 && preview.Channels == 1 && preview.Pcm16.Length == 56,
@@ -165,6 +168,60 @@ internal static class SoundBankReaderTests
         InspectDlCorpusWhenAvailable();
     }
 
+    private static void VerifyRandomTriggerGates()
+    {
+        foreach (var game in new[] { GameId.UYA, GameId.DL })
+        {
+            Expect(SoundBankReader.HasRandomTriggerGate(game, [(0x01, 0), (0x1f, 2), (0x22, 2), (0x18, 0)]),
+                "trigger gate can follow other operations");
+            Expect(!SoundBankReader.HasRandomTriggerGate(game, [(0x1f, 2), (0x22, 3), (0x18, 0)]),
+                "register test must use the randomized register");
+            Expect(!SoundBankReader.HasRandomTriggerGate(game, [(0x1f, 2), (0x01, 0), (0x22, 2), (0x18, 0)]),
+                "trigger gate operations must be consecutive");
+            Expect(!SoundBankReader.HasRandomTriggerGate(game, [(0x1b, 2), (0x22, 2), (0x18, 0)])
+                && !SoundBankReader.HasRandomTriggerGate(game, [(0x1f, 2), (0x22, 2)])
+                && !SoundBankReader.HasRandomTriggerGate(game, []),
+                "other variability, incomplete gates and empty programs are not trigger gates");
+        }
+        ExpectThrows<NotSupportedException>(() => SoundBankReader.HasRandomTriggerGate(GameId.RC1, []));
+    }
+
+    private static void VerifyLevelExtraction(byte[] bank)
+    {
+        var header = CreateAssetHeader();
+        WriteUInt32(header, 0x10, 0x20);
+        WriteUInt32(header, 0x7c, 0x40);
+        header.AsSpan(0xd0, 16).Fill(255);
+        header.AsSpan(0xf0, 16).Fill(255);
+        var assets = Enumerable.Range(0, 0x50).Select(value => (byte)value).ToArray();
+        PackedFile[] files = [new("assets/asset_header.bin", header, "application/octet-stream"),
+            new("assets/palette.bin", [], "application/octet-stream"),
+            new("assets/asset_wad.bin", assets, "application/octet-stream"),
+            new("level_wad/sound.bnk", bank, "application/octet-stream")];
+        var extracted = LevelAssetExtractor.ExtractUnpacked(GameId.UYA, files);
+        Expect(extracted.SkyboxBytes!.SequenceEqual(assets.AsSpan(0x20, 0x20).ToArray()),
+            "sky extraction stops at the scene-view boundary");
+        var sounds = extracted.SoundBanks.Single();
+        Expect(sounds.ArchivePath == "level_wad/sound.bnk" && sounds.Bytes.SequenceEqual(bank),
+            "UYA extraction retains the original sound bank and provenance");
+        Expect(sounds.Mobys[0].SourceIndex == 0 && sounds.Mobys[0].ClassId == 0x222
+            && sounds.Mobys[0].ModelArchivePath == "level_wad/assets/asset_wad.bin"
+            && sounds.Mobys[0].Programs.SequenceEqual([1, -1])
+            && sounds.Mobys[1].Programs.SequenceEqual([0]),
+            "UYA extraction preserves definition order and empty sound slots");
+        var withoutBank = LevelAssetExtractor.ExtractUnpacked(GameId.UYA, files[..3]);
+        Expect(withoutBank.SoundBanks.Count == 0, "absent sound bank is optional");
+        WriteUInt32(header, 0x70, 0);
+        Expect(LevelAssetExtractor.ExtractUnpacked(GameId.UYA, files).SoundBanks.Single().Mobys.Count == 0,
+            "sound bank without a remap remains available");
+        WriteUInt32(header, 0x10, 0);
+        Expect(LevelAssetExtractor.ExtractUnpacked(GameId.UYA, files).SkyboxBytes is null,
+            "absent sky remains optional");
+        WriteUInt32(header, 0x70, 0x100);
+        WriteUInt32(header, 0x100 + 56, int.MaxValue);
+        ExpectThrows<InvalidDataException>(() => LevelAssetExtractor.ExtractUnpacked(GameId.UYA, files));
+    }
+
     private static void VerifyComposition(byte[] bank, SoundBankInventory inventory)
     {
         var samples = inventory.Samples.Select(value => new SoundBankSampleInput(
@@ -237,6 +294,8 @@ internal static class SoundBankReaderTests
         ExpectThrows<InvalidDataException>(() => SoundBankComposer.Compose(
             GameId.UYA, bank, [programs[0], programs[0]], samples));
         ExpectThrows<InvalidDataException>(() => SoundBankComposer.Compose(
+            GameId.UYA, bank, programs, [.. samples, samples[0]]));
+        ExpectThrows<InvalidDataException>(() => SoundBankComposer.Compose(
             GameId.UYA, bank, programs,
             [.. samples, new("sample:over-budget", new byte[2 * 1024 * 1024])]));
         using var cancelled = new CancellationTokenSource();
@@ -259,7 +318,7 @@ internal static class SoundBankReaderTests
             && inventory.Globals.Single().NativeProgramIndex == 1,
             "sound-remap inventory resolves ordered native program slots");
         Expect(inventory is
-            { Provenance: { Offset: 0x100, Length: 64 }, OtherRecordCount: 1,
+            { Provenance: { Offset: 0x100, Length: 72 }, OtherRecordCount: 1,
               OtherRecordsProvenance: { Offset: 0x110, Length: 0x20 } },
             "sound-remap inventory retains exact source and opaque ranges");
 
@@ -288,7 +347,7 @@ internal static class SoundBankReaderTests
             "sound-remap composition should preserve opaque other records");
 
         var invalid = header.ToArray();
-        BinaryPrimitives.WriteInt32LittleEndian(invalid.AsSpan(0x100 + 52), 2);
+        BinaryPrimitives.WriteInt32LittleEndian(invalid.AsSpan(0x100 + 56), 2);
         ExpectThrows<InvalidDataException>(() =>
             SoundBankReader.InspectRemap(GameId.UYA, invalid, 2));
         using var cancelled = new CancellationTokenSource();
@@ -313,13 +372,15 @@ internal static class SoundBankReaderTests
         BinaryPrimitives.WriteInt16LittleEndian(remap[4..], 48);
         BinaryPrimitives.WriteInt16LittleEndian(remap[6..], 1);
         BinaryPrimitives.WriteInt16LittleEndian(remap[8..], 52);
-        BinaryPrimitives.WriteInt16LittleEndian(remap[10..], 2);
-        BinaryPrimitives.WriteInt16LittleEndian(remap[12..], 60);
-        BinaryPrimitives.WriteInt16LittleEndian(remap[14..], 1);
+        BinaryPrimitives.WriteInt16LittleEndian(remap[10..], 3);
+        BinaryPrimitives.WriteInt16LittleEndian(remap[12..], 64);
+        BinaryPrimitives.WriteInt16LittleEndian(remap[14..], 2);
         BinaryPrimitives.WriteInt32LittleEndian(remap[48..], 1);
-        BinaryPrimitives.WriteInt32LittleEndian(remap[52..], 1);
-        BinaryPrimitives.WriteInt32LittleEndian(remap[56..], -1);
-        BinaryPrimitives.WriteInt32LittleEndian(remap[60..], 0);
+        BinaryPrimitives.WriteInt32LittleEndian(remap[52..], -1);
+        BinaryPrimitives.WriteInt32LittleEndian(remap[56..], 1);
+        BinaryPrimitives.WriteInt32LittleEndian(remap[60..], -1);
+        BinaryPrimitives.WriteInt32LittleEndian(remap[64..], -1);
+        BinaryPrimitives.WriteInt32LittleEndian(remap[68..], 0);
         return bytes;
     }
 
@@ -381,7 +442,7 @@ internal static class SoundBankReaderTests
             Console.WriteLine($"Deadlocked 989snd reader: inventoried {checkedBanks} bank(s).");
     }
 
-    private static byte[] CreateDirectBank()
+    internal static byte[] CreateDirectBank()
     {
         const int metadataOffset = 0x18;
         const int programCount = 3;
