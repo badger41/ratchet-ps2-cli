@@ -141,7 +141,7 @@ internal static class LevelAssetModelConversionTests
         using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
         try { LevelAssetModelConverter.Convert(GameId.DL, GameId.UYA, FrontendAssetKind.Tie, tie, 0x9001, cancelled.Token); throw new Exception("Expected cancellation"); }
         catch (OperationCanceledException) { }
-        try { LevelAssetModelConverter.Convert(GameId.GC, GameId.UYA, FrontendAssetKind.Tie, tie, 0x9001); throw new Exception("Expected rejection"); }
+        try { LevelAssetModelConverter.Convert(GameId.RC1, GameId.UYA, FrontendAssetKind.Tie, tie, 0x9001); throw new Exception("Expected rejection"); }
         catch (NotSupportedException) { }
         Console.WriteLine("DL to UYA model conversion checks passed.");
     }

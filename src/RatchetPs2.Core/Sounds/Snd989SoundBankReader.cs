@@ -66,8 +66,12 @@ public static partial class Snd989SoundBankReader
             if (bytes[offset] != 0)
                 throw new InvalidDataException("989snd bank sector padding is not zero.");
 
-        if (metadata.Length < 0x40 || ReadUInt32LittleEndian(metadata, 0) != Sblk
-            || ReadUInt32LittleEndian(metadata, 4) != 3 || ReadUInt32LittleEndian(metadata, 8) != 4
+        var version = metadata.Length >= 8 ? ReadUInt32LittleEndian(metadata, 4) : 0;
+        var legacy = version == 1;
+        var headerSize = legacy ? 0x3c : 0x40;
+        var grainSize = legacy ? 40 : 8;
+        if (metadata.Length < headerSize || ReadUInt32LittleEndian(metadata, 0) != Sblk
+            || version is not (1 or 3) || ReadUInt32LittleEndian(metadata, 8) != 4
             || ReadUInt32LittleEndian(metadata, 0x0c) != DawBlockId)
             throw new InvalidDataException("989snd SBlk header is unsupported.");
         var programCount = ReadNonNegativeInt16(metadata, 0x16, "program count");
@@ -75,19 +79,23 @@ public static partial class Snd989SoundBankReader
         var declaredSampleCount = ReadNonNegativeInt16(metadata, 0x1a, "sample count");
         var programsOffset = ToInt32(ReadUInt32LittleEndian(metadata, 0x1c), "program table offset");
         var grainsOffset = ToInt32(ReadUInt32LittleEndian(metadata, 0x20), "grain table offset");
-        var grainDataOffset = ToInt32(ReadUInt32LittleEndian(metadata, 0x34), "grain data offset");
-        if (ReadUInt32LittleEndian(metadata, 0x28) != sampleDataLength
-            || ReadUInt32LittleEndian(metadata, 0x2c) < sampleDataLength
-            || programsOffset != 0x40
+        var grainDataOffset = legacy ? checked(grainsOffset + grainCount * grainSize)
+            : ToInt32(ReadUInt32LittleEndian(metadata, 0x34), "grain data offset");
+        // Legacy chunk banks can reserve more SPU bytes than their trimmed sample payload contains.
+        var declaredSampleBytes = ReadUInt32LittleEndian(metadata, 0x28);
+        if ((!legacy && declaredSampleBytes != sampleDataLength)
+            || declaredSampleBytes < sampleDataLength || declaredSampleBytes > MaximumSampleBytes
+            || ReadUInt32LittleEndian(metadata, 0x2c) < declaredSampleBytes
+            || programsOffset != headerSize
             || checked(programsOffset + programCount * 12) != grainsOffset
-            || checked(grainsOffset + grainCount * 8) != grainDataOffset)
+            || checked(grainsOffset + grainCount * grainSize) != grainDataOffset)
             throw new InvalidDataException("989snd bank table layout is invalid.");
         _ = Slice(metadata, programsOffset, checked(programCount * 12), "program table");
-        _ = Slice(metadata, grainsOffset, checked(grainCount * 8), "grain table");
+        _ = Slice(metadata, grainsOffset, checked(grainCount * grainSize), "grain table");
 
         var operations = ReadOperations(
             metadata, metadataOffset, grainsOffset, grainDataOffset, grainCount,
-            programCount, unchecked((int)DawBlockId), cancellationToken);
+            programCount, unchecked((int)DawBlockId), cancellationToken, legacy);
         var samples = ReadSamples(
             sampleData,
             sampleDataOffset,
@@ -109,9 +117,9 @@ public static partial class Snd989SoundBankReader
             var count = unchecked((sbyte)metadata[offset + 4]);
             var firstOffset = ToInt32(
                 ReadUInt32LittleEndian(metadata, offset + 8), $"program {index} first grain");
-            if (count < 0 || firstOffset % 8 != 0 || firstOffset / 8 > grainCount - count)
+            if (count < 0 || firstOffset % grainSize != 0 || firstOffset / grainSize > grainCount - count)
                 throw new InvalidDataException($"989snd program {index} grain window is invalid.");
-            var firstIndex = firstOffset / 8;
+            var firstIndex = firstOffset / grainSize;
             var programOperations = publicOperations.Skip(firstIndex).Take(count).ToArray();
             var sampleIds = programOperations
                 .Where(value => value.Tone is not null)
@@ -124,6 +132,10 @@ public static partial class Snd989SoundBankReader
             var instanceLimit = unchecked((sbyte)metadata[offset + 5]);
             var flags = ReadUInt16LittleEndian(metadata, offset + 6);
             var blocker = PreviewBlocker(programOperations);
+            if (legacy)
+                for (var grain = firstIndex; grain < firstIndex + count; grain++)
+                    if (!LegacyArgumentsFit(metadata.Slice(grainsOffset + grain * grainSize, grainSize)))
+                        blocker = "Legacy grain arguments exceed the supported signed-byte range.";
             programs[index] = new(
                 index,
                 null,
@@ -144,7 +156,7 @@ public static partial class Snd989SoundBankReader
 
         return new(
             "989snd-sblk",
-            3,
+            checked((int)version),
             unchecked((int)DawBlockId),
             new(metadataOffset, metadataLength),
             new(sampleDataOffset, sampleDataLength),
@@ -189,15 +201,16 @@ public static partial class Snd989SoundBankReader
         int grainCount,
         int programCount,
         int blockId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool legacy = false)
     {
         var result = new ParsedOperation[grainCount];
         for (var index = 0; index < grainCount; index++)
         {
             if ((index & 0xff) == 0) cancellationToken.ThrowIfCancellationRequested();
-            var offset = grainsOffset + index * 8;
+            var offset = grainsOffset + index * (legacy ? 40 : 8);
             var opcode = ReadUInt32LittleEndian(metadata, offset);
-            var type = (byte)(opcode >> 24);
+            var type = legacy ? checked((byte)opcode) : (byte)(opcode >> 24);
             var parameterLength = type switch
             {
                 1 or 9 => 24,
@@ -210,7 +223,7 @@ public static partial class Snd989SoundBankReader
             SoundSourceRange? parameterProvenance = null;
             if (parameterLength > 0)
             {
-                parameterOffset = checked(grainDataOffset + (int)(opcode & 0x00ffffff));
+                parameterOffset = legacy ? offset + 8 : checked(grainDataOffset + (int)(opcode & 0x00ffffff));
                 parameterBytes = Slice(
                     metadata, parameterOffset, parameterLength, $"grain {index} parameters").ToArray();
                 parameterProvenance = new(metadataOffset + parameterOffset, parameterLength);
@@ -222,17 +235,25 @@ public static partial class Snd989SoundBankReader
             result[index] = new(
                 index,
                 type,
-                unchecked((sbyte)(byte)opcode),
-                unchecked((sbyte)(byte)(opcode >> 8)),
-                unchecked((sbyte)(byte)(opcode >> 16)),
+                legacy ? unchecked((sbyte)ReadInt16LittleEndian(metadata, offset + 8)) : unchecked((sbyte)(byte)opcode),
+                legacy ? unchecked((sbyte)ReadInt16LittleEndian(metadata, offset + 10)) : unchecked((sbyte)(byte)(opcode >> 8)),
+                legacy ? unchecked((sbyte)ReadInt16LittleEndian(metadata, offset + 12)) : unchecked((sbyte)(byte)(opcode >> 16)),
                 ReadInt32LittleEndian(metadata, offset + 4),
-                new(metadataOffset + offset, 8),
+                new(metadataOffset + offset, legacy ? 40 : 8),
                 parameterProvenance,
                 parameterBytes,
                 tone,
                 referencedProgram);
         }
         return result;
+    }
+
+    private static bool LegacyArgumentsFit(ReadOnlySpan<byte> grain)
+    {
+        if (ReadUInt32LittleEndian(grain, 0) is >= 1 and <= 9) return true;
+        for (var offset = 8; offset <= 12; offset += 2)
+            if (ReadInt16LittleEndian(grain, offset) is < sbyte.MinValue or > sbyte.MaxValue) return false;
+        return true;
     }
 
     private static ParsedTone ReadTone(ReadOnlySpan<byte> bytes, int grainIndex)
@@ -313,8 +334,9 @@ public static partial class Snd989SoundBankReader
             }
             if (end < 0) throw new InvalidDataException("989snd sample has no terminating ADPCM frame.");
             var looping = (endFlags & 2) != 0;
-            if (looping != (loopStart is not null))
-                throw new InvalidDataException("989snd sample loop markers are inconsistent.");
+            if (looping && loopStart is null)
+                throw new InvalidDataException("989snd looping sample has no loop-start marker.");
+            if (!looping) loopStart = null;
             var encoded = sampleData[start..end];
             result[index] = new(
                 Snd989SoundIdentity.HashSample(encoded),

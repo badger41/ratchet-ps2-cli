@@ -4,6 +4,8 @@ using RatchetPs2.Core.Wad.Models;
 using RatchetPs2.Games.UYA.Builders;
 using RatchetPs2.Games.DL.Builders;
 
+using RatchetPs2.Games.GC.Builders;
+
 namespace RatchetPs2.Sdk;
 
 public sealed record FrontendAssetPackageBuildOptions(
@@ -18,6 +20,8 @@ public static class FrontendAssetPackageBuilder
         IReadOnlyList<FrontendAssetTexture> textures,
         FrontendAssetPackageBuildOptions? options = null) => gameId switch
         {
+            GameId.GC => GcFrontendAssetPackageBuilder.Build(
+                kind, modelBytes, textures, options?.PreserveAuthoredRepeatedTexCoordTiles ?? false),
             GameId.UYA => UyaFrontendAssetPackageBuilder.Build(
                 kind,
                 modelBytes,

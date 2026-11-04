@@ -1,10 +1,9 @@
 using RatchetPs2.Core.LevelAssets;
-using RatchetPs2.Core.Sounds;
 using static RatchetPs2.Core.IO.BinarySpanReader;
 
-namespace RatchetPs2.Games.UYA;
+namespace RatchetPs2.Core.Sounds;
 
-internal static class UyaSoundRemapReader
+public static class LevelSoundRemapReader
 {
     private const int HeaderSize = 8;
     private const int MobyConfigSize = 4;
@@ -13,13 +12,14 @@ internal static class UyaSoundRemapReader
     public static SoundRemapInventory Inspect(
         ReadOnlySpan<byte> headerBytes,
         int programCount,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyList<int>? secondaryProgramCounts = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (programCount < 0) throw new ArgumentOutOfRangeException(nameof(programCount));
         var header = LevelAssetReader.ReadHeader(headerBytes);
         if (header.SoundRemapOffset <= 0 || header.SoundRemapOffset > headerBytes.Length - HeaderSize)
-            throw new InvalidDataException("UYA asset header has no bounded sound-remap block.");
+            throw new InvalidDataException("Level asset header has no bounded sound-remap block.");
 
         var source = headerBytes[header.SoundRemapOffset..];
         var otherOffset = ReadNonNegativeInt16(source, 0, "other-record offset");
@@ -27,10 +27,10 @@ internal static class UyaSoundRemapReader
         var globalOffset = ReadNonNegativeInt16(source, 4, "global-list offset");
         var globalCount = ReadNonNegativeInt16(source, 6, "global-list count");
         if (otherOffset < HeaderSize || (otherOffset - HeaderSize) % MobyConfigSize != 0)
-            throw new InvalidDataException("UYA sound-remap moby configuration table is invalid.");
+            throw new InvalidDataException("Level sound-remap moby configuration table is invalid.");
         var configCount = (otherOffset - HeaderSize) / MobyConfigSize;
         if (configCount > header.MobyModelCount)
-            throw new InvalidDataException("UYA sound remap has more moby configs than model definitions.");
+            throw new InvalidDataException("Level sound remap has more moby configs than model definitions.");
 
         var definitions = LevelAssetReader.ReadModelDefinitions(
             headerBytes, header.MobyModelOffset, header.MobyModelCount);
@@ -43,16 +43,25 @@ internal static class UyaSoundRemapReader
             var listOffset = ReadInt16LittleEndian(source, configOffset);
             var count = ReadInt16LittleEndian(source, configOffset + 2);
             if (count < 0 || count > 0 && listOffset <= 0)
-                throw new InvalidDataException($"UYA sound-remap moby config {index} is invalid.");
+                throw new InvalidDataException($"Level sound-remap moby config {index} is invalid.");
             SoundSourceRange? slotRange = null;
             SoundRemapSlotInfo[] slots = [];
+            var bankIndex = -1;
             if (count > 0)
             {
                 var bytes = Slice(source, listOffset, checked(count * sizeof(int)), $"moby config {index} list");
                 // The native loader adds one to the leading bank selector; -1 selects the primary bank.
-                if (ReadInt32LittleEndian(bytes, 0) != -1)
-                    throw new NotSupportedException("UYA moby sound remaps using secondary banks are not supported.");
-                slots = ReadSlots(bytes[sizeof(int)..], header.SoundRemapOffset + listOffset + sizeof(int), programCount, nullable: true,
+                bankIndex = ReadInt32LittleEndian(bytes, 0);
+                var selectedProgramCount = programCount;
+                if (bankIndex != -1)
+                {
+                    if (secondaryProgramCounts is null)
+                        throw new NotSupportedException("Level moby sound remaps using secondary banks are not supported.");
+                    if ((uint)bankIndex >= (uint)secondaryProgramCounts.Count || secondaryProgramCounts[bankIndex] < 0)
+                        throw new InvalidDataException("Level moby sound remap selects an unavailable bank.");
+                    selectedProgramCount = secondaryProgramCounts[bankIndex];
+                }
+                slots = ReadSlots(bytes[sizeof(int)..], header.SoundRemapOffset + listOffset + sizeof(int), selectedProgramCount, nullable: true,
                     $"moby class 0x{definitions[index].ModelId:X4}");
                 slotRange = new(header.SoundRemapOffset + listOffset + sizeof(int), bytes.Length - sizeof(int));
                 end = Math.Max(end, checked(listOffset + bytes.Length));
@@ -64,7 +73,7 @@ internal static class UyaSoundRemapReader
                 count,
                 new(header.SoundRemapOffset + configOffset, MobyConfigSize),
                 slotRange,
-                slots);
+                slots) { BankIndex = bankIndex };
         }
 
         var otherBytes = Slice(source, otherOffset, checked(otherCount * OtherRecordSize), "other records");
@@ -95,7 +104,7 @@ internal static class UyaSoundRemapReader
             var value = ReadInt32LittleEndian(bytes, index * sizeof(int));
             if (value >= programCount || value < 0 && !(nullable && value == -1))
                 throw new InvalidDataException(
-                    $"UYA sound-remap {owner} slot {index} references invalid program {value}.");
+                    $"Level sound-remap {owner} slot {index} references invalid program {value}.");
             result[index] = new(index, value, new(absoluteOffset + index * sizeof(int), sizeof(int)));
         }
         return result;
@@ -104,7 +113,7 @@ internal static class UyaSoundRemapReader
     private static short ReadNonNegativeInt16(ReadOnlySpan<byte> bytes, int offset, string name)
     {
         var value = ReadInt16LittleEndian(bytes, offset);
-        if (value < 0) throw new InvalidDataException($"UYA sound-remap {name} is negative.");
+        if (value < 0) throw new InvalidDataException($"Level sound-remap {name} is negative.");
         return value;
     }
 

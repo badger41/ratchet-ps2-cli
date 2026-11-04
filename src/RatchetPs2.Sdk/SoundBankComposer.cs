@@ -14,7 +14,7 @@ public static class SoundBankComposer
         CancellationToken cancellationToken = default,
         bool enforceSpuBudget = true) => gameId switch
         {
-            GameId.UYA or GameId.DL => Snd989SoundBankComposer.Compose(
+            GameId.UYA or GameId.DL or GameId.GC => Snd989SoundBankComposer.Compose(
                 sourceBankBytes, programs, samples, cancellationToken, enforceSpuBudget),
             _ => throw new NotSupportedException($"Sound-bank composition is not supported for {gameId}."),
         };

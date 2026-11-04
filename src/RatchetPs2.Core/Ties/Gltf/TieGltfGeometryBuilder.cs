@@ -11,7 +11,9 @@ internal static class TieGltfGeometryBuilder
         IReadOnlyList<Vector3> positions,
         IReadOnlyList<Vector3> indexNormals,
         IReadOnlyList<TieGltfSourceNormalState> sourceNormalIndexStates,
-        IReadOnlyList<PacketIndexGroup> groups)
+        IReadOnlyList<PacketIndexGroup> groups,
+        bool includeCoincidentAdjacency = false,
+        bool includeOverlappingAdjacency = false)
     {
         var triangles = new List<WindingTriangle>();
         var sourceIndexOffset = 0;
@@ -36,10 +38,13 @@ internal static class TieGltfGeometryBuilder
         var neighbors = Enumerable.Range(0, triangles.Count)
             .Select(_ => new List<WindingNeighbor>())
             .ToArray();
-        foreach (var uses in edgeUses.Values.Where(uses => uses.Count == 2))
+        foreach (var (edge, uses) in edgeUses.Where(pair => pair.Value.Count == 2))
         {
             var left = uses[0];
             var right = uses[1];
+            // Coplanar faces on the same side of an edge overlap; joining them can invert a whole surface.
+            if (!includeCoincidentAdjacency && (Coincident(triangles[left.TriangleIndex], triangles[right.TriangleIndex])
+                || !includeOverlappingAdjacency && Overlapping(edge, triangles[left.TriangleIndex], triangles[right.TriangleIndex]))) continue;
             var sameFlip = left.Forward != right.Forward;
             neighbors[left.TriangleIndex].Add(new WindingNeighbor(right.TriangleIndex, sameFlip));
             neighbors[right.TriangleIndex].Add(new WindingNeighbor(left.TriangleIndex, sameFlip));
@@ -148,6 +153,25 @@ internal static class TieGltfGeometryBuilder
 
             uses.Add(new WindingEdgeUse(triangleIndex, forward));
         }
+
+        bool Overlapping(WindingEdge edge, WindingTriangle left, WindingTriangle right)
+        {
+            var direction = edge.B - edge.A;
+            var leftNormal = Vector3.Cross(direction, Third(left) - edge.A);
+            var rightNormal = Vector3.Cross(direction, Third(right) - edge.A);
+            var lengths = leftNormal.LengthSquared() * rightNormal.LengthSquared();
+            return lengths > 0 && Vector3.Dot(leftNormal, rightNormal) > 0
+                && Vector3.Cross(leftNormal, rightNormal).LengthSquared() <= lengths * 1e-8f;
+
+            Vector3 Third(WindingTriangle triangle) => new[] { triangle.A, triangle.B, triangle.C }
+                .Select(index => positions[index]).FirstOrDefault(point => point != edge.A && point != edge.B, edge.A);
+        }
+
+        bool Coincident(WindingTriangle left, WindingTriangle right) =>
+            Contains(right, positions[left.A]) && Contains(right, positions[left.B]) && Contains(right, positions[left.C]);
+
+        bool Contains(WindingTriangle triangle, Vector3 point) =>
+            positions[triangle.A] == point || positions[triangle.B] == point || positions[triangle.C] == point;
 
         bool HasExactSourceNormals(int offset)
         {

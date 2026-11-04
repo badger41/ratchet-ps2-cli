@@ -42,6 +42,7 @@ internal static class SoundBankReaderTests
             && SoundBankReader.PreviewSampleRate(GameId.DL, -116, 56) == 1_938,
             "shared 989snd preview rate preserves center-fine direction");
 
+        VerifyLegacy(bank, inventory);
         VerifyComposition(bank, inventory);
         VerifyLevelExtraction(bank);
         VerifyRandomTriggerGates();
@@ -440,6 +441,38 @@ internal static class SoundBankReaderTests
         }
         if (checkedBanks > 0)
             Console.WriteLine($"Deadlocked 989snd reader: inventoried {checkedBanks} bank(s).");
+    }
+
+    private static void VerifyLegacy(byte[] packed, RatchetPs2.Core.Sounds.SoundBankInventory expected)
+    {
+        const int metadataLength = 0x3c + 3 * 12 + 3 * 40;
+        var legacy = new byte[2048];
+        WriteContainer(legacy, 24, metadataLength, 24 + metadataLength, 48);
+        packed.AsSpan(24, 0x3c).CopyTo(legacy.AsSpan(24));
+        var header = legacy.AsSpan(24);
+        BinaryPrimitives.WriteInt32LittleEndian(header[4..], 1);
+        BinaryPrimitives.WriteInt32LittleEndian(header[0x1c..], 0x3c);
+        BinaryPrimitives.WriteInt32LittleEndian(header[0x20..], 0x60);
+        BinaryPrimitives.WriteInt32LittleEndian(header[0x34..], 0);
+        packed.AsSpan(24 + 0x40, 36).CopyTo(header[0x3c..]);
+        for (var index = 0; index < 3; index++)
+        {
+            BinaryPrimitives.WriteInt32LittleEndian(header[(0x3c + index * 12 + 8)..], index * 40);
+            BinaryPrimitives.WriteInt32LittleEndian(header[(0x60 + index * 40)..], 1);
+            packed.AsSpan(24 + 0x7c + index * 24, 24).CopyTo(header[(0x60 + index * 40 + 8)..]);
+        }
+        packed.AsSpan(ReadInt32(packed, 16), 48).CopyTo(legacy.AsSpan(24 + metadataLength));
+        var actual = SoundBankReader.Inspect(GameId.GC, legacy);
+        Expect(actual.FormatVersion == 1 && actual.Programs.Select(value => value.ContentId)
+            .SequenceEqual(expected.Programs.Select(value => value.ContentId)), "GC v1 and UYA v3 program identities agree");
+        Expect(SoundBankReader.RenderPreview(GameId.GC, legacy, 0).Pcm16
+            .SequenceEqual(SoundBankReader.RenderPreview(GameId.UYA, packed, 0).Pcm16), "GC legacy PCM preview");
+        BinaryPrimitives.WriteInt32LittleEndian(header[0x28..], 64);
+        BinaryPrimitives.WriteInt32LittleEndian(header[0x2c..], 64);
+        Expect(SoundBankReader.Inspect(GameId.GC, legacy).Samples.Count == 2, "GC trimmed chunk-bank allocation");
+        legacy[24 + metadataLength + 32 + 1] = 5;
+        Expect(SoundBankReader.Inspect(GameId.GC, legacy).Samples[1] is { IsLooping: false, LoopStartFrame: null },
+            "a non-repeating sample ignores its unused loop-start marker");
     }
 
     internal static byte[] CreateDirectBank()

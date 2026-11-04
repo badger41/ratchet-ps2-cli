@@ -4,6 +4,8 @@ using RatchetPs2.Core.Wad.Models;
 using RatchetPs2.Games.UYA.Level;
 using RatchetPs2.Games.DL.Level;
 
+using RatchetPs2.Games.GC.Level;
+
 namespace RatchetPs2.Sdk;
 
 public static class LevelAssetExtractor
@@ -12,6 +14,7 @@ public static class LevelAssetExtractor
     {
         GameId.UYA => UyaLevelAssetExtractor.Extract(levelWadBytes),
         GameId.DL => DlLevelAssetExtractor.Extract(levelWadBytes),
+        GameId.GC => GcLevelAssetExtractor.Extract(levelWadBytes),
         _ => throw new NotSupportedException($"Level asset extraction is not supported for {gameId}."),
     };
 
@@ -19,6 +22,7 @@ public static class LevelAssetExtractor
     public static LevelAssetExtractionResult ExtractUnpacked(GameId gameId, IReadOnlyList<PackedFile> unpackedFiles) => gameId switch
     {
         GameId.UYA => UyaLevelAssetExtractor.Extract(unpackedFiles),
+        GameId.GC => GcLevelAssetExtractor.Extract(unpackedFiles),
         _ => throw new NotSupportedException($"Unpacked level asset extraction is not supported for {gameId}."),
     };
 }

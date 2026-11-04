@@ -26,6 +26,8 @@ public static class Snd989SoundBankComposer
         var source = Snd989SoundBankReader.Inspect(sourceBytes, cancellationToken);
         if (programs.Count > short.MaxValue || samples.Count > short.MaxValue)
             throw new InvalidDataException("989snd composition exceeds signed 16-bit table counts.");
+        if (source.FormatVersion != 3)
+            throw new NotSupportedException("Use a target v3 bank when composing legacy sound programs.");
         if (ReadUInt32LittleEndian(sourceBytes, ContainerHeaderSize + 0x38) != 0
             || ReadUInt32LittleEndian(sourceBytes, ContainerHeaderSize + 0x3c) != 0)
             throw new NotSupportedException(

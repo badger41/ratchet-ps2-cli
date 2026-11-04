@@ -77,7 +77,10 @@ public sealed record SoundMobyRemapInfo(
     short RawSlotCount,
     SoundSourceRange ConfigurationProvenance,
     SoundSourceRange? SlotProvenance,
-    IReadOnlyList<SoundRemapSlotInfo> Slots);
+    IReadOnlyList<SoundRemapSlotInfo> Slots)
+{
+    public int BankIndex { get; init; } = -1;
+}
 
 public sealed record SoundRemapInventory(
     SoundSourceRange Provenance,

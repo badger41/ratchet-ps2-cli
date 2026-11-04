@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Numerics;
 using RatchetPs2.Core.Gltf;
 using RatchetPs2.Core.Textures.Png;
 
@@ -95,67 +96,11 @@ public static class TieGltfExporter
         var glowColorResult = TieGltfGlowBuilder.BuildColors(tie, topology, positions.Count);
         AddTiming(options, "tie.glow", "Tie glow colors", glowStart);
 
-        var sourceNormalPhaseStart = Stopwatch.GetTimestamp();
-        var sourceNormalPhaseAnalysis = profile.UsePackedVertexNormalTableSource
-            && tie.RgbaRemapOperations.Any(operation => operation.LodIndex == topology.LodIndex)
-                ? TieGltfSourceNormalPhaseAnalysis.Empty
-                : TieGltfSourceNormalPhaseAnalyzer.Analyze(tie, topology, positions, profile);
-        AddTiming(
-            options,
-            "tie.source-normal-phase",
-            "Tie source normal phase",
-            sourceNormalPhaseStart,
-            $"{sourceNormalPhaseAnalysis.Strips.Count} strips");
-        var useSourceNormalStripWinding = profile.OrientTriangleWindingToNormals
-            && sourceNormalPhaseAnalysis.Strips.Count == topology.Strips.Count
-            && sourceNormalPhaseAnalysis.Strips.All(strip =>
-                strip.PhaseVote is TieGltfSourceNormalPhaseVote.Current or TieGltfSourceNormalPhaseVote.Inverted);
-        var packetGroupsStart = Stopwatch.GetTimestamp();
-        var invertedStripIndices = useSourceNormalStripWinding
-            ? sourceNormalPhaseAnalysis.Strips
-                .Where(strip => strip.PhaseVote == TieGltfSourceNormalPhaseVote.Inverted)
-                .Select(strip => strip.StripIndex)
-                .ToHashSet()
-            : [];
-        var packetGroupResult = TieGltfPacketIndexGroupBuilder.Build(
-            tie,
-            topology,
-            glowColorResult.Colors,
-            invertedStripIndices);
+        var facing = BuildFacing(tie, topology, positions, glowColorResult.Colors, profile, options);
+        var sourceNormalPhaseAnalysis = facing.PhaseAnalysis;
+        var packetGroupResult = facing.Packets;
+        var normalResult = facing.Normals;
         var flatIndices = packetGroupResult.PacketIndexGroups.SelectMany(group => group.Indices).ToArray();
-        AddTiming(
-            options,
-            "tie.packet-groups",
-            "Tie packet index groups",
-            packetGroupsStart,
-            $"{packetGroupResult.PacketIndexGroups.Count} groups, {flatIndices.Length} indices");
-
-        var normalStart = Stopwatch.GetTimestamp();
-        var normalResult = TieGltfNormalBuilder.Build(
-            tie,
-            topology,
-            positions,
-            flatIndices,
-            sourceNormalPhaseAnalysis,
-            profile);
-        if (profile.OrientTriangleWindingToNormals
-            && !useSourceNormalStripWinding
-            && TieGltfGeometryBuilder.OrientTrianglesConsistently(
-                positions,
-                normalResult.IndexNormals,
-                normalResult.SourceNormalIndexStates,
-                packetGroupResult.PacketIndexGroups) > 0)
-        {
-            flatIndices = packetGroupResult.PacketIndexGroups.SelectMany(group => group.Indices).ToArray();
-            normalResult = TieGltfNormalBuilder.Build(
-                tie,
-                topology,
-                positions,
-                flatIndices,
-                sourceNormalPhaseAnalysis,
-                profile);
-        }
-        AddTiming(options, "tie.normals", "Tie normals", normalStart, $"{normalResult.Normals.Count} normals");
 
         var ambientStart = Stopwatch.GetTimestamp();
         var ambientIndexResult = profile.UseAmbientIndexAttribute
@@ -232,6 +177,103 @@ public static class TieGltfExporter
             $"{export.GltfBytes.Length} gltf bytes, {export.BinBytes.Length} bin bytes");
         return export;
     }
+
+    /// <summary>Resolves logical triangle facing using the same policy as the source-game preview, without serializing glTF.</summary>
+    public static IReadOnlyList<TieTriangle> ResolveTriangleFacing(TieClass tie, int lodIndex, TieGameProfile profile) =>
+        ResolveTriangleFacing(tie, lodIndex, profile, includeCoincidentAdjacency: false);
+
+    internal static IReadOnlyList<TieTriangle> ResolveTriangleFacing(TieClass tie, int lodIndex, TieGameProfile profile,
+        bool includeCoincidentAdjacency, bool includeOverlappingAdjacency = false)
+    {
+        ArgumentNullException.ThrowIfNull(tie);
+        ArgumentNullException.ThrowIfNull(profile);
+        var topology = tie.LodTopologies.Single(value => value.LodIndex == lodIndex);
+        if (topology.UnresolvedLogicalVertexCount > 0)
+            throw new InvalidDataException($"Tie LOD {lodIndex} has unresolved logical vertices.");
+        var facing = BuildFacing(tie, topology, TieGltfPositionBuilder.BuildPositions(tie, topology), [], profile,
+            new TieGltfExportOptions { LodIndex = lodIndex, GameProfile = profile }, includeCoincidentAdjacency, includeOverlappingAdjacency);
+        var indices = facing.Packets.PacketIndexGroups.SelectMany(group => group.Indices).ToArray();
+        if (indices.Length != topology.Triangles.Count * 3)
+            throw new InvalidDataException("Resolved tie facing changed the triangle count.");
+        return topology.Triangles.Select((triangle, index) => triangle with
+        {
+            A = checked((int)indices[index * 3]),
+            B = checked((int)indices[index * 3 + 1]),
+            C = checked((int)indices[index * 3 + 2]),
+        }).ToArray();
+    }
+
+    private static TieFacing BuildFacing(TieClass tie, TieLodTopology topology, IReadOnlyList<Vector3> positions,
+        IReadOnlyList<Vector4> glowColors, TieGameProfile profile, TieGltfExportOptions options,
+        bool includeCoincidentAdjacency = false, bool includeOverlappingAdjacency = false)
+    {
+        var sourceNormalPhaseStart = Stopwatch.GetTimestamp();
+        var sourceNormalPhaseAnalysis = profile.UsePackedVertexNormalTableSource
+            && tie.RgbaRemapOperations.Any(operation => operation.LodIndex == topology.LodIndex)
+                ? TieGltfSourceNormalPhaseAnalysis.Empty
+                : TieGltfSourceNormalPhaseAnalyzer.Analyze(tie, topology, positions, profile);
+        AddTiming(
+            options,
+            "tie.source-normal-phase",
+            "Tie source normal phase",
+            sourceNormalPhaseStart,
+            $"{sourceNormalPhaseAnalysis.Strips.Count} strips");
+        var useSourceNormalStripWinding = profile.OrientTriangleWindingToNormals
+            && sourceNormalPhaseAnalysis.Strips.Count == topology.Strips.Count
+            && sourceNormalPhaseAnalysis.Strips.All(strip =>
+                strip.PhaseVote is TieGltfSourceNormalPhaseVote.Current or TieGltfSourceNormalPhaseVote.Inverted);
+        var packetGroupsStart = Stopwatch.GetTimestamp();
+        var invertedStripIndices = useSourceNormalStripWinding
+            ? sourceNormalPhaseAnalysis.Strips
+                .Where(strip => strip.PhaseVote == TieGltfSourceNormalPhaseVote.Inverted)
+                .Select(strip => strip.StripIndex)
+                .ToHashSet()
+            : [];
+        var packetGroupResult = TieGltfPacketIndexGroupBuilder.Build(
+            tie,
+            topology,
+            glowColors,
+            invertedStripIndices);
+        var flatIndices = packetGroupResult.PacketIndexGroups.SelectMany(group => group.Indices).ToArray();
+        AddTiming(
+            options,
+            "tie.packet-groups",
+            "Tie packet index groups",
+            packetGroupsStart,
+            $"{packetGroupResult.PacketIndexGroups.Count} groups, {flatIndices.Length} indices");
+
+        var normalStart = Stopwatch.GetTimestamp();
+        var normalResult = TieGltfNormalBuilder.Build(
+            tie,
+            topology,
+            positions,
+            flatIndices,
+            sourceNormalPhaseAnalysis,
+            profile);
+        if (profile.OrientTriangleWindingToNormals
+            && !useSourceNormalStripWinding
+            && TieGltfGeometryBuilder.OrientTrianglesConsistently(
+                positions,
+                normalResult.IndexNormals,
+                normalResult.SourceNormalIndexStates,
+                packetGroupResult.PacketIndexGroups, includeCoincidentAdjacency, includeOverlappingAdjacency) > 0)
+        {
+            flatIndices = packetGroupResult.PacketIndexGroups.SelectMany(group => group.Indices).ToArray();
+            normalResult = TieGltfNormalBuilder.Build(
+                tie,
+                topology,
+                positions,
+                flatIndices,
+                sourceNormalPhaseAnalysis,
+                profile);
+        }
+        AddTiming(options, "tie.normals", "Tie normals", normalStart, $"{normalResult.Normals.Count} normals");
+
+        return new(sourceNormalPhaseAnalysis, packetGroupResult, normalResult);
+    }
+
+    private sealed record TieFacing(TieGltfSourceNormalPhaseAnalysis PhaseAnalysis,
+        TieGltfPacketIndexGroupBuildResult Packets, TieGltfNormalBuildResult Normals);
 
     private static void AddTiming(
         TieGltfExportOptions options,

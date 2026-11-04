@@ -173,7 +173,8 @@ internal static class TiePacketPrimitiveDecoder
         {
             var comparison = left.GsPacketWriteOffset.CompareTo(right.GsPacketWriteOffset);
             if (comparison != 0) return comparison;
-            comparison = left.Vertex.Index.CompareTo(right.Vertex.Index);
+            // VU transforms uploads in order; the final write owns a reused GS destination.
+            comparison = right.Vertex.Index.CompareTo(left.Vertex.Index);
             return comparison != 0 ? comparison : left.IsSecondaryWriteOffset.CompareTo(right.IsSecondaryWriteOffset);
         });
         var unique = new List<TiePacketVertexReference>(raw.Count);

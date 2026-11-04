@@ -85,7 +85,7 @@ public static class UyaSoundRemapComposer
         var bytes = output.ToArray();
         BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(0x70, 4), offset);
 
-        var inspected = UyaSoundRemapReader.Inspect(bytes, composition.ProgramCount, cancellationToken);
+        var inspected = LevelSoundRemapReader.Inspect(bytes, composition.ProgramCount, cancellationToken);
         if (!Equivalent(inspected, composition, definitions))
             throw new InvalidDataException("UYA sound-remap composition failed semantic re-read validation.");
         return bytes;

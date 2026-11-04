@@ -14,7 +14,7 @@ public static class SoundBankReader
         ArgumentNullException.ThrowIfNull(bankBytes);
         return gameId switch
         {
-            GameId.UYA or GameId.DL => Snd989SoundBankReader.Inspect(bankBytes, cancellationToken),
+            GameId.UYA or GameId.DL or GameId.GC => Snd989SoundBankReader.Inspect(bankBytes, cancellationToken),
             _ => throw new NotSupportedException($"Sound-bank inventory is not supported for {gameId}."),
         };
     }
@@ -30,7 +30,7 @@ public static class SoundBankReader
         ArgumentNullException.ThrowIfNull(bankBytes);
         return gameId switch
         {
-            GameId.UYA or GameId.DL => Snd989SoundBankReader.RenderPreview(
+            GameId.UYA or GameId.DL or GameId.GC => Snd989SoundBankReader.RenderPreview(
                 bankBytes, programIndex, maximumFrames, preferAudible, cancellationToken),
             _ => throw new NotSupportedException($"Sound preview is not supported for {gameId}."),
         };
@@ -40,14 +40,14 @@ public static class SoundBankReader
     public static bool HasRandomTriggerGate(GameId gameId, IEnumerable<(byte Type, sbyte Argument0)> operations) =>
         gameId switch
         {
-            GameId.UYA or GameId.DL => Snd989SoundBankReader.HasRandomTriggerGate(operations),
+            GameId.UYA or GameId.DL or GameId.GC => Snd989SoundBankReader.HasRandomTriggerGate(operations),
             _ => throw new NotSupportedException($"Sound-program analysis is not supported for {gameId}."),
         };
 
     public static int PreviewSampleRate(GameId gameId, sbyte centerNote, sbyte centerFine) =>
         gameId switch
         {
-            GameId.UYA or GameId.DL => Snd989SoundBankReader.PreviewSampleRate(centerNote, centerFine),
+            GameId.UYA or GameId.DL or GameId.GC => Snd989SoundBankReader.PreviewSampleRate(centerNote, centerFine),
             _ => throw new NotSupportedException($"Sound preview is not supported for {gameId}."),
         };
 
@@ -60,7 +60,7 @@ public static class SoundBankReader
         ArgumentNullException.ThrowIfNull(assetHeaderBytes);
         return gameId switch
         {
-            GameId.UYA => UyaSoundRemapReader.Inspect(
+            GameId.UYA => LevelSoundRemapReader.Inspect(
                 assetHeaderBytes, programCount, cancellationToken),
             _ => throw new NotSupportedException($"Sound-remap inventory is not supported for {gameId}."),
         };

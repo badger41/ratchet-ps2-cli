@@ -63,6 +63,9 @@ public static class UyaClassIdListWriter
 
 public static class UyaTieInstancesWriter
 {
+    public static byte[] RebaseClass(ReadOnlySpan<byte> source, int expectedClassId, int targetClassId) =>
+        UyaStaticInstanceWriter.RebaseClass(source, expectedClassId, targetClassId, UyaTieInstancesReader.RecordSize);
+
     public static byte[] Write(
         UyaTieInstances source,
         IReadOnlyList<UyaStaticInstanceEdit> instances) =>
@@ -72,6 +75,9 @@ public static class UyaTieInstancesWriter
 
 public static class UyaShrubInstancesWriter
 {
+    public static byte[] RebaseClass(ReadOnlySpan<byte> source, int expectedClassId, int targetClassId) =>
+        UyaStaticInstanceWriter.RebaseClass(source, expectedClassId, targetClassId, UyaShrubInstancesReader.RecordSize);
+
     public static byte[] Write(
         UyaShrubInstances source,
         IReadOnlyList<UyaStaticInstanceEdit> instances) =>
@@ -90,6 +96,17 @@ public readonly record struct UyaQuaternion(float X, float Y, float Z, float W);
 
 internal static class UyaStaticInstanceWriter
 {
+    public static byte[] RebaseClass(ReadOnlySpan<byte> source, int expectedClassId, int targetClassId, int recordSize)
+    {
+        if (source.Length != recordSize || BinaryPrimitives.ReadInt32LittleEndian(source) != expectedClassId)
+            throw new InvalidDataException("UYA static instance does not match its expected class and record size.");
+        if (expectedClassId is < 0 or > ushort.MaxValue) throw new ArgumentOutOfRangeException(nameof(expectedClassId));
+        if (targetClassId is < 0 or > ushort.MaxValue) throw new ArgumentOutOfRangeException(nameof(targetClassId));
+        var result = source.ToArray();
+        BinaryPrimitives.WriteInt32LittleEndian(result, targetClassId);
+        return result;
+    }
+
     public static byte[] Write(
         IReadOnlyList<int> headerWords,
         ReadOnlySpan<byte> trailingBytes,

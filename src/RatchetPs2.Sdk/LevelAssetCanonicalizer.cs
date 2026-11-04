@@ -3,6 +3,8 @@ using RatchetPs2.Core.LevelAssets;
 using RatchetPs2.Games.UYA.Level;
 using RatchetPs2.Games.DL.Level;
 
+using RatchetPs2.Games.GC.Level;
+
 namespace RatchetPs2.Sdk;
 
 public static class LevelAssetCanonicalizer
@@ -11,6 +13,7 @@ public static class LevelAssetCanonicalizer
     {
         GameId.UYA => UyaLevelAssetCanonicalizer.NormalizeDefinition(definition),
         GameId.DL => DlLevelAssetCanonicalizer.NormalizeDefinition(definition),
+        GameId.GC => GcLevelAssetCanonicalizer.NormalizeDefinition(definition),
         _ => throw new NotSupportedException($"Canonical assets are not supported for {game}."),
     };
 
@@ -21,6 +24,7 @@ public static class LevelAssetCanonicalizer
         {
             case GameId.UYA: UyaLevelAssetCanonicalizer.Validate(definition, model, textures); break;
             case GameId.DL: DlLevelAssetCanonicalizer.Validate(definition, model, textures); break;
+            case GameId.GC: GcLevelAssetCanonicalizer.Validate(definition, model, textures); break;
             default: throw new NotSupportedException($"Canonical assets are not supported for {game}.");
         }
     }
