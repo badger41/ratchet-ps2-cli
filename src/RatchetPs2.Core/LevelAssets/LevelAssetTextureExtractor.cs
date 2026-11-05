@@ -10,7 +10,7 @@ public static class LevelAssetTextureExtractor
         byte[] assetBytes,
         int textureDataOffset,
         IReadOnlyList<LevelAssetMipmapDefinition>? gsStash,
-        bool isSwizzled)
+        bool isSwizzled, bool useTextureFlags = true)
     {
         ArgumentNullException.ThrowIfNull(textureIds);
         ArgumentNullException.ThrowIfNull(definitions);
@@ -23,7 +23,7 @@ public static class LevelAssetTextureExtractor
                 if (textureId >= definitions.Count) throw new InvalidDataException($"{family} texture ID {textureId} is out of range.");
                 var texture = LevelAssetReader.BuildAssetTexture(
                     family, textures.Count, definitions[textureId], paletteBytes, assetBytes, textureDataOffset,
-                    gsStash, isSwizzled: isSwizzled, useTextureFlags: true);
+                    gsStash, isSwizzled: isSwizzled, useTextureFlags: useTextureFlags);
                 textures.Add(new(0, texture.PifBytes));
             }
             catch (Exception exception) when (exception is

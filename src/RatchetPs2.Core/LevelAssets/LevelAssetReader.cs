@@ -269,7 +269,8 @@ public static class LevelAssetReader
             var pixelLength = checked(definition.Width * definition.Height);
             pixels = ReadSlice(assetData, pixelOffset, pixelLength, $"{family} texture {definition.Index}");
 
-            if ((definition.Type & 2) != 0)
+            // Without flags, the field is an explicit level count (base image included).
+            if (useTextureFlags ? (definition.Type & 2) != 0 : definition.Type >= 2)
             {
                 var mip1Offset = checked(pixelOffset + pixelLength);
                 var mip1Length = checked(Math.Max(1, definition.Width / 2) * Math.Max(1, definition.Height / 2));
@@ -292,13 +293,23 @@ public static class LevelAssetReader
             pixels = ReadSlice(paletteData, pixelOffset, pixelLength, $"{family} GS stash texture {definition.Index}");
         }
 
-        if (useTextureFlags && definition.MipmapPaletteId >= 0)
+        if (useTextureFlags ? definition.MipmapPaletteId >= 0 : definition.Type >= 3)
         {
             var mip2Offset = checked(definition.MipmapPaletteId * 0x100);
             var mip2Length = checked(Math.Max(1, definition.Width / 4) * Math.Max(1, definition.Height / 4));
             mips.Add(ReadSlice(paletteData, mip2Offset, mip2Length, $"{family} texture {definition.Index} mip2"));
             mipOffsets.Add(mip2Offset);
             mipLengths.Add(mip2Length);
+        }
+
+        if (!useTextureFlags && definition.Type >= 4)
+        {
+            if (definition.Type > 4) throw new NotSupportedException("Explicit texture mip counts above four are not supported.");
+            var mip3Offset = checked(definition.Padding * 0x100);
+            var mip3Length = checked(Math.Max(1, definition.Width / 8) * Math.Max(1, definition.Height / 8));
+            mips.Add(ReadSlice(paletteData, mip3Offset, mip3Length, $"{family} texture {definition.Index} mip3"));
+            mipOffsets.Add(mip3Offset);
+            mipLengths.Add(mip3Length);
         }
 
         return BuildTexture(

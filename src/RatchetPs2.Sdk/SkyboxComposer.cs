@@ -1,8 +1,8 @@
 using System.Numerics;
 using RatchetPs2.Core.Games;
 using RatchetPs2.Games.UYA.Builders;
-
 using RatchetPs2.Games.GC.Level;
+using RatchetPs2.Games.RC1.Level;
 
 namespace RatchetPs2.Sdk;
 
@@ -19,6 +19,7 @@ public static class SkyboxComposer
     public static byte[] Convert(GameId sourceGame, GameId targetGame, byte[] bytes, int? sourceLevel = null,
         CancellationToken cancellationToken = default) => (sourceGame, targetGame) switch
     {
+        (GameId.RC1, GameId.UYA) => Rc1LevelAssetModelConverter.ConvertSky(bytes, cancellationToken),
         (GameId.GC, GameId.UYA) => GcLevelAssetModelConverter.ConvertSky(bytes, cancellationToken),
         (GameId.DL, GameId.UYA) => UyaSkyboxConverter.ConvertFromDl(bytes, sourceLevel, cancellationToken),
         _ => throw new NotSupportedException($"Skybox conversion from {sourceGame} to {targetGame} is not supported."),

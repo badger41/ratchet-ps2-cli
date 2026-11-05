@@ -5,8 +5,8 @@ using RatchetPs2.Core.Textures.Palettes;
 using RatchetPs2.Games.DL.Moby;
 using RatchetPs2.Games.UYA.Level;
 using RatchetPs2.Games.UYA.Moby;
-
 using RatchetPs2.Games.GC.Level;
+using RatchetPs2.Games.RC1.Level;
 
 namespace RatchetPs2.Sdk;
 
@@ -55,13 +55,16 @@ public static class LevelAssetModelConverter
     /// <summary>Returns the corrected model for a recognized conversion (including unchanged models), or null for independent edits.</summary>
     public static byte[]? RepairPreviousStaticConversion(GameId sourceGame, GameId targetGame,
         FrontendAssetKind kind, byte[] sourceBytes, byte[] convertedBytes, int previousClassId, int targetClassId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, IReadOnlyList<FrontendAssetTexture>? textures = null)
     {
         ArgumentNullException.ThrowIfNull(sourceBytes);
         ArgumentNullException.ThrowIfNull(convertedBytes);
         if (previousClassId is < 0 or > ushort.MaxValue) throw new ArgumentOutOfRangeException(nameof(previousClassId));
         if (targetClassId is < 0 or > ushort.MaxValue) throw new ArgumentOutOfRangeException(nameof(targetClassId));
         cancellationToken.ThrowIfCancellationRequested();
+        if (sourceGame == GameId.RC1 && targetGame == GameId.UYA && kind == FrontendAssetKind.Tie)
+            return Rc1LevelAssetModelConverter.RepairPreviousTie(sourceBytes, convertedBytes,
+                previousClassId, targetClassId, textures, cancellationToken);
         if (sourceGame != GameId.GC || targetGame != GameId.UYA)
             throw new NotSupportedException($"Static conversion repair from {sourceGame} to {targetGame} is not supported.");
         return GcLevelAssetModelConverter.RepairPreviousStaticConversion(kind, sourceBytes, convertedBytes,
@@ -72,19 +75,22 @@ public static class LevelAssetModelConverter
         TextureRole role = TextureRole.Material)
     {
         ArgumentNullException.ThrowIfNull(pifBytes);
-        if (sourceGame == GameId.GC && targetGame == GameId.UYA)
-            return GcLevelAssetModelConverter.ConvertTexture(pifBytes, role);
+        if ((sourceGame is GameId.GC or GameId.RC1) && targetGame == GameId.UYA)
+            return UyaLevelAssetModelConverter.ConvertLinearTexture(pifBytes, role);
         if (sourceGame != GameId.DL || targetGame != GameId.UYA)
             throw new NotSupportedException($"Texture conversion from {sourceGame} to {targetGame} is not supported.");
         return UyaLevelAssetModelConverter.ConvertDlTexture(pifBytes, role);
     }
 
     public static byte[] Convert(GameId sourceGame, GameId targetGame, FrontendAssetKind kind,
-        byte[] modelBytes, int targetClassId, CancellationToken cancellationToken = default)
+        byte[] modelBytes, int targetClassId, CancellationToken cancellationToken = default,
+        IReadOnlyList<FrontendAssetTexture>? textures = null)
     {
         ArgumentNullException.ThrowIfNull(modelBytes);
         if (targetClassId is < 0 or > ushort.MaxValue) throw new ArgumentOutOfRangeException(nameof(targetClassId));
         cancellationToken.ThrowIfCancellationRequested();
+        if (sourceGame == GameId.RC1 && targetGame == GameId.UYA)
+            return Rc1LevelAssetModelConverter.Convert(kind, modelBytes, targetClassId, cancellationToken, textures);
         if (sourceGame == GameId.GC && targetGame == GameId.UYA)
             return GcLevelAssetModelConverter.Convert(kind, modelBytes, targetClassId, cancellationToken);
         if (sourceGame != GameId.DL || targetGame != GameId.UYA)

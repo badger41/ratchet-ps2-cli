@@ -46,7 +46,7 @@ public static partial class Snd989SoundBankReader
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (bytes.Length is < 24 or > MaximumBankBytes || bytes.Length % 2048 != 0)
+        if (bytes.Length is < 24 or > MaximumBankBytes)
             throw new InvalidDataException("989snd bank size or sector alignment is invalid.");
         if (ReadUInt32LittleEndian(bytes, 0) != 3 || ReadUInt32LittleEndian(bytes, 4) != 2)
             throw new InvalidDataException("989snd bank requires a type-3 two-chunk container.");
@@ -60,6 +60,8 @@ public static partial class Snd989SoundBankReader
             || checked(metadataOffset + metadataLength) != sampleDataOffset)
             throw new InvalidDataException("989snd bank chunk layout is invalid.");
         var sampleDataEnd = checked(sampleDataOffset + sampleDataLength);
+        if (bytes.Length != sampleDataEnd && bytes.Length % 2048 != 0)
+            throw new InvalidDataException("989snd bank has invalid trailing padding.");
         var metadata = Slice(bytes, metadataOffset, metadataLength, "metadata");
         var sampleData = Slice(bytes, sampleDataOffset, sampleDataLength, "sample data");
         for (var offset = sampleDataEnd; offset < bytes.Length; offset++)

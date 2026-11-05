@@ -43,6 +43,7 @@ using RatchetPs2.Sdk;
 
 if (args is ["--sound-banks"]) { UyaSoundBankContractTests.Run(); SoundBankReaderTests.Run(); return; }
 if (args is ["--qualify-gc-tie-splits", var gcTieDirectory]) { GcTieSplitConversionTests.Qualify(gcTieDirectory); return; }
+if (args is ["--rc1-to-uya-assets"]) { Rc1AssetConversionTests.Run(); return; }
 if (args is ["--gc-to-uya-ties"]) { GcTieConversionTests.Run(); return; }
 if (args is ["--dl-to-uya-models"]) { LevelAssetModelConversionTests.Run(); return; }
 if (args is ["--dl-asset-extraction"]) { DlAssetExtractionTests.Run(); DlAssetResourceTests.Run(); return; }

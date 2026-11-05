@@ -1,8 +1,8 @@
 using RatchetPs2.Core.Games;
 using RatchetPs2.Games.UYA.Level;
 using RatchetPs2.Games.DL.Level;
-
 using RatchetPs2.Games.GC.Level;
+using RatchetPs2.Games.RC1.Level;
 
 namespace RatchetPs2.Sdk;
 
@@ -19,6 +19,7 @@ public static class LevelArchiveReader
         GameId.UYA => UyaLooseLevelWadExtractor.ExtractPrimary(iso, levelIndex).Bytes,
         GameId.DL => DlLooseLevelWadExtractor.ExtractPrimary(iso, levelIndex).Bytes,
         GameId.GC => GcLevelArchiveReader.ExtractPrimary(iso, levelIndex),
+        GameId.RC1 => Rc1LooseLevelWadExtractor.ExtractPrimary(iso, levelIndex).Bytes,
         _ => throw new NotSupportedException($"Level archive extraction is not supported for {gameId}."),
     };
 

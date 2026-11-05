@@ -5,8 +5,9 @@ namespace RatchetPs2.Core.LevelAssets;
 
 public static class LevelAssetInventoryReader
 {
-    public static LevelAssetExtractionResult Extract(byte[] headerBytes, byte[] paletteBytes, byte[] assetWadBytes)
+    public static LevelAssetExtractionResult Extract(byte[] headerBytes, byte[] paletteBytes, byte[] assetWadBytes, LevelAssetProfile? profile = null)
     {
+        profile ??= LevelAssetProfile.Default;
         var header = LevelAssetReader.ReadHeader(headerBytes);
         var assetBytes = BinaryMagic.IsWad(assetWadBytes)
             ? WadCompression.Decompress(assetWadBytes)
@@ -17,7 +18,7 @@ public static class LevelAssetInventoryReader
         var knownOffsets = LevelAssetReader.CollectKnownAssetOffsets(
             header, assetBytes.Length, mobys, ties, shrubs, [header.SceneViewSize]);
         var mipmaps = LevelAssetReader.ReadMipmapDefinitions(
-            headerBytes, header.GsRamOffset, Math.Max(0, header.GsRamCount + header.ExtraMipmapCount));
+            headerBytes, header.GsRamOffset, Math.Max(0, header.GsRamCount + (profile.IncludeExtraMipmapDefinitions ? header.ExtraMipmapCount : 0)));
         var gsStash = mipmaps.Skip(header.GsRamCount).ToArray();
         var mobyTextures = LevelAssetReader.ReadTextureDefinitions(
             headerBytes, header.MobyTextureOffset, header.MobyTextureCount);
@@ -36,7 +37,7 @@ public static class LevelAssetInventoryReader
                     headerBytes.AsSpan(header.MobyModelOffset + definition.Index * 0x20, 0x20).ToArray(),
                     LevelAssetReader.ReadAssetSlice(assetBytes, definition.ModelOffset, knownOffsets),
                     LevelAssetTextureExtractor.Extract("moby", definition.TextureIds, mobyTextures, paletteBytes, assetBytes,
-                        header.TextureDataOffset, gsStash, isSwizzled: false));
+                        header.TextureDataOffset, gsStash, isSwizzled: false, useTextureFlags: profile.UseTextureFlags));
             }
             catch (Exception exception) when (IsUnsupportedAsset(exception))
             {
@@ -51,7 +52,7 @@ public static class LevelAssetInventoryReader
                     headerBytes.AsSpan(header.TieModelOffset + definition.Index * 0x20, 0x20).ToArray(),
                     LevelAssetReader.ReadAssetSlice(assetBytes, definition.ModelOffset, knownOffsets),
                     LevelAssetTextureExtractor.Extract("tie", definition.TextureIds, tieTextures, paletteBytes, assetBytes,
-                        header.TextureDataOffset, null, isSwizzled: false));
+                        header.TextureDataOffset, null, isSwizzled: false, useTextureFlags: profile.UseTextureFlags));
             }
             catch (Exception exception) when (IsUnsupportedAsset(exception))
             {
@@ -63,7 +64,7 @@ public static class LevelAssetInventoryReader
             try
             {
                 var textures = LevelAssetTextureExtractor.Extract("shrub", definition.TextureIds, shrubTextures, paletteBytes,
-                    assetBytes, header.TextureDataOffset, null, isSwizzled: false).ToList();
+                    assetBytes, header.TextureDataOffset, null, isSwizzled: false, useTextureFlags: profile.UseTextureFlags).ToList();
                 if (definition.Width > 0 && definition.Height > 0 && definition.TextureId > 0)
                     textures.Add(new(1, LevelAssetReader.BuildShrubBillboardTexture(definition, paletteBytes).PifBytes));
                 Add(assets, FrontendAssetKind.Shrub, definition.ModelId, definition.Index,

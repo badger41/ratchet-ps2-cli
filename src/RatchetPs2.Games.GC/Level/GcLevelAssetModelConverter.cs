@@ -4,8 +4,6 @@ using RatchetPs2.Core.LevelAssets;
 using RatchetPs2.Core.Moby;
 using RatchetPs2.Core.Shrubs;
 using RatchetPs2.Core.Skyboxes;
-using RatchetPs2.Core.Textures.Palettes;
-using RatchetPs2.Core.Textures.Pif;
 using RatchetPs2.Core.Ties;
 
 namespace RatchetPs2.Games.GC.Level;
@@ -173,21 +171,6 @@ internal static class GcLevelAssetModelConverter
             _facing.Add(key, value);
             return value;
         }
-    }
-
-    public static byte[] ConvertTexture(byte[] bytes, TextureRole role)
-    {
-        var source = PifReader.Read(bytes);
-        if (source.Encoding != PifTextureEncoding.Indexed8 || source.IsSwizzled)
-            throw new InvalidDataException("GC to UYA conversion requires linear indexed8 textures.");
-        var limit = role switch
-        {
-            TextureRole.Material => 2,
-            TextureRole.Billboard => 3,
-            _ => throw new ArgumentOutOfRangeException(nameof(role)),
-        };
-        return PifWriter.Write(new(source.Header, source.Encoding, source.PaletteData, source.PixelData,
-            source.MipPixelData.Take(limit).ToArray()));
     }
 
     public static byte[] ConvertSky(byte[] bytes, CancellationToken cancellationToken)

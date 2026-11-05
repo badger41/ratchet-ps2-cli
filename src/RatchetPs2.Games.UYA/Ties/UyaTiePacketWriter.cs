@@ -1,20 +1,20 @@
 using System.Buffers.Binary;
 using RatchetPs2.Core.Ties;
 
-namespace RatchetPs2.Games.GC.Level;
+namespace RatchetPs2.Games.UYA.Ties;
 
-internal sealed record GcTieStripRun(TieLogicalVertex[] Vertices, int Shader, byte Flags, byte ControlData1);
-internal sealed record GcTieRebuiltPacket(byte[] Record, byte[] Bytes, int[] SourceColorSlots,
+internal sealed record UyaTieStripRun(TieLogicalVertex[] Vertices, int Shader, byte Flags, byte ControlData1);
+internal sealed record UyaTieRebuiltPacket(byte[] Record, byte[] Bytes, int[] SourceColorSlots,
     int LogicalVertices, int Triangles, int Strips);
 
-internal enum GcTiePacketLayout { Current, OriginalSplit, MissingFatPhase, PreviousFacing, CoincidentFacing, UnpaddedStrips }
+internal enum UyaTiePacketLayout { Current, OriginalSplit, MissingFatPhase }
 
-internal static class GcTiePacketWriter
+internal static class UyaTiePacketWriter
 {
-    public static IEnumerable<GcTieRebuiltPacket> Build(byte[] source, TiePacket packet,
-        TiePacketDataBlock block, int colorBase, IReadOnlyList<GcTieStripRun> runs, GcTiePacketLayout layout = GcTiePacketLayout.Current)
+    public static IEnumerable<UyaTieRebuiltPacket> Build(byte[] source, TiePacket packet,
+        TiePacketDataBlock block, int colorBase, IReadOnlyList<UyaTieStripRun> runs, UyaTiePacketLayout layout = UyaTiePacketLayout.Current)
     {
-        var batch = new List<GcTieStripRun>();
+        var batch = new List<UyaTieStripRun>();
         foreach (var run in runs)
         {
             if (batch.Count > 0 && !Fits(batch.Append(run)))
@@ -23,12 +23,12 @@ internal static class GcTiePacketWriter
                 batch.Clear();
             }
             batch.Add(run);
-            if (!Fits(batch)) throw new InvalidDataException("GC tie strip exceeds UYA packet limits.");
+            if (!Fits(batch)) throw new InvalidDataException("Source tie strip exceeds UYA packet limits.");
         }
         if (batch.Count > 0) yield return Write(source, packet, block, colorBase, batch, layout);
     }
 
-    private static bool Fits(IEnumerable<GcTieStripRun> runs)
+    private static bool Fits(IEnumerable<UyaTieStripRun> runs)
     {
         var end = 6;
         var shaders = 0;
@@ -47,8 +47,8 @@ internal static class GcTiePacketWriter
         return end <= 0xcc && shaders <= 4 && strips <= 15;
     }
 
-    private static GcTieRebuiltPacket Write(byte[] source, TiePacket original, TiePacketDataBlock block,
-        int colorBase, IReadOnlyList<GcTieStripRun> runs, GcTiePacketLayout layout)
+    private static UyaTieRebuiltPacket Write(byte[] source, TiePacket original, TiePacketDataBlock block,
+        int colorBase, IReadOnlyList<UyaTieStripRun> runs, UyaTiePacketLayout layout)
     {
         var uploads = new List<VertexUpload>();
         var available = new Dictionary<int, int>();
@@ -66,7 +66,7 @@ internal static class GcTiePacketWriter
             drawCount++;
         }
         // Reproduce the old layout only when recognizing an earlier conversion for migration.
-        var vertices = layout == GcTiePacketLayout.OriginalSplit ? uploads.OrderBy(value => value.Vertex.Kind).ToArray()
+        var vertices = layout == UyaTiePacketLayout.OriginalSplit ? uploads.OrderBy(value => value.Vertex.Kind).ToArray()
             : PrepareUploads(uploads, block, layout).ToArray();
         var count = vertices.Length;
         var dinky = vertices.Count(value => value.Vertex.Kind == TiePacketDecodedVertexKind.Dinky);
@@ -81,7 +81,7 @@ internal static class GcTiePacketWriter
         var multipassSize = multipassOffset > 0 ? (drawCount + 3) / 4 : 0;
         if (multipassOffset > 0 && (original.PassFlags != 1 || original.MultipassUvSize * 4 <
             block.StripControls.Sum(strip => strip.TokenCount)))
-            throw new NotSupportedException("GC tie strip splitting requires a complete texture-matrix UV stream.");
+            throw new NotSupportedException("Source tie strip splitting requires a complete texture-matrix UV stream.");
         var bytes = new byte[(multipassOffset > 0 ? multipassOffset + 3 + multipassSize : scissorOffset + scissorSize) * 16];
         var record = new byte[16];
         record[5] = original.BfcDistance;
@@ -137,7 +137,7 @@ internal static class GcTiePacketWriter
         bytes[scissorOffset * 16 + drawCount] = 0xf6;
         record[4] = checked((byte)shaders);
         BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(12), -(4 + shaders * 5));
-        if (layout != GcTiePacketLayout.OriginalSplit)
+        if (layout != UyaTiePacketLayout.OriginalSplit)
         {
             for (var kind = 0; kind < 2; kind++)
             {
@@ -145,7 +145,7 @@ internal static class GcTiePacketWriter
                 var singles = group.Where(value => value.Secondary is null).ToArray();
                 var shared = group.Where(value => value.Secondary is not null).ToArray();
                 // The second flag skips the entire fat phase, including single writes.
-                var skip = kind == 0 || layout == GcTiePacketLayout.MissingFatPhase
+                var skip = kind == 0 || layout == UyaTiePacketLayout.MissingFatPhase
                     ? shared.Length == 0 : fat == 0;
                 bytes[0x20 + kind] = skip ? (byte)1 : (byte)0;
                 bytes[0x24 + kind * 2] = singles.Length == 0 ? (byte)0
@@ -187,7 +187,7 @@ internal static class GcTiePacketWriter
         return new(record, bytes, colors, drawCount, drawCount - runs.Count * 2, runs.Count);
     }
 
-    private static IEnumerable<VertexUpload> PrepareUploads(List<VertexUpload> uploads, TiePacketDataBlock block, GcTiePacketLayout layout)
+    private static IEnumerable<VertexUpload> PrepareUploads(List<VertexUpload> uploads, TiePacketDataBlock block, UyaTiePacketLayout layout)
     {
         if (uploads.All(value => value.Vertex.Kind != TiePacketDecodedVertexKind.Dinky))
         {
@@ -208,7 +208,7 @@ internal static class GcTiePacketWriter
                 singles.Add(vertex with { Secondary = null });
                 singles.Add(vertex with { Primary = vertex.Secondary!.Value, Secondary = null });
             }
-            if (layout != GcTiePacketLayout.MissingFatPhase && !dinky && shared.Count == 0)
+            if (layout != UyaTiePacketLayout.MissingFatPhase && !dinky && shared.Count == 0)
             {
                 // UYA always runs both fat phases; a self-write supplies the shared phase for an unshared tail.
                 var last = singles[^1];

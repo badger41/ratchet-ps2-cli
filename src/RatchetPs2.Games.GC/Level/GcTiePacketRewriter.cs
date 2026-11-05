@@ -1,8 +1,11 @@
 using System.Buffers.Binary;
+using RatchetPs2.Games.UYA.Ties;
 using RatchetPs2.Core.Gltf;
 using RatchetPs2.Core.Ties;
 
 namespace RatchetPs2.Games.GC.Level;
+
+internal enum GcTiePacketLayout { Current, OriginalSplit, MissingFatPhase, PreviousFacing, CoincidentFacing, UnpaddedStrips }
 
 internal static class GcTiePacketRewriter
 {
@@ -13,7 +16,7 @@ internal static class GcTiePacketRewriter
     {
         if (tie.Header.AmbientRgbaOffset != 0)
             throw new NotSupportedException("GC tie splitting cannot relocate an inline ambient-color buffer.");
-        var packets = new List<GcTieRebuiltPacket>[3];
+        var packets = new List<UyaTieRebuiltPacket>[3];
         for (var lod = 0; lod < 3; lod++)
         {
             packets[lod] = [];
@@ -39,7 +42,12 @@ internal static class GcTiePacketRewriter
                         throw new InvalidDataException("GC tie upload vertices do not match its color-cache span.");
                     var runs = strips.SelectMany(strip => Split(topology, strip,
                         block.StripControls[strip.PacketStripIndex], facing[lod], partitionFacing[lod])).ToArray();
-                    packets[lod].AddRange(GcTiePacketWriter.Build(source, packet, block, colorBase, runs, layout));
+                    packets[lod].AddRange(UyaTiePacketWriter.Build(source, packet, block, colorBase, runs, layout switch
+                    {
+                        GcTiePacketLayout.OriginalSplit => UyaTiePacketLayout.OriginalSplit,
+                        GcTiePacketLayout.MissingFatPhase => UyaTiePacketLayout.MissingFatPhase,
+                        _ => UyaTiePacketLayout.Current,
+                    }));
                 }
                 colorBase += (packet.RgbaCount + 3) & ~3;
             }
@@ -118,7 +126,7 @@ internal static class GcTiePacketRewriter
         return result;
     }
 
-    private static IEnumerable<GcTieStripRun> Split(TieLodTopology topology, TieTriangleStrip strip,
+    private static IEnumerable<UyaTieStripRun> Split(TieLodTopology topology, TieTriangleStrip strip,
         TiePacketStripControl control, IReadOnlyList<TieTriangle> facing, IReadOnlyList<TieTriangle> partitionFacing)
     {
         var phases = GcLevelAssetModelConverter.ResolveStripFacing(topology, strip, facing);

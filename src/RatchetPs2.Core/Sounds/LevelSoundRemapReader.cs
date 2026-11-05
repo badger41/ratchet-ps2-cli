@@ -13,7 +13,7 @@ public static class LevelSoundRemapReader
         ReadOnlySpan<byte> headerBytes,
         int programCount,
         CancellationToken cancellationToken = default,
-        IReadOnlyList<int>? secondaryProgramCounts = null)
+        IReadOnlyList<int>? secondaryProgramCounts = null, bool hasBankSelector = true)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (programCount < 0) throw new ArgumentOutOfRangeException(nameof(programCount));
@@ -51,7 +51,7 @@ public static class LevelSoundRemapReader
             {
                 var bytes = Slice(source, listOffset, checked(count * sizeof(int)), $"moby config {index} list");
                 // The native loader adds one to the leading bank selector; -1 selects the primary bank.
-                bankIndex = ReadInt32LittleEndian(bytes, 0);
+                bankIndex = hasBankSelector ? ReadInt32LittleEndian(bytes, 0) : -1;
                 var selectedProgramCount = programCount;
                 if (bankIndex != -1)
                 {
@@ -61,9 +61,10 @@ public static class LevelSoundRemapReader
                         throw new InvalidDataException("Level moby sound remap selects an unavailable bank.");
                     selectedProgramCount = secondaryProgramCounts[bankIndex];
                 }
-                slots = ReadSlots(bytes[sizeof(int)..], header.SoundRemapOffset + listOffset + sizeof(int), selectedProgramCount, nullable: true,
+                var prefix = hasBankSelector ? sizeof(int) : 0;
+                slots = ReadSlots(bytes[prefix..], header.SoundRemapOffset + listOffset + prefix, selectedProgramCount, nullable: true,
                     $"moby class 0x{definitions[index].ModelId:X4}");
-                slotRange = new(header.SoundRemapOffset + listOffset + sizeof(int), bytes.Length - sizeof(int));
+                slotRange = new(header.SoundRemapOffset + listOffset + prefix, bytes.Length - prefix);
                 end = Math.Max(end, checked(listOffset + bytes.Length));
             }
             mobys[index] = new(

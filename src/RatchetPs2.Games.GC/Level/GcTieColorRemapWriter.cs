@@ -1,11 +1,12 @@
 using System.Buffers.Binary;
+using RatchetPs2.Games.UYA.Ties;
 using RatchetPs2.Core.Ties;
 
 namespace RatchetPs2.Games.GC.Level;
 
 internal static class GcTieColorRemapWriter
 {
-    public static byte[] Write(byte[] source, TieClass tie, int lod, IReadOnlyList<GcTieRebuiltPacket> packets)
+    public static byte[] Write(byte[] source, TieClass tie, int lod, IReadOnlyList<UyaTieRebuiltPacket> packets)
     {
         var recipes = tie.RgbaRemapOperations.Where(operation => operation.LodIndex == lod)
             .GroupBy(operation => operation.TargetCacheSlot).ToDictionary(group => group.Key,
@@ -76,7 +77,7 @@ internal static class GcTieColorRemapWriter
         }
     }
 
-    public static byte[]? WriteGlowTargets(byte[] source, TieClass tie, int lod, IReadOnlyList<GcTieRebuiltPacket> packets)
+    public static byte[]? WriteGlowTargets(byte[] source, TieClass tie, int lod, IReadOnlyList<UyaTieRebuiltPacket> packets)
     {
         var relative = tie.Header.UnknownOffsets78[lod];
         if (relative == 0) return null;

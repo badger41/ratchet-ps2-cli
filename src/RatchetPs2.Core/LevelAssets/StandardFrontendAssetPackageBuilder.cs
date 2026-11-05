@@ -18,7 +18,7 @@ public static class StandardFrontendAssetPackageBuilder
         FrontendAssetKind kind,
         byte[] modelBytes,
         IReadOnlyList<FrontendAssetTexture> textures,
-        bool preserveTieRepeatedTexCoordTiles = false)
+        bool preserveTieRepeatedTexCoordTiles = false, LevelAssetProfile? profile = null)
     {
         ArgumentNullException.ThrowIfNull(modelBytes);
         ArgumentNullException.ThrowIfNull(textures);
@@ -57,8 +57,8 @@ public static class StandardFrontendAssetPackageBuilder
         using var input = new MemoryStream(modelBytes, writable: false);
         var (gltf, buffer) = kind switch
         {
-            FrontendAssetKind.Moby => ExportMoby(input, uris, sizes, alpha),
-            FrontendAssetKind.Tie => ExportTie(game, input, uris, sizes, alpha, preserveTieRepeatedTexCoordTiles),
+            FrontendAssetKind.Moby => ExportMoby(input, uris, sizes, alpha, profile?.MobyModelFormat ?? MobyModelFormat.Standard),
+            FrontendAssetKind.Tie => ExportTie(game, input, uris, sizes, alpha, preserveTieRepeatedTexCoordTiles, profile?.TieGameProfile),
             FrontendAssetKind.Shrub => ExportShrub(game, input, uris, sizes, alpha, billboard),
             _ => throw new ArgumentOutOfRangeException(nameof(kind)),
         };
@@ -71,13 +71,14 @@ public static class StandardFrontendAssetPackageBuilder
         Stream input,
         IReadOnlyDictionary<int, string> uris,
         IReadOnlyDictionary<int, TextureSize> sizes,
-        IReadOnlyDictionary<int, TextureAlphaInfo> alpha)
+        IReadOnlyDictionary<int, TextureAlphaInfo> alpha, MobyModelFormat modelFormat)
     {
         var export = MobyGltfExporter.Export(input, "model.gltf", new()
         {
             BufferFileName = "model.buffer.bin",
             LodIndex = 0,
             SkipAnimationSequences = true,
+            ModelFormat = modelFormat,
             ExternalTextureUris = uris,
             ExternalTextureSizes = sizes,
             ExternalTextureAlpha = alpha,
@@ -91,12 +92,12 @@ public static class StandardFrontendAssetPackageBuilder
         IReadOnlyDictionary<int, string> uris,
         IReadOnlyDictionary<int, TextureSize> sizes,
         IReadOnlyDictionary<int, TextureAlphaInfo> alpha,
-        bool preserveRepeatedTexCoordTiles)
+        bool preserveRepeatedTexCoordTiles, TieGameProfile? profile)
     {
         var export = TieGltfExporter.Export(input, "model.gltf", new()
         {
             BufferFileName = "model.buffer.bin",
-            GameProfile = TieGameProfile.ForGame(game),
+            GameProfile = profile ?? TieGameProfile.ForGame(game),
             ExternalTextureUris = uris,
             ExternalTextureSizes = sizes,
             ExternalTextureAlpha = alpha,

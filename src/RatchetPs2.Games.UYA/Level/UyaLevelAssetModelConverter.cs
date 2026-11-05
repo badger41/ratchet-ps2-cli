@@ -10,6 +10,21 @@ namespace RatchetPs2.Games.UYA.Level;
 
 public static class UyaLevelAssetModelConverter
 {
+    public static byte[] ConvertLinearTexture(byte[] bytes, TextureRole role)
+    {
+        var source = PifReader.Read(bytes);
+        if (source.Encoding != PifTextureEncoding.Indexed8 || source.IsSwizzled)
+            throw new InvalidDataException("Source to UYA conversion requires linear indexed8 textures.");
+        var limit = role switch
+        {
+            TextureRole.Material => 2,
+            TextureRole.Billboard => 3,
+            _ => throw new ArgumentOutOfRangeException(nameof(role)),
+        };
+        return PifWriter.Write(new(source.Header, source.Encoding, source.PaletteData, source.PixelData,
+            source.MipPixelData.Take(limit).ToArray()));
+    }
+
     public static byte[] ConvertDlTexture(byte[] bytes, TextureRole role = TextureRole.Material) =>
         ConvertDlTexture(PifReader.Read(bytes), previousLayout: false, MipLimit(role));
 

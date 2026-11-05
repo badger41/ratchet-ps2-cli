@@ -171,7 +171,7 @@ internal static class SoundBankReaderTests
 
     private static void VerifyRandomTriggerGates()
     {
-        foreach (var game in new[] { GameId.UYA, GameId.DL })
+        foreach (var game in new[] { GameId.UYA, GameId.DL, GameId.GC, GameId.RC1 })
         {
             Expect(SoundBankReader.HasRandomTriggerGate(game, [(0x01, 0), (0x1f, 2), (0x22, 2), (0x18, 0)]),
                 "trigger gate can follow other operations");
@@ -184,7 +184,7 @@ internal static class SoundBankReaderTests
                 && !SoundBankReader.HasRandomTriggerGate(game, []),
                 "other variability, incomplete gates and empty programs are not trigger gates");
         }
-        ExpectThrows<NotSupportedException>(() => SoundBankReader.HasRandomTriggerGate(GameId.RC1, []));
+        ExpectThrows<NotSupportedException>(() => SoundBankReader.HasRandomTriggerGate((GameId)0, []));
     }
 
     private static void VerifyLevelExtraction(byte[] bank)
