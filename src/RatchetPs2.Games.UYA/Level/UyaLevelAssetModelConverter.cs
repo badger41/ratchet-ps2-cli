@@ -10,6 +10,15 @@ namespace RatchetPs2.Games.UYA.Level;
 
 public static class UyaLevelAssetModelConverter
 {
+    public static byte[] RebaseTieClass(byte[] bytes, int classId)
+    {
+        _ = RatchetPs2.Core.Ties.TieClassReader.Read(bytes);
+        if (classId is < 0 or > ushort.MaxValue) throw new ArgumentOutOfRangeException(nameof(classId));
+        var result = bytes.ToArray();
+        BinaryPrimitives.WriteUInt16LittleEndian(result.AsSpan(0x44), (ushort)classId);
+        return result;
+    }
+
     public static byte[] ConvertLinearTexture(byte[] bytes, TextureRole role)
     {
         var source = PifReader.Read(bytes);

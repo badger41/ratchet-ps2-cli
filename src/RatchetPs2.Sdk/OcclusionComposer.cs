@@ -22,6 +22,21 @@ public static class OcclusionComposer
             _ => throw new NotSupportedException($"Occlusion grid creation does not support {gameId}."),
         };
 
+    /// <summary>Creates a native empty template with no octants or visibility masks.</summary>
+    public static byte[] CreateEmptyGrid(GameId gameId, CancellationToken token = default) => gameId switch
+    {
+        GameId.UYA => UyaOcclusionGridWriter.CreateEmpty(token),
+        _ => throw new NotSupportedException($"Empty occlusion grids do not support {gameId}."),
+    };
+
+    /// <summary>Replaces coverage with an empty native template, leaving the rest of the level intact.</summary>
+    public static LevelArchiveBuildResult ClearCoverageFromLevel(GameId gameId, ReadOnlyMemory<byte> levelWad,
+        CancellationToken token = default) => gameId switch
+    {
+        GameId.UYA => UyaOcclusionComposer.ClearCoverageFromLevel(levelWad, token),
+        _ => throw new NotSupportedException($"Clearing occlusion coverage does not support {gameId}."),
+    };
+
     public static byte[] ReplaceMasks(GameId gameId, ReadOnlySpan<byte> grid,
         IReadOnlyDictionary<(int X, int Y, int Z), byte[]> masks, CancellationToken token = default)
         => gameId switch

@@ -12,6 +12,21 @@ namespace RatchetPs2.Sdk;
 
 public static class LevelAssetModelConverter
 {
+    public static bool MatchesTextureBaseUpdate(GameId sourceGame, IReadOnlyList<FrontendAssetTexture> original,
+        IReadOnlyList<FrontendAssetTexture> updated, CancellationToken token = default) => sourceGame switch
+    {
+        GameId.RC1 => Rc1TextureConversionRepair.MatchesBase(original, updated, token),
+        _ => throw new NotSupportedException($"Texture base updates are not supported for {sourceGame}."),
+    };
+
+    public static IReadOnlyList<FrontendAssetTexture>? RepairTextureUpdate(GameId sourceGame, GameId targetGame,
+        IReadOnlyList<FrontendAssetTexture> original, IReadOnlyList<FrontendAssetTexture> updated,
+        IReadOnlyList<FrontendAssetTexture> native, CancellationToken token = default) => (sourceGame, targetGame) switch
+    {
+        (GameId.RC1, GameId.UYA) => Rc1TextureConversionRepair.RepairToUya(original, updated, native, token),
+        _ => throw new NotSupportedException($"Texture update repair from {sourceGame} to {targetGame} is not supported."),
+    };
+
     public static byte[]? RepairPreviousMobyConversion(GameId sourceGame, GameId targetGame, byte[] sourceBytes,
         byte[] convertedBytes, CancellationToken cancellationToken = default)
     {
@@ -102,6 +117,28 @@ public static class LevelAssetModelConverter
             FrontendAssetKind.Moby => ConvertMoby(modelBytes, cancellationToken),
             _ => throw new ArgumentOutOfRangeException(nameof(kind)),
         };
+    }
+
+    /// <summary>Splits oversized models without dropping geometry or LODs. Each part initially retains targetClassId.</summary>
+    public static IReadOnlyList<byte[]> ConvertParts(GameId sourceGame, GameId targetGame, FrontendAssetKind kind,
+        byte[] modelBytes, int targetClassId, CancellationToken cancellationToken = default,
+        IReadOnlyList<FrontendAssetTexture>? textures = null)
+    {
+        ArgumentNullException.ThrowIfNull(modelBytes);
+        if (targetClassId is < 0 or > ushort.MaxValue) throw new ArgumentOutOfRangeException(nameof(targetClassId));
+        cancellationToken.ThrowIfCancellationRequested();
+        return sourceGame == GameId.RC1 && targetGame == GameId.UYA
+            ? Rc1LevelAssetModelConverter.ConvertParts(kind, modelBytes, targetClassId, cancellationToken, textures)
+            : [Convert(sourceGame, targetGame, kind, modelBytes, targetClassId, cancellationToken, textures)];
+    }
+
+    public static byte[] RebaseClass(GameId game, FrontendAssetKind kind, byte[] modelBytes, int targetClassId)
+    {
+        ArgumentNullException.ThrowIfNull(modelBytes);
+        if (targetClassId is < 0 or > ushort.MaxValue) throw new ArgumentOutOfRangeException(nameof(targetClassId));
+        if (game != GameId.UYA || kind != FrontendAssetKind.Tie)
+            throw new NotSupportedException($"Model class rebasing is not supported for {game} {kind}.");
+        return UyaLevelAssetModelConverter.RebaseTieClass(modelBytes, targetClassId);
     }
 
     private static byte[] ConvertMoby(byte[] bytes, CancellationToken cancellationToken, bool preserveSounds = true,

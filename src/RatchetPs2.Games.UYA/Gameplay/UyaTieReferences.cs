@@ -164,6 +164,21 @@ public static class UyaOcclusionMappingsReader
 
 public static class UyaOcclusionMappingsWriter
 {
+    public static byte[] NormalizeReplacement(ReadOnlySpan<byte> bytes, int terrainCount,
+        IReadOnlyList<UyaTieInstance> ties)
+    {
+        if (terrainCount is < 0 or > 100_000) throw new InvalidDataException("Terrain mapping count exceeds the item limit.");
+        var mappings = UyaOcclusionMappingsReader.Read(bytes);
+        var normalized = terrainCount > mappings.Tfrags.Count
+            ? AppendTfrags(bytes, Enumerable.Repeat(new UyaOcclusionMapping(-1, 0), terrainCount - mappings.Tfrags.Count).ToArray())
+            : bytes.ToArray();
+        var sourceById = mappings.Ties.Select((mapping, index) => (mapping.OcclusionId, index))
+            .GroupBy(value => value.OcclusionId).ToDictionary(group => group.Key, group => group.First().index);
+        return RemapTiesBySourceIndex(normalized,
+            ties.Select(tie => sourceById.GetValueOrDefault(tie.OcclusionId, -1)).ToArray(),
+            ties.Select(tie => tie.OcclusionId).ToArray(), insertedBitIndex: -1);
+    }
+
     public static byte[] FilterTfrags(
         ReadOnlySpan<byte> source,
         IReadOnlyList<int> retainedMappingIndices)
@@ -197,7 +212,7 @@ public static class UyaOcclusionMappingsWriter
         IReadOnlyList<UyaOcclusionMapping> appended)
     {
         ArgumentNullException.ThrowIfNull(appended);
-        if (appended.Any(value => value.BitIndex is < 0 or >= 1024))
+        if (appended.Any(value => value.BitIndex is < -1 or >= 1024))
             throw new ArgumentOutOfRangeException(nameof(appended));
         var mappings = UyaOcclusionMappingsReader.Read(source);
         if (appended.Count == 0) return source.ToArray();
@@ -237,7 +252,7 @@ public static class UyaOcclusionMappingsWriter
         int? insertedBitIndex = null)
     {
         ArgumentNullException.ThrowIfNull(targetOcclusionIds);
-        if (insertedBitIndex is < 0 or >= 1024)
+        if (insertedBitIndex is < -1 or >= 1024)
             throw new ArgumentOutOfRangeException(nameof(insertedBitIndex));
         var mappings = UyaOcclusionMappingsReader.Read(source);
         var remaining = targetOcclusionIds.GroupBy(value => value)
@@ -267,7 +282,7 @@ public static class UyaOcclusionMappingsWriter
         ArgumentNullException.ThrowIfNull(targetOcclusionIds);
         if (targetSourceIndices.Count != targetOcclusionIds.Count)
             throw new ArgumentException("UYA target tie source and occlusion inventories must be aligned.");
-        if (insertedBitIndex is < 0 or >= 1024)
+        if (insertedBitIndex is < -1 or >= 1024)
             throw new ArgumentOutOfRangeException(nameof(insertedBitIndex));
         var mappings = UyaOcclusionMappingsReader.Read(source);
         var ties = targetSourceIndices.Select((sourceIndex, targetIndex) =>

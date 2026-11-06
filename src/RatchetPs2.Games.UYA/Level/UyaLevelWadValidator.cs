@@ -5,6 +5,8 @@ namespace RatchetPs2.Games.UYA.Level;
 
 public static class UyaLevelWadValidator
 {
+    public const int MaximumTieInstanceCount = 4095;
+
     public static void Validate(UyaLevelWadInventory inventory, UyaLevelWadPackage package)
     {
         ArgumentNullException.ThrowIfNull(inventory);
@@ -39,6 +41,9 @@ public static class UyaLevelWadValidator
         {
             var tieInstances = UyaTieInstancesReader.Read(ties.Bytes);
             var tieCount = tieInstances.Count;
+            if (tieCount > MaximumTieInstanceCount)
+                throw new InvalidDataException($"UYA supports at most {MaximumTieInstanceCount} Tie instances per map; "
+                    + $"this map contains {tieCount}. Remove Tie instances and rebuild.");
             var tieClasses = tieInstances.Instances.Select(value => value.ClassId).ToArray();
             if (!tieClasses.SequenceEqual(tieClasses.Order()))
                 throw new InvalidDataException("Packed tie instances are not in ascending class blocks.");

@@ -10,7 +10,8 @@ public sealed record TfragOcclusionComposition(
     byte[] OcclusionBytes,
     int? FirstCustomMappingIndex,
     int? VisibilityBit,
-    bool Changed);
+    bool Changed,
+    int? FirstCustomGroupIndex = null);
 
 public static class TfragTerrainComposer
 {
@@ -47,10 +48,11 @@ public static class TfragTerrainComposer
         byte[] terrainBytes,
         IReadOnlyDictionary<int, IReadOnlyDictionary<int, int>> textureIdsByGroup,
         int? firstOcclusionMappingIndex,
-        CancellationToken cancellationToken = default) => gameId switch
+        CancellationToken cancellationToken = default,
+        int? firstGeneratedGroupIndex = null) => gameId switch
     {
         GameId.UYA => UyaStaticModelTfragMutator.Apply(
-            terrainBytes, textureIdsByGroup, firstOcclusionMappingIndex, cancellationToken),
+            terrainBytes, textureIdsByGroup, firstOcclusionMappingIndex, cancellationToken, firstGeneratedGroupIndex),
         _ => throw new NotSupportedException($"Tfrag terrain finalization does not support {gameId}."),
     };
 
@@ -60,7 +62,8 @@ public static class TfragTerrainComposer
         IReadOnlyDictionary<int, IReadOnlyDictionary<int, string>> textureAssetIdsByGroup,
         IReadOnlyList<TerrainTextureAllocation> terrainTextures,
         int? firstOcclusionMappingIndex,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        int? firstGeneratedGroupIndex = null)
     {
         ArgumentNullException.ThrowIfNull(textureAssetIdsByGroup);
         ArgumentNullException.ThrowIfNull(terrainTextures);
@@ -75,7 +78,7 @@ public static class TfragTerrainComposer
                     : throw new InvalidDataException(
                         $"Tfrag texture {binding.Value} has no terrain texture allocation.")));
         return FinalizeTerrain(
-            gameId, terrainBytes, textureIdsByGroup, firstOcclusionMappingIndex, cancellationToken);
+            gameId, terrainBytes, textureIdsByGroup, firstOcclusionMappingIndex, cancellationToken, firstGeneratedGroupIndex);
     }
 
     public static byte[] BindMissingOcclusionMappings(
@@ -107,7 +110,8 @@ public static class TfragTerrainComposer
         byte[] occlusionBytes,
         int retainedNativeGroupCount,
         int? visibilityBit,
-        CancellationToken cancellationToken = default) => gameId switch
+        CancellationToken cancellationToken = default,
+        IReadOnlyList<int?>? appendedSourceMappingIndices = null) => gameId switch
     {
         GameId.UYA => ComposeUyaOcclusionMappings(
             terrainBytes,
@@ -115,7 +119,8 @@ public static class TfragTerrainComposer
             occlusionBytes,
             retainedNativeGroupCount,
             visibilityBit,
-            cancellationToken),
+            cancellationToken,
+            appendedSourceMappingIndices),
         _ => throw new NotSupportedException($"Tfrag occlusion composition does not support {gameId}."),
     };
 
@@ -125,7 +130,8 @@ public static class TfragTerrainComposer
         byte[] occlusionBytes,
         int retainedNativeGroupCount,
         int? visibilityBit,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<int?>? appendedSourceMappingIndices)
     {
         ArgumentNullException.ThrowIfNull(terrainBytes);
         ArgumentNullException.ThrowIfNull(sourceTerrainBytes);
@@ -145,7 +151,8 @@ public static class TfragTerrainComposer
                 "Terrain composition supports retaining all or deleting all native primary groups.");
 
         var mappings = UyaOcclusionMappingsReader.Read(occlusionBytes);
-        if (mappings.Tfrags.Count != sourceGroupCount)
+        if (sourceTerrain?.Chunks.Any(chunk => chunk.OcclusionIndexStash == 0
+                && (chunk.OcclusionIndex < -1 || chunk.OcclusionIndex >= mappings.Tfrags.Count)) == true)
             throw new InvalidDataException(
                 "UYA gameplay occlusion mappings do not match the source tfrag inventory.");
         var output = retainedNativeGroupCount == 0
@@ -159,8 +166,18 @@ public static class TfragTerrainComposer
             {
                 var appended = UyaOcclusionMappingsWriter.MapTfragsByNearestSource(
                     sourceTerrain.Chunks,
-                    mappings.Tfrags,
+                    sourceTerrain.Chunks.Select(chunk => chunk.OcclusionIndexStash == 0 && chunk.OcclusionIndex >= 0
+                        ? mappings.Tfrags[chunk.OcclusionIndex] : new UyaOcclusionMapping(-1, 0)).ToArray(),
                     terrain.Chunks.Skip(retainedNativeGroupCount).ToArray());
+                if (appendedSourceMappingIndices is not null)
+                {
+                    if (appendedSourceMappingIndices.Count != customGroupCount
+                        || appendedSourceMappingIndices.Any(index => index < -1 || index >= mappings.Tfrags.Count))
+                        throw new InvalidDataException("Appended terrain source mapping slots are invalid.");
+                    appended = appended.Select((mapping, index) => appendedSourceMappingIndices[index] is { } sourceIndex
+                        ? sourceIndex < 0 ? new UyaOcclusionMapping(-1, 0) : mappings.Tfrags[sourceIndex]
+                        : mapping).ToArray();
+                }
                 output = UyaOcclusionMappingsWriter.AppendTfrags(output, appended);
             }
             else
@@ -180,6 +197,7 @@ public static class TfragTerrainComposer
             output,
             customGroupCount > 0 ? retainedMappings.Tfrags.Count : null,
             visibilityBit,
-            retainedNativeGroupCount != sourceGroupCount || customGroupCount > 0);
+            retainedNativeGroupCount != sourceGroupCount || customGroupCount > 0,
+            customGroupCount > 0 ? retainedNativeGroupCount : null);
     }
 }

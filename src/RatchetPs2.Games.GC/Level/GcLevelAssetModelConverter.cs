@@ -18,7 +18,9 @@ internal static class GcLevelAssetModelConverter
         switch (kind)
         {
             case FrontendAssetKind.Moby:
-                _ = MobyModelReader.Read(stream);
+                // GC leaves UYA's far-LOD/team-palette bytes unused; Museum models can contain 0xff.
+                result.AsSpan(0x0a, 2).Clear();
+                _ = MobyModelReader.Read(new MemoryStream(result, writable: false));
                 break;
             case FrontendAssetKind.Shrub:
                 _ = ShrubClassReader.Read(stream);

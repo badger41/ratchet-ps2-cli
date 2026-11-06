@@ -74,6 +74,14 @@ public static class UyaOcclusionComposer
         return ApplyCoverageToLevel(levelWad, masks, token);
     }
 
+    public static LevelArchiveBuildResult ClearCoverageFromLevel(ReadOnlyMemory<byte> levelWad,
+        CancellationToken token = default)
+    {
+        token.ThrowIfCancellationRequested();
+        var source = UyaLevelWadRenderPackageBuilder.ReadAssetSourceFiles(UyaLevelWadUnpacker.Unpack(levelWad.Span).Files);
+        return ApplyCore(levelWad, source, UyaOcclusionGridWriter.CreateEmpty(token), token);
+    }
+
     private static LevelArchiveBuildResult ApplyCore(ReadOnlyMemory<byte> levelWad,
         UyaLevelAssetSourceFiles source, byte[] generated, CancellationToken token)
     {

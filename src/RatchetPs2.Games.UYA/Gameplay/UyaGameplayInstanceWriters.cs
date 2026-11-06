@@ -286,6 +286,15 @@ public static class UyaSplineInstancesWriter
 
 public static class UyaGrindPathInstancesWriter
 {
+    public static byte[] CreateRecord(int unknown4, int wrap, int inactive)
+    {
+        var output = new byte[0x20];
+        BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(0x10), unknown4);
+        BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(0x14), wrap);
+        BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(0x18), inactive);
+        return output;
+    }
+
     public static byte[] Compose(
         ReadOnlySpan<byte> source,
         IReadOnlyList<UyaGrindPathInstanceComposition> instances)

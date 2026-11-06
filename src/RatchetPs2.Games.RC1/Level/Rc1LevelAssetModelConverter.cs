@@ -44,14 +44,31 @@ internal static class Rc1LevelAssetModelConverter
         }
     }
 
+    public static IReadOnlyList<byte[]> ConvertParts(FrontendAssetKind kind, byte[] bytes, int classId,
+        CancellationToken token, IReadOnlyList<FrontendAssetTexture>? textures) => kind == FrontendAssetKind.Tie
+        ? Rc1TieModelConverter.ConvertParts(bytes, classId, token, textures)
+        : [Convert(kind, bytes, classId, token, textures)];
+
     public static byte[]? RepairPreviousTie(byte[] sourceBytes, byte[] convertedBytes, int previousClassId,
         int targetClassId, IReadOnlyList<FrontendAssetTexture>? textures, CancellationToken token)
     {
         var analysis = new Rc1TieModelConverter.Analysis(sourceBytes);
         var corrected = Rc1TieModelConverter.Convert(sourceBytes, targetClassId, token, textures, analysis);
         if (corrected.AsSpan().SequenceEqual(convertedBytes)) return corrected;
-        var previous = Rc1TieModelConverter.Convert(sourceBytes, previousClassId, token, analysis: analysis);
-        return previous.AsSpan().SequenceEqual(convertedBytes) ? corrected : null;
+        foreach (var previousTextures in new[] { textures, null })
+            foreach (var previousShaderUploadSize in new[] { false, true })
+            foreach (var previousLighting in new[] { false, true })
+            {
+                var previous = Rc1TieModelConverter.Convert(sourceBytes, previousClassId, token,
+                    previousTextures, analysis, previousShaderUploadSize, previousLighting);
+                if (previous.AsSpan().SequenceEqual(convertedBytes)) return corrected;
+                // Recognize the former byte-for-byte RC1 shader copy without accepting authored edits.
+                var shaderOffset = BinaryPrimitives.ReadInt32LittleEndian(previous.AsSpan(0x1c));
+                sourceBytes.AsSpan(checked((int)analysis.Tie.Header.ShadersOffset), analysis.Tie.Header.TextureCount * 0x50)
+                    .CopyTo(previous.AsSpan(shaderOffset));
+                if (previous.AsSpan().SequenceEqual(convertedBytes)) return corrected;
+            }
+        return null;
     }
 
     public static byte[] ConvertSky(byte[] bytes, CancellationToken token)

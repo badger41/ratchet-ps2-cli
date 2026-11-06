@@ -9,11 +9,23 @@ internal static class UyaOcclusionGridCreationTests
 {
     internal static void Run()
     {
+        VerifyEmptyTemplate();
         VerifyGoldenCell();
         VerifyCoverageChanges();
         VerifyLimits();
         VerifyLevelComposition();
         Console.WriteLine("PASS source-free occlusion grids, explicit reserved bits, deterministic readback and preflight limits");
+    }
+
+    private static void VerifyEmptyTemplate()
+    {
+        var bytes = OcclusionComposer.CreateEmptyGrid(GameId.UYA);
+        var grid = UyaOcclusionGridReader.Read(bytes);
+        Check(bytes.Length == 64 && grid.MasksOffset == 16 && grid.Octants.Count == 0,
+            "Disabled occlusion must have a valid aligned header with no cells or masks.");
+        Check(bytes.AsSpan(4).IndexOfAnyExcept((byte)0) < 0, "Empty templates contain no retained visibility data.");
+        Throws<OperationCanceledException>(() => OcclusionComposer.CreateEmptyGrid(GameId.UYA, new(true)));
+        Throws<NotSupportedException>(() => OcclusionComposer.CreateEmptyGrid(GameId.DL));
     }
 
     private static void VerifyGoldenCell()
@@ -129,6 +141,14 @@ internal static class UyaOcclusionGridCreationTests
         VerifyMasks(OcclusionComposer.ReadGrid(GameId.UYA, output), masks);
         Check(output.SequenceEqual(OcclusionComposer.ApplyCoverageToLevel(GameId.UYA, level,
             masks.Reverse().ToDictionary(p => p.Key, p => p.Value)).OutputBytes!), "Complete-level output must be deterministic.");
+        var cleared = OcclusionComposer.ClearCoverageFromLevel(GameId.UYA, output);
+        Check(cleared.Succeeded && OcclusionComposer.ReadGrid(GameId.UYA, cleared.OutputBytes!)
+            .SequenceEqual(OcclusionComposer.CreateEmptyGrid(GameId.UYA)), "Clearing coverage must pack an exact empty native template.");
+        var clearedFiles = UyaLevelWadUnpacker.Unpack(cleared.OutputBytes!).Files;
+        foreach (var file in UyaLevelWadUnpacker.Unpack(output).Files.Where(f => f.Path is not
+            ("level_wad/header.bin" or "level_wad/level_data.wad" or "level_data/header.bin" or "assets/asset_header.bin" or "assets/asset_wad.bin")))
+            Check(clearedFiles.Single(f => f.Path == file.Path).Bytes.SequenceEqual(file.Bytes), "Clearing coverage preserves auxiliary level payloads.");
+        Throws<OperationCanceledException>(() => OcclusionComposer.ClearCoverageFromLevel(GameId.UYA, output, new(true)));
         var oldFiles = UyaLevelWadUnpacker.Unpack(level).Files;
         var newFiles = UyaLevelWadUnpacker.Unpack(output).Files;
         foreach (var file in oldFiles.Where(f => f.Path is not ("level_wad/header.bin" or "level_wad/level_data.wad" or "level_data/header.bin" or "assets/asset_header.bin" or "assets/asset_wad.bin")))

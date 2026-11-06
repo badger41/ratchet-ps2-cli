@@ -9,13 +9,15 @@ using RatchetPs2.Games.UYA.Ties;
 
 namespace RatchetPs2.Games.RC1.Level;
 
-internal static class Rc1TieModelConverter
+internal static partial class Rc1TieModelConverter
 {
     public static byte[] Convert(byte[] bytes, int classId, CancellationToken token,
-        IReadOnlyList<FrontendAssetTexture>? textures = null, Analysis? analysis = null)
+        IReadOnlyList<FrontendAssetTexture>? textures = null, Analysis? analysis = null,
+        bool previousShaderUploadSize = false, bool previousLighting = false, int partIndex = 0, int partCount = 1)
     {
         analysis ??= new(bytes);
         var tie = analysis.Tie;
+        var lighting = analysis.Lighting(bytes, token, previousLighting);
         var doubleSided = new HashSet<int>();
         if (textures is not null)
         {
@@ -32,7 +34,7 @@ internal static class Rc1TieModelConverter
             }
         }
         var packets = new List<UyaTieRebuiltPacket>[3];
-        var sourceNormals = new Dictionary<int, int>[3];
+        var sourceNormals = new Dictionary<int, Rc1TieLightingRecipe>[3];
         for (var lod = 0; lod < 3; lod++)
         {
             token.ThrowIfCancellationRequested();
@@ -48,9 +50,7 @@ internal static class Rc1TieModelConverter
                 var block = analysis.Blocks[(lod, packet.PacketIndex)];
                 foreach (var vertex in block.DecodedVertices)
                 {
-                    if (!analysis.Normals.TryGetValue((lod, packet.PacketIndex, vertex.SourceRowIndex), out var normal))
-                        throw new InvalidDataException($"RC1 tie LOD {lod}, packet {packet.PacketIndex} has an unresolved lighting index.");
-                    sourceNormals[lod].Add(colorBase + vertex.Index, normal);
+                    sourceNormals[lod].Add(colorBase + vertex.Index, lighting[(lod, packet.PacketIndex, vertex.SourceRowIndex)]);
                 }
                 // RC1 uses the later multipass fields for its inline lighting-index table.
                 var runs = analysis.Strips[lod][packet.PacketIndex]
@@ -60,16 +60,27 @@ internal static class Rc1TieModelConverter
                 {
                     var alpha = doubleSided.Contains(runs[start].Shader);
                     var end = start + 1;
-                    while (end < runs.Length && (packet.BfcDistance == 0 || doubleSided.Contains(runs[end].Shader) == alpha)) end++;
+                    while (end < runs.Length && (previousShaderUploadSize && packet.BfcDistance == 0
+                        || doubleSided.Contains(runs[end].Shader) == alpha)) end++;
+                    // RC1 packet byte 5 is shader upload size, not UYA's culling distance.
+                    var distance = previousShaderUploadSize ? packet.BfcDistance : (byte)127;
                     var target = new TiePacket { LodIndex = lod, PacketIndex = packet.PacketIndex,
-                        AbsoluteDataOffset = packet.AbsoluteDataOffset, BfcDistance = alpha ? (byte)0 : packet.BfcDistance };
+                        AbsoluteDataOffset = packet.AbsoluteDataOffset, BfcDistance = alpha ? (byte)0 : distance };
                     packets[lod].AddRange(UyaTiePacketWriter.Build(bytes, target, block, colorBase, runs[start..end]));
                     start = end;
                 }
                 colorBase += Align4(packet.RgbaCount);
             }
+            // All parts keep the original bounds and distances so their LOD transitions stay synchronized.
+            if (partCount > 1 && packets[lod].Count > 0)
+            {
+                var start = packets[lod].Count * partIndex / partCount;
+                var end = packets[lod].Count * (partIndex + 1) / partCount;
+                if (start == end) throw new Rc1TieCapacityException("RC1 tie cannot retain every nonempty LOD when split.");
+                packets[lod] = packets[lod].GetRange(start, end - start);
+            }
             if (packets[lod].Count > byte.MaxValue)
-                throw new InvalidDataException($"RC1 tie LOD {lod} exceeds UYA's 255-packet limit.");
+                throw new Rc1TieCapacityException($"RC1 tie LOD {lod} exceeds UYA's 255-packet limit.");
         }
         using var output = new MemoryStream();
         output.Write(new byte[0x100]);
@@ -94,11 +105,23 @@ internal static class Rc1TieModelConverter
             token.ThrowIfCancellationRequested();
             if (packets[lod].Count == 0) continue;
             remaps[lod] = checked((int)output.Position - normalOffset);
+            if (remaps[lod] > ushort.MaxValue)
+                throw new Rc1TieCapacityException("RC1 tie lighting remap offsets exceed UYA's 16-bit range.");
             output.Write(BuildRemaps(packets[lod], sourceNormals[lod]));
         }
         var shaderOffset = checked((int)output.Position);
         output.Write(bytes.AsSpan(checked((int)tie.Header.ShadersOffset)));
         var result = output.ToArray();
+        for (var index = 0; index < tie.Header.TextureCount; index++)
+        {
+            var lastRegister = result.AsSpan(shaderOffset + index * 0x50 + 0x40, 16);
+            // UYA uses three mip levels and needs explicit blending state in the fifth A+D write.
+            if (BinaryPrimitives.ReadUInt64LittleEndian(lastRegister[8..]) == 0x36)
+            {
+                BinaryPrimitives.WriteUInt64LittleEndian(lastRegister, 0x8000000044);
+                BinaryPrimitives.WriteUInt64LittleEndian(lastRegister[8..], 0x42);
+            }
+        }
         BinaryPrimitives.WriteInt32LittleEndian(result.AsSpan(0x1c), shaderOffset);
         BinaryPrimitives.WriteInt32LittleEndian(result.AsSpan(0x34), normalOffset);
         BinaryPrimitives.WriteInt16LittleEndian(result.AsSpan(0x38), checked((short)tie.VertexNormals.Count));
@@ -130,9 +153,9 @@ internal static class Rc1TieModelConverter
     internal sealed class Analysis
     {
         private readonly IReadOnlyList<TieTriangle>?[] _facing = new IReadOnlyList<TieTriangle>?[3];
+        private readonly Dictionary<(int, int, int), Rc1TieLightingRecipe>?[] _lighting = new Dictionary<(int, int, int), Rc1TieLightingRecipe>?[2];
         public TieClass Tie { get; }
         public IReadOnlyDictionary<(int Lod, int Packet), TiePacketDataBlock> Blocks { get; }
-        public IReadOnlyDictionary<(int Lod, int Packet, int Row), int> Normals { get; }
         public ILookup<int, TieTriangleStrip>[] Strips { get; }
 
         public Analysis(byte[] bytes)
@@ -141,10 +164,11 @@ internal static class Rc1TieModelConverter
             if (Tie.VertexNormals.Count is 0 or > 512)
                 throw new InvalidDataException("RC1 tie lighting palette exceeds UYA scratchpad limits.");
             Blocks = Tie.PacketDataBlocks.ToDictionary(block => (block.LodIndex, block.PacketIndex));
-            Normals = Tie.VertexNormalRemaps.ToDictionary(remap =>
-                (remap.LodIndex, remap.PacketIndex, remap.VertexRowIndex), remap => remap.NormalIndex);
             Strips = Tie.LodTopologies.Select(topology => topology.Strips.ToLookup(strip => strip.PacketIndex)).ToArray();
         }
+
+        public IReadOnlyDictionary<(int, int, int), Rc1TieLightingRecipe> Lighting(byte[] source, CancellationToken token, bool previous) =>
+            _lighting[previous ? 1 : 0] ??= Rc1TieLodLighting.Build(source, Tie, token, previous);
 
         public IReadOnlyList<TieTriangle> Facing(int lod) => _facing[lod] ??=
             TieGltfExporter.ResolveTriangleFacing(Tie, lod, Rc1TieGameProfile.Default);
@@ -179,7 +203,7 @@ internal static class Rc1TieModelConverter
         }
     }
 
-    private static byte[] BuildRemaps(IReadOnlyList<UyaTieRebuiltPacket> packets, IReadOnlyDictionary<int, int> normals)
+    private static byte[] BuildRemaps(IReadOnlyList<UyaTieRebuiltPacket> packets, IReadOnlyDictionary<int, Rc1TieLightingRecipe> normals)
     {
         var groups = new List<byte[]>();
         var slots = new List<int>();
@@ -191,7 +215,7 @@ internal static class Rc1TieModelConverter
             if (slots.Count > 256 || Size(slots) > 0x400) throw new InvalidDataException("RC1 tie exceeds UYA's lighting scratch buffer.");
         }
         if (slots.Count > 0) Flush();
-        if (groups.Count > 31) throw new InvalidDataException($"RC1 tie needs {groups.Count} lighting groups for {packets.Sum(packet => packet.SourceColorSlots.Length)} cache slots, exceeding UYA's limit of 31.");
+        if (groups.Count > 31) throw new Rc1TieCapacityException($"RC1 tie needs {groups.Count} lighting groups for {packets.Sum(packet => packet.SourceColorSlots.Length)} cache slots, exceeding UYA's limit of 31.");
         var result = new byte[32 + groups.Sum(group => group.Length)];
         var cursor = 32;
         for (var index = 0; index < groups.Count; index++)
@@ -201,23 +225,44 @@ internal static class Rc1TieModelConverter
         }
         return result;
 
-        static int Size(IEnumerable<int> values) => Align16(16 + values.Sum(slot => slot < 0 ? 2 : 4));
+        int Size(IEnumerable<int> values) => Align16(16 + values.Sum(slot => slot < 0 ? 2 : normals[slot].Size));
         void Flush()
         {
             var group = new byte[Size(slots)];
             var cursor = 16;
-            for (var index = 0; index < slots.Count; index++)
-                if (slots[index] >= 0)
+            for (var kind = 0; kind < 6; kind++)
+            {
+                var start = cursor;
+                for (var index = 0; index < slots.Count; index++)
                 {
-                    BinaryPrimitives.WriteUInt16LittleEndian(group.AsSpan(cursor), checked((ushort)(normals[slots[index]] * 4)));
-                    BinaryPrimitives.WriteUInt16LittleEndian(group.AsSpan(cursor + 2), checked((ushort)(index * 4)));
-                    cursor += 4;
+                    if (slots[index] < 0)
+                    {
+                        if (kind != 5) continue;
+                        BinaryPrimitives.WriteUInt16LittleEndian(group.AsSpan(cursor), checked((ushort)(index * 4)));
+                        cursor += 2;
+                        continue;
+                    }
+                    var recipe = normals[slots[index]];
+                    if (recipe.Kind != kind) continue;
+                    if (kind == 0)
+                    {
+                        BinaryPrimitives.WriteUInt16LittleEndian(group.AsSpan(cursor), checked((ushort)(recipe.A * 4)));
+                        BinaryPrimitives.WriteUInt16LittleEndian(group.AsSpan(cursor + 2), checked((ushort)(index * 4)));
+                    }
+                    else if (kind == 1)
+                        BinaryPrimitives.WriteUInt32LittleEndian(group.AsSpan(cursor),
+                            checked((uint)(index * 4 | recipe.A << 23 | recipe.C << 14)));
+                    else
+                    {
+                        BinaryPrimitives.WriteUInt32LittleEndian(group.AsSpan(cursor),
+                            checked((uint)(recipe.A * 4 | recipe.B << 11 | recipe.C << 20)));
+                        BinaryPrimitives.WriteUInt16LittleEndian(group.AsSpan(cursor + 4), checked((ushort)(recipe.D * 4)));
+                        BinaryPrimitives.WriteUInt16LittleEndian(group.AsSpan(cursor + 6), checked((ushort)(index * 4)));
+                    }
+                    cursor += recipe.Size;
                 }
-            BinaryPrimitives.WriteUInt16LittleEndian(group, checked((ushort)(cursor - 16)));
-            var zeros = cursor;
-            for (var index = 0; index < slots.Count; index++)
-                if (slots[index] < 0) { BinaryPrimitives.WriteUInt16LittleEndian(group.AsSpan(cursor), checked((ushort)(index * 4))); cursor += 2; }
-            BinaryPrimitives.WriteUInt16LittleEndian(group.AsSpan(10), checked((ushort)(cursor - zeros)));
+                BinaryPrimitives.WriteUInt16LittleEndian(group.AsSpan(kind * 2), checked((ushort)(cursor - start)));
+            }
             BinaryPrimitives.WriteUInt16LittleEndian(group.AsSpan(12), checked((ushort)(slots.Count / 4)));
             BinaryPrimitives.WriteUInt16LittleEndian(group.AsSpan(14), checked((ushort)group.Length));
             groups.Add(group); slots.Clear();

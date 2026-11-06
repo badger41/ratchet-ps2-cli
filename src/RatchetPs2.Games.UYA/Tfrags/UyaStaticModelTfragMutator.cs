@@ -9,10 +9,13 @@ internal static class UyaStaticModelTfragMutator
         byte[] terrainBytes,
         IReadOnlyDictionary<int, IReadOnlyDictionary<int, int>> textureIdsByGroup,
         int? firstOcclusionMappingIndex,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        int? firstGeneratedGroupIndex = null)
     {
         ArgumentNullException.ThrowIfNull(terrainBytes);
         ArgumentNullException.ThrowIfNull(textureIdsByGroup);
+        if (firstGeneratedGroupIndex < 0 || firstGeneratedGroupIndex is not null && firstOcclusionMappingIndex is null)
+            throw new ArgumentOutOfRangeException(nameof(firstGeneratedGroupIndex));
         if (firstOcclusionMappingIndex < 0)
             throw new ArgumentOutOfRangeException(nameof(firstOcclusionMappingIndex));
         if (textureIdsByGroup.Count == 0 && firstOcclusionMappingIndex is null)
@@ -44,25 +47,27 @@ internal static class UyaStaticModelTfragMutator
 
         if (firstOcclusionMappingIndex is { } firstMappingIndex)
         {
-            if (firstMappingIndex > terrain.Chunks.Count)
+            var firstGroupIndex = firstGeneratedGroupIndex ?? firstMappingIndex;
+            if (firstGroupIndex > terrain.Chunks.Count)
                 throw new InvalidDataException(
                     "The first generated UYA tfrag occlusion mapping is outside the terrain inventory.");
-            if (terrain.Chunks.Take(firstMappingIndex).Any(value => value.OcclusionIndex != value.Index))
+            if (terrain.Chunks.Take(firstGroupIndex).Any(value => value.OcclusionIndexStash == 0
+                && (value.OcclusionIndex < -1 || value.OcclusionIndex >= firstMappingIndex)))
                 throw new InvalidDataException(
                     "Source UYA tfrag occlusion indices do not match their gameplay mapping slots.");
-            if (terrain.Chunks.Count > short.MaxValue)
+            if ((long)firstMappingIndex + terrain.Chunks.Count - firstGroupIndex > short.MaxValue)
                 throw new InvalidDataException(
                     "UYA tfrag occlusion mapping indices exceed signed 16-bit storage.");
-            foreach (var chunk in terrain.Chunks.Skip(firstMappingIndex))
+            foreach (var chunk in terrain.Chunks.Skip(firstGroupIndex))
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 output[chunk.RecordOffset + 0x2B] = 0;
                 BinaryPrimitives.WriteInt16LittleEndian(
-                    output.AsSpan(chunk.RecordOffset + 0x3A), checked((short)chunk.Index));
+                    output.AsSpan(chunk.RecordOffset + 0x3A), checked((short)(firstMappingIndex + chunk.Index - firstGroupIndex)));
             }
         }
 
-        Validate(output, textureIdsByGroup, firstOcclusionMappingIndex);
+        Validate(output, textureIdsByGroup, firstOcclusionMappingIndex, firstGeneratedGroupIndex);
         return output;
     }
 
@@ -80,7 +85,8 @@ internal static class UyaStaticModelTfragMutator
     private static void Validate(
         byte[] output,
         IReadOnlyDictionary<int, IReadOnlyDictionary<int, int>> textureIdsByGroup,
-        int? firstOcclusionMappingIndex)
+        int? firstOcclusionMappingIndex,
+        int? firstGeneratedGroupIndex)
     {
         var terrain = TfragTerrainReader.Read(output);
         foreach (var (groupIndex, textureIds) in textureIdsByGroup)
@@ -94,8 +100,8 @@ internal static class UyaStaticModelTfragMutator
                 throw new InvalidDataException($"Tfrag group {groupIndex} texture remap failed verification.");
         }
         if (firstOcclusionMappingIndex is { } firstMappingIndex
-            && terrain.Chunks.Skip(firstMappingIndex).Any(value =>
-                value.OcclusionIndex != value.Index || value.OcclusionIndexStash != 0))
+            && terrain.Chunks.Skip(firstGeneratedGroupIndex ?? firstMappingIndex).Any(value =>
+                value.OcclusionIndex != firstMappingIndex + value.Index - (firstGeneratedGroupIndex ?? firstMappingIndex) || value.OcclusionIndexStash != 0))
             throw new InvalidDataException("Generated UYA tfrag occlusion mappings failed verification.");
     }
 }

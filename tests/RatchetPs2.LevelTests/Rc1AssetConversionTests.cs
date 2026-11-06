@@ -12,6 +12,10 @@ internal static class Rc1AssetConversionTests
     public static void Run()
     {
         VerifyMipmaps();
+        Rc1TieLodLightingTests.Run();
+        Rc1TieModelSplitTests.Run();
+        VerifyMaterialBlendingState();
+        VerifyShaderUploadSizeIsNotCullDistance();
         VerifyAlphaCulling();
         VerifyMixedMaterialCulling();
         foreach (var fat in new[] { false, true })
@@ -67,6 +71,70 @@ internal static class Rc1AssetConversionTests
         try { LevelAssetModelConverter.Convert(GameId.RC1, GameId.UYA, FrontendAssetKind.Tie, Fixture(), 1, cancellation.Token); throw new Exception("Expected cancellation"); }
         catch (OperationCanceledException) { }
         Console.WriteLine("RC1 previews, native conversion, VU uploads, culling, lighting, unpadded sounds and cancellation passed.");
+    }
+
+    private static void VerifyMaterialBlendingState()
+    {
+        var source = Fixture();
+        var sourceShader = BinaryPrimitives.ReadInt32LittleEndian(source.AsSpan(0x2c));
+        var registers = new ulong[] { 6, 0x14, 0x34, 8, 0x36 };
+        for (var index = 0; index < registers.Length; index++)
+            BinaryPrimitives.WriteUInt64LittleEndian(source.AsSpan(sourceShader + index * 16 + 8), registers[index]);
+        var converted = LevelAssetModelConverter.Convert(GameId.RC1, GameId.UYA, FrontendAssetKind.Tie, source, 0x1234);
+        var shader = BinaryPrimitives.ReadInt32LittleEndian(converted.AsSpan(0x1c));
+        Expect(source.AsSpan(sourceShader, 64).SequenceEqual(converted.AsSpan(shader, 64)),
+            "texture, mip and clamp registers survive material conversion");
+        foreach (var inheritedAlpha in new ulong[] { 0x8000000020, 0x8000000058 })
+        {
+            var state = new Dictionary<ulong, ulong> { [0x42] = inheritedAlpha };
+            for (var index = 0; index < registers.Length; index++)
+                state[BinaryPrimitives.ReadUInt64LittleEndian(converted.AsSpan(shader + index * 16 + 8))]
+                    = BinaryPrimitives.ReadUInt64LittleEndian(converted.AsSpan(shader + index * 16));
+            Expect(state[0x42] == 0x8000000044,
+                "RC1 materials establish UYA source-alpha blending independently of previous draws");
+        }
+        var previous = converted.ToArray();
+        source.AsSpan(sourceShader, 80).CopyTo(previous.AsSpan(shader));
+        var repaired = LevelAssetModelConverter.RepairPreviousStaticConversion(GameId.RC1, GameId.UYA,
+            FrontendAssetKind.Tie, source, previous, 0x1234, 0x1234);
+        Expect(repaired is not null && repaired.AsSpan().SequenceEqual(converted), "previous RC1 material state is repaired");
+        previous[shader + 0x30] ^= 1;
+        Expect(LevelAssetModelConverter.RepairPreviousStaticConversion(GameId.RC1, GameId.UYA,
+            FrontendAssetKind.Tie, source, previous, 0x1234, 0x1234) is null, "material repair preserves authored edits");
+        BinaryPrimitives.WriteUInt64LittleEndian(source.AsSpan(sourceShader + 0x40), 0x8000000058);
+        BinaryPrimitives.WriteUInt64LittleEndian(source.AsSpan(sourceShader + 0x48), 0x42);
+        converted = LevelAssetModelConverter.Convert(GameId.RC1, GameId.UYA, FrontendAssetKind.Tie, source, 0x1234);
+        Expect(source.AsSpan(sourceShader, 80).SequenceEqual(converted.AsSpan(shader, 80)),
+            "an explicit source blending register is preserved");
+    }
+
+    private static void VerifyShaderUploadSizeIsNotCullDistance()
+    {
+        foreach (var fat in new[] { false, true })
+        {
+            var source = Fixture(fat);
+            source[0x105] = 5; // One RC1 shader occupies five quadwords.
+            BinaryPrimitives.WriteInt32LittleEndian(source.AsSpan(4), 0x100);
+            BinaryPrimitives.WriteInt32LittleEndian(source.AsSpan(8), 0x100);
+            source[0x21] = source[0x22] = 1;
+            var converted = LevelAssetModelConverter.Convert(GameId.RC1, GameId.UYA,
+                FrontendAssetKind.Tie, source, 0x1234);
+            var target = TieClassReader.Read(converted);
+            Expect(target.PacketTables.SelectMany(table => table.Packets).All(packet => packet.BfcDistance == 127),
+                "RC1 shader upload size must not become distance-dependent UYA culling in any LOD");
+            var previous = converted.ToArray();
+            foreach (var table in target.PacketTables)
+                foreach (var packet in table.Packets)
+                    previous[(int)table.Offset + packet.PacketIndex * 16 + 5] = 5;
+            var repaired = LevelAssetModelConverter.RepairPreviousStaticConversion(GameId.RC1, GameId.UYA,
+                FrontendAssetKind.Tie, source, previous, 0x1234, 0x1234);
+            Expect(repaired is not null && repaired.AsSpan().SequenceEqual(converted),
+                "the old shader-size culling conversion can be repaired without touching independent edits");
+            previous[0x4c] ^= 1;
+            Expect(LevelAssetModelConverter.RepairPreviousStaticConversion(GameId.RC1, GameId.UYA,
+                FrontendAssetKind.Tie, source, previous, 0x1234, 0x1234) is null,
+                "culling repair preserves independent model edits");
+        }
     }
 
     private static void VerifyAlphaCulling()

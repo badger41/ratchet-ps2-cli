@@ -1,3 +1,4 @@
+using RatchetPs2.Core.Gameplay;
 using RatchetPs2.Core.Wad;
 using RatchetPs2.Core.Wad.Models;
 using RatchetPs2.Games.DL.Gameplay;
@@ -76,7 +77,7 @@ public static class DlLevelWadUnpacker
         }
         if (gameplayBytes.Length >= DlGameplayBlockReader.MissionHeaderSize)
         {
-            AddGameplayBlocks(files, $"{missionRoot}/gameplay", DlGameplayBlockReader.ReadMission(gameplayBytes));
+            AddGameplayBlocks(files, $"{missionRoot}/gameplay", GameplayLayoutReader.Read(gameplayBytes, DlGameplayLayout.Mission));
         }
 
         var classes = DlMissionDataReader.ReadClasses(missionData);
@@ -100,12 +101,12 @@ public static class DlLevelWadUnpacker
 
             if (segment.HeaderOffset == 0x60 && segment.PayloadBytes.Length > 0)
             {
-                AddGameplayBlocks(files, "gameplay/core", DlGameplayBlockReader.ReadCore(segment.PayloadBytes));
+                AddGameplayBlocks(files, "gameplay/core", GameplayLayoutReader.Read(segment.PayloadBytes, DlGameplayLayout.Core));
             }
         }
     }
 
-    private static void AddGameplayBlocks(List<PackedFile> files, string root, DlGameplayBlocks gameplay)
+    private static void AddGameplayBlocks(List<PackedFile> files, string root, GameplayRawBlocks gameplay)
     {
         AddFile(files, $"{root}/header.bin", gameplay.HeaderBytes);
         foreach (var block in gameplay.Blocks)

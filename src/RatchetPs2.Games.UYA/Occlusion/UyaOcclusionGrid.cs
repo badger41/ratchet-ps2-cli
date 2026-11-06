@@ -112,6 +112,12 @@ public static class UyaOcclusionGridWriter
 {
     private const int MaskSize = 128;
 
+    public static byte[] CreateEmpty(CancellationToken token = default)
+    {
+        token.ThrowIfCancellationRequested();
+        return Write([], new Dictionary<(int X, int Y, int Z), byte[]>(), token);
+    }
+
     public static byte[] ReplaceMasks(ReadOnlySpan<byte> data,
         IReadOnlyDictionary<(int X, int Y, int Z), byte[]> masks, CancellationToken token = default)
     {
@@ -224,6 +230,7 @@ public static class UyaOcclusionGridWriter
     private static (int Start, int Count) Range(IEnumerable<int> values)
     {
         var array = values.ToArray();
+        if (array.Length == 0) return (0, 0);
         var minimum = array.Min();
         if (minimum < 0) throw new InvalidDataException("Generated occlusion coordinates cannot be negative.");
         var start = Math.Min(minimum, ushort.MaxValue);
